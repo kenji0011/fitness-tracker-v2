@@ -2,9 +2,6 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    // START: FlutterFire Configuration
-    id("com.google.gms.google-services")
-    // END: FlutterFire Configuration
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
@@ -16,8 +13,8 @@ val hasKeyProperties = keystorePropertiesFile.exists()
 val hasBundledKeystore = bundledKeystoreFile.exists()
 
 android {
-    namespace = "com.example.rockies_fitness_app"
-    compileSdk = flutter.compileSdkVersion
+    namespace = "com.tempo.fitness"
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -30,12 +27,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.rockies_fitness_app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        applicationId = "com.tempo.fitness"
         minSdk = 26
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -44,7 +38,7 @@ android {
         if (hasKeyProperties) {
             val keystoreProperties = Properties()
             keystoreProperties.load(keystorePropertiesFile.inputStream())
-            
+
             create("release") {
                 storeFile = file(keystoreProperties.getProperty("storeFile"))
                 storePassword = keystoreProperties.getProperty("storePassword")
@@ -69,7 +63,6 @@ android {
                 if (hasKeyProperties || hasBundledKeystore) {
                     signingConfigs.getByName("release")
                 } else {
-                    // Fallback for local testing when no custom keystore exists yet.
                     signingConfigs.getByName("debug")
                 }
         }
@@ -87,8 +80,6 @@ android {
 }
 
 dependencies {
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
-    implementation("com.google.firebase:firebase-auth:23.0.0")
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.0")
 }
 

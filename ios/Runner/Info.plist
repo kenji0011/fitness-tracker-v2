@@ -2,80 +2,56 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-<key>CFBundleDevelopmentRegion</key>
-<string>$(DEVELOPMENT_LANGUAGE)</string>
-<key>CFBundleDisplayName</key>
-<string>Rockies Fitness App</string>
-<key>CFBundleExecutable</key>
-<string>$(EXECUTABLE_NAME)</string>
-<key>CFBundleIdentifier</key>
-<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-<key>CFBundleInfoDictionaryVersion</key>
-<string>6.0</string>
-<key>CFBundleName</key>
-<string>rockies_fitness_app</string>
-<key>CFBundlePackageType</key>
-<string>APPL</string>
-<key>CFBundleShortVersionString</key>
-<string>$(FLUTTER_BUILD_NAME)</string>
-<key>CFBundleSignature</key>
-<string>????</string>
-<key>CFBundleVersion</key>
-<string>$(FLUTTER_BUILD_NUMBER)</string>
-<key>LSRequiresIPhoneOS</key>
-<true/>
-<key>UILaunchStoryboardName</key>
-<string>LaunchScreen</string>
-<key>UIMainStoryboardFile</key>
-<string>Main</string>
-<key>UISupportedInterfaceOrientations</key>
-<array>
-	<string>UIInterfaceOrientationPortrait</string>
-	<string>UIInterfaceOrientationLandscapeLeft</string>
-	<string>UIInterfaceOrientationLandscapeRight</string>
-</array>
-<key>UISupportedInterfaceOrientations~ipad</key>
-<array>
-	<string>UIInterfaceOrientationPortrait</string>
-	<string>UIInterfaceOrientationPortraitUpsideDown</string>
-	<string>UIInterfaceOrientationLandscapeLeft</string>
-	<string>UIInterfaceOrientationLandscapeRight</string>
-</array>
-<key>CADisableMinimumFrameDurationOnPhone</key>
-<true/>
-<key>UIApplicationSupportsIndirectInputEvents</key>
-<true/>
-<key>NSCameraUsageDescription</key>
-<string>This app needs camera access to take photos for your fitness journey.</string>
-<key>NSPhotoLibraryUsageDescription</key>
-<string>This app needs photo library access to select images for your fitness journey.</string>
-<key>NSMicrophoneUsageDescription</key>
-<string>This app needs microphone access to record videos for your fitness journey.</string>
-	<key>CFBundleURLTypes</key>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Tempo</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>tempo_fitness</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UISupportedInterfaceOrientations</key>
 	<array>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<!-- TODO Replace this value: -->
-				<!-- Copied from GoogleService-Info.plist key REVERSED_CLIENT_ID -->
-				<string>com.googleusercontent.apps.156170896405-a1hoaf3pbn5pgecuop36vi8jlojrjvru</string>
-			</array>
-		</dict>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>CFBundleURLTypes</key>
+	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLName</key>
-			<string>rockiesfitness</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>rockiesfitness</string>
-			</array>
-		</dict>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Tempo needs camera access to take progress and profile photos stored privately on your device.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Tempo needs photo library access to select images stored privately on your device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Tempo needs microphone access for video recording if used.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Tempo uses motion sensors to count your daily steps offline.</string>
 </dict>
 </plist>

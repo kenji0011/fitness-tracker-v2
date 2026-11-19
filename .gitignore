@@ -81,3 +81,10 @@ models/
 *.gguf
 *.hprof
 
+# Rust build cache
+rust/*/target/
+
+# Packaged release APKs
+/release/
+*.apk
+

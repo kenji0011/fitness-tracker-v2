@@ -1,15 +1,20 @@
+import 'dart:io';
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import 'dart:typed_data';
-import 'package:firebase_auth/firebase_auth.dart' as fbAuth;
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+import '../models/local_profile.dart';
+import '../services/active_profile_provider.dart';
+import '../services/local_media_service.dart';
+import '../services/tempo_rust_db.dart';
+import '../theme/app_colors.dart';
+import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_sliver_header.dart';
 import 'photo_editing_screen.dart';
-import 'dart:ui' as ui;
-import '../widgets/premium_dialog.dart';
 
 class ProgressAlbumScreen extends StatefulWidget {
   const ProgressAlbumScreen({super.key});
@@ -18,1745 +23,341 @@ class ProgressAlbumScreen extends StatefulWidget {
   State<ProgressAlbumScreen> createState() => _ProgressAlbumScreenState();
 }
 
-class _ProgressAlbumScreenState extends State<ProgressAlbumScreen>
-    with TickerProviderStateMixin {
-  late TabController _tabController;
-  int _selectedTabIndex = 0;
-  final SupabaseClient _supabase = Supabase.instance.client;
-  final ImagePicker _imagePicker = ImagePicker();
-  final fbAuth.FirebaseAuth _firebaseAuth = fbAuth.FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  bool _isLoading = false;
-
-  // Store progress images with date as key and list of image URLs
-  Map<String, List<String>> _progressImages = {};
+class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
+  final ImagePicker _picker = ImagePicker();
+  List<LocalProgressPhoto> _photos = [];
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _loadProgressImages();
+    _loadPhotos();
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  /// ✅ Get current user ID from Firebase Auth
-  String? get _currentUserId {
-    return _firebaseAuth.currentUser?.uid;
-  }
-
-  /// ✅ Get reference to progress images subcollection
-  CollectionReference get _progressImagesRef {
-    final userId = _currentUserId;
-    if (userId == null) {
-      throw Exception('User not logged in');
-    }
-    return _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('progressImages');
-  }
-
-  /// ✅ Load progress images from Firebase Firestore subcollection
-  Future<void> _loadProgressImages() async {
-    try {
+  Future<void> _loadPhotos() async {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    if (pid == null) return;
+    final list = await TempoRustDb.instance.listProgressPhotos(pid);
+    if (mounted) {
       setState(() {
-        _isLoading = true;
-      });
-
-      final userId = _currentUserId;
-      if (userId == null) {
-        print('❌ No user logged in with Firebase Auth');
-        return;
-      }
-
-      print(
-        '👤 Loading progress images from Firestore subcollection for user: $userId',
-      );
-
-      // Load from Firestore subcollection
-      final querySnapshot = await _progressImagesRef.get();
-
-      print('📄 Found ${querySnapshot.docs.length} documents in subcollection');
-
-      if (querySnapshot.docs.isNotEmpty) {
-        Map<String, List<String>> loadedImages = {};
-
-        for (final doc in querySnapshot.docs) {
-          final data = doc.data() as Map<String, dynamic>;
-          final date = doc.id; // Use document ID as date
-          final images = data['urls'] as List<dynamic>?;
-
-          if (images != null) {
-            loadedImages[date] = List<String>.from(images);
-            print('📅 Date: $date, Images: ${images.length}');
-          }
-        }
-
-        setState(() {
-          _progressImages = loadedImages;
-        });
-
-        print(
-          '📷 Loaded ${_progressImages.length} date groups from Firestore subcollection',
-        );
-      } else {
-        print('ℹ️ No progress images found in Firestore subcollection');
-        // Also try to load from Supabase storage for backward compatibility
-        await _loadFromSupabaseStorage();
-      }
-    } catch (e) {
-      print('❌ Error loading progress images from Firestore subcollection: $e');
-      // Fallback to loading from Supabase storage
-      await _loadFromSupabaseStorage();
-    } finally {
-      setState(() {
-        _isLoading = false;
+        _photos = list;
+        _loading = false;
       });
     }
   }
 
-  /// ✅ Fallback: Load images from Supabase storage (for backward compatibility)
-  Future<void> _loadFromSupabaseStorage() async {
-    try {
-      final userId = _currentUserId;
-      if (userId == null) return;
+  Future<void> _addPhoto(ImageSource source) async {
+    final xfile = await _picker.pickImage(source: source, imageQuality: 88);
+    if (xfile == null || !mounted) return;
 
-      print('🔄 Loading from Supabase storage as fallback');
-
-      final response = await _supabase.storage
-          .from('progress-images')
-          .list(path: userId);
-
-      if (response != null) {
-        print('📷 Found ${response.length} images in Supabase storage');
-        _groupImagesByDate(response);
-
-        // Save to Firestore subcollection for future use
-        await _saveProgressImagesToFirestore();
-      }
-    } catch (e) {
-      print('❌ Error loading from Supabase storage: $e');
-    }
-  }
-
-  /// ✅ Group images by date for display
-  void _groupImagesByDate(List<FileObject> files) {
-    Map<String, List<String>> newProgressImages = {};
-
-    for (final file in files) {
-      try {
-        final userId = _currentUserId;
-        if (userId == null) continue;
-
-        final publicUrl = _supabase.storage
-            .from('progress-images')
-            .getPublicUrl('$userId/${file.name}');
-
-        // Use today's date for grouping (you might want to extract from filename)
-        final today = DateTime.now();
-        final formattedDate = _formatDate(today);
-
-        if (!newProgressImages.containsKey(formattedDate)) {
-          newProgressImages[formattedDate] = [];
-        }
-        newProgressImages[formattedDate]!.add(publicUrl);
-
-        print('🖼️ Added image: ${file.name} for date: $formattedDate');
-      } catch (e) {
-        print('❌ Error processing file ${file.name}: $e');
-      }
-    }
-
-    setState(() {
-      _progressImages = newProgressImages;
-    });
-  }
-
-  /// ✅ Save progress images to Firebase Firestore subcollection
-  Future<void> _saveProgressImagesToFirestore() async {
-    try {
-      final userId = _currentUserId;
-      if (userId == null) return;
-
-      // Save each date as a separate document in the subcollection
-      final batch = _firestore.batch();
-
-      for (final entry in _progressImages.entries) {
-        final date = entry.key;
-        final urls = entry.value;
-
-        final docRef = _progressImagesRef.doc(date);
-        batch.set(docRef, {
-          'urls': urls,
-          'updatedAt': FieldValue.serverTimestamp(),
-          'count': urls.length,
-        });
-      }
-
-      await batch.commit();
-      print('💾 Progress images saved to Firestore subcollection');
-    } catch (e) {
-      print('❌ Error saving progress images to Firestore subcollection: $e');
-    }
-  }
-
-  /// ✅ Save a single date's images to Firestore subcollection
-  Future<void> _saveDateToFirestore(String date, List<String> urls) async {
-    try {
-      await _progressImagesRef.doc(date).set({
-        'urls': urls,
-        'updatedAt': FieldValue.serverTimestamp(),
-        'count': urls.length,
-      });
-      print(
-        '💾 Saved date $date with ${urls.length} images to Firestore subcollection',
-      );
-    } catch (e) {
-      print('❌ Error saving date $date to Firestore: $e');
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    return "${date.day} ${_getMonthName(date.month)} ${date.year}";
-  }
-
-  DateTime? _parseFormattedDate(String date) {
-    final parts = date.split(' ');
-    if (parts.length != 3) return null;
-
-    final day = int.tryParse(parts[0]);
-    final month = _getMonthIndex(parts[1]);
-    final year = int.tryParse(parts[2]);
-
-    if (day == null || month == null || year == null) {
-      return null;
-    }
-
-    return DateTime(year, month, day);
-  }
-
-  int? _getMonthIndex(String monthName) {
-    const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-
-    final index = months.indexWhere(
-      (month) => month.toLowerCase() == monthName.toLowerCase(),
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PhotoEditingScreen(sourceImagePath: xfile.path),
+      ),
     );
-
-    if (index == -1) return null;
-    return index + 1;
+    if (saved == true && mounted) {
+      context.read<ActiveProfileProvider>().notifyDataChanged();
+      _loadPhotos();
+    }
   }
 
-  bool _isTodayDateKey(String date) {
-    final parsedDate = _parseFormattedDate(date);
-    if (parsedDate == null) return false;
-
-    final now = DateTime.now();
-    return parsedDate.year == now.year &&
-        parsedDate.month == now.month &&
-        parsedDate.day == now.day;
-  }
-
-  String _getMonthName(int month) {
-    const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-    return months[month - 1];
-  }
-
-  /// ✅ Upload image to Supabase and save URL to Firebase subcollection
-  Future<void> _uploadProgressImage() async {
-    try {
-      final XFile? pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1200,
-        maxHeight: 1200,
-        imageQuality: 85,
-      );
-
-      if (pickedFile != null) {
-        setState(() {
-          _isLoading = true;
-        });
-
-        final userId = _currentUserId;
-        if (userId == null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Please login to upload images'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        }
-
-        print('👤 Uploading for user: $userId');
-
-        // Convert to bytes
-        final Uint8List imageBytes = await pickedFile.readAsBytes();
-
-        // Generate unique filename
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        final fileName = 'progress_$timestamp.jpg';
-        final filePath = '$userId/$fileName';
-
-        print('📤 Uploading progress image: $filePath');
-
-        // Upload to Supabase
-        await _supabase.storage
-            .from('progress-images')
-            .uploadBinary(filePath, imageBytes);
-
-        // Get public URL
-        final publicUrl = _supabase.storage
-            .from('progress-images')
-            .getPublicUrl(filePath);
-
-        print('✅ Progress image uploaded: $publicUrl');
-
-        // Update local state with new image
-        final today = DateTime.now();
-        final formattedDate = _formatDate(today);
-
-        setState(() {
-          if (!_progressImages.containsKey(formattedDate)) {
-            _progressImages[formattedDate] = [];
-          }
-          _progressImages[formattedDate]!.insert(0, publicUrl);
-        });
-
-        // Save to Firebase Firestore subcollection
-        await _saveDateToFirestore(
-          formattedDate,
-          _progressImages[formattedDate]!,
-        );
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Progress image uploaded successfully!'),
-            backgroundColor: Colors.green,
+  Future<void> _deletePhoto(LocalProgressPhoto photo) async {
+    final confirmed = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Delete Photo?'),
+        content: const Text(
+          'This removes the progress photo from local device storage.',
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
           ),
-        );
-      }
-    } catch (e) {
-      print('❌ Error uploading progress image: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to upload image: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  /// ✅ Delete progress image
-  Future<void> _deleteProgressImage(String date, int index) async {
-    try {
-      final imageUrl = _progressImages[date]![index];
-
-      // Extract filename from URL for Supabase deletion
-      final uri = Uri.parse(imageUrl);
-      final pathSegments = uri.path.split('/');
-      final bucketIndex = pathSegments.indexOf('progress-images');
-
-      if (bucketIndex != -1 && bucketIndex < pathSegments.length - 1) {
-        final filePath = pathSegments.sublist(bucketIndex + 1).join('/');
-        await _supabase.storage.from('progress-images').remove([filePath]);
-        print('🗑️ Deleted image from Supabase: $filePath');
-      }
-
-      // Update local state
-      setState(() {
-        _progressImages[date]!.removeAt(index);
-        if (_progressImages[date]!.isEmpty) {
-          _progressImages.remove(date);
-          // Remove the entire document from Firestore if no images left
-          _progressImagesRef.doc(date).delete();
-        }
-      });
-
-      // Update Firebase Firestore subcollection
-      if (_progressImages.containsKey(date)) {
-        await _saveDateToFirestore(date, _progressImages[date]!);
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Image deleted successfully'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      print('❌ Error deleting image: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to delete image: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  /// ✅ NEW: Handle share to community - navigate to PhotoEditingScreen with selected images
-  String? _extractSupabaseFilePath(String imageUrl) {
-    final uri = Uri.parse(imageUrl);
-    final pathSegments = uri.path.split('/');
-    final bucketIndex = pathSegments.indexOf('progress-images');
-
-    if (bucketIndex != -1 && bucketIndex < pathSegments.length - 1) {
-      return pathSegments.sublist(bucketIndex + 1).join('/');
-    }
-
-    return null;
-  }
-
-  Future<void> _deleteAllImagesForDate(String date) async {
-    final images = List<String>.from(_progressImages[date] ?? []);
-    if (images.isEmpty) return;
-
-    try {
-      setState(() {
-        _isLoading = true;
-      });
-
-      final filePaths = images
-          .map(_extractSupabaseFilePath)
-          .whereType<String>()
-          .toList();
-
-      if (filePaths.isNotEmpty) {
-        await _supabase.storage.from('progress-images').remove(filePaths);
-      }
-
-      setState(() {
-        _progressImages.remove(date);
-      });
-
-      await _progressImagesRef.doc(date).delete();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('All images for this day were deleted'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to delete day images: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _handleShareToCommunity(String date) async {
-    final images = _progressImages[date] ?? [];
-
-    if (images.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No images to share from this date'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    // Show loading indicator
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      // Convert image URLs to Uint8List for the photo editor
-      List<Uint8List> imageBytesList = [];
-
-      for (final imageUrl in images) {
-        try {
-          final response = await http.get(Uri.parse(imageUrl));
-          if (response.statusCode == 200) {
-            imageBytesList.add(response.bodyBytes);
-          }
-        } catch (e) {
-          print('Error loading image: $e');
-        }
-      }
-
-      if (imageBytesList.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to load images for sharing'),
-            backgroundColor: Colors.red,
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
           ),
-        );
-        return;
-      }
+        ],
+      ),
+    );
+    if (confirmed != true) return;
 
-      // Navigate to PhotoEditingScreen with the images
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ProgressPhotoEditingScreen(
-            progressImages: imageBytesList,
-            initialCaption: "My progress from $date 💪",
-          ),
-        ),
-      );
-    } catch (e) {
-      print('Error sharing to community: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to share: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
+    await TempoRustDb.instance.deleteProgressPhoto(photo.id);
+    await LocalMediaService.deleteLocalFile(photo.filePath);
+    if (mounted) {
+      context.read<ActiveProfileProvider>().notifyDataChanged();
+      _loadPhotos();
     }
+  }
+
+  void _showAddOptions() {
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('Add Progress Photo'),
+        message: const Text('Stored privately on your phone'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _addPhoto(ImageSource.camera);
+            },
+            child: const Text('Take Photo'),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _addPhoto(ImageSource.gallery);
+            },
+            child: const Text('Choose from Library'),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        toolbarHeight: 80,
-        backgroundColor: Colors.black.withOpacity(0.6),
-        elevation: 0,
-        flexibleSpace: ClipRect(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: Container(
-              color: Colors.transparent,
-            ),
-          ),
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () {
-            Navigator.pop(context);
-          },
-        ),
-        title: const Text(
-          "Progress Album",
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.5,
-          ),
-        ),
-        centerTitle: true,
-        actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 16),
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF3EA6FF), Color(0xFF00E5FF)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+      backgroundColor: c.scaffold,
+      body: CustomScrollView(
+        slivers: [
+          TempoSliverHeader(
+            title: 'Progress Album',
+            showBackButton: true,
+            actions: [
+              TempoHeaderAction(
+                tooltip: 'Add Photo',
+                icon: Icon(CupertinoIcons.add, size: 22, color: c.textPrimary),
+                onPressed: _showAddOptions,
               ),
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF3EA6FF).withOpacity(0.4),
-                  blurRadius: 12,
-                  spreadRadius: 1,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: IconButton(
-              padding: EdgeInsets.zero,
-              icon: _isLoading
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
-                  : const Icon(Icons.add_rounded, color: Colors.white, size: 24),
-              onPressed: _isLoading ? null : _uploadProgressImage,
-            ),
+            ],
           ),
-        ],
-      ),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final bool isWideWeb = kIsWeb && constraints.maxWidth >= 980;
-            return Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: isWideWeb ? 980 : double.infinity,
-                ),
+          if (_loading)
+            SliverFillRemaining(
+              child: Center(child: CupertinoActivityIndicator(color: c.accent)),
+            )
+          else if (_photos.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
                 child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isWideWeb ? 20.0 : 0.0,
+                  padding: const EdgeInsets.all(28),
+                  child: AppleCard(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          CupertinoIcons.photo_on_rectangle,
+                          size: 46,
+                          color: c.accent,
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Private On-Device Album',
+                          style: TextStyle(
+                            color: c.textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Track your visual progress safely offline. Photos never leave your phone.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: c.textSecondary),
+                        ),
+                        const SizedBox(height: 18),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: c.accent,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: _showAddOptions,
+                          icon: const Icon(CupertinoIcons.camera_fill, size: 18),
+                          label: const Text('Add First Photo'),
+                        ),
+                      ],
+                    ),
                   ),
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 16),
-                      // Header banner card with premium camera badge and subtle glass border
-                      Container(
-                        width: double.infinity,
-                        margin: EdgeInsets.symmetric(
-                          horizontal: isWideWeb ? 0 : 16.0,
-                        ),
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.white.withOpacity(0.05),
-                              Colors.white.withOpacity(0.01),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.08),
-                            width: 1.0,
-                          ),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 0.78,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  childCount: _photos.length,
+                  (ctx, i) {
+                    final photo = _photos[i];
+                    final exists =
+                        !kIsWeb && File(photo.filePath).existsSync();
+                    return GestureDetector(
+                      onTap: () => _openViewer(photo),
+                      onLongPress: () => _deletePhoto(photo),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Stack(
+                          fit: StackFit.expand,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  colors: [
-                                    const Color(0xFF3EA6FF).withOpacity(0.18),
-                                    const Color(0xFF00E5FF).withOpacity(0.05),
+                            if (exists)
+                              Image.file(File(photo.filePath), fit: BoxFit.cover)
+                            else
+                              Container(
+                                color: c.cardAlt,
+                                child: Icon(
+                                  CupertinoIcons.photo,
+                                  color: c.textTertiary,
+                                  size: 36,
+                                ),
+                              ),
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.transparent,
+                                      Colors.black.withValues(alpha: 0.78),
+                                    ],
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      DateFormat('MMM d, yyyy')
+                                          .format(photo.takenAt.toLocal()),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    if (photo.caption.isNotEmpty)
+                                      Text(
+                                        photo.caption,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 11,
+                                        ),
+                                      ),
                                   ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: const Color(0xFF3EA6FF).withOpacity(0.25),
-                                  width: 0.8,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.camera_alt_outlined,
-                                color: Color(0xFF3EA6FF),
-                                size: 24,
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    "Track your body changes",
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.1,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 5),
-                                  Text(
-                                    "Recent keeps only today's uploads. Older progress photos automatically move to Old tomorrow.",
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.6),
-                                      fontSize: 13,
-                                      height: 1.45,
-                                      letterSpacing: 0.05,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      // Pill-shaped high-fidelity Tab Selector
-                      Container(
-                        height: 54,
-                        margin: EdgeInsets.symmetric(
-                          horizontal: isWideWeb ? 0 : 16.0,
-                        ),
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.02),
-                          borderRadius: BorderRadius.circular(27),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.06),
-                            width: 1.0,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _selectedTabIndex = 0;
-                                  });
-                                  _tabController.animateTo(0);
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 240),
-                                  curve: Curves.easeInOut,
-                                  decoration: BoxDecoration(
-                                    gradient: _selectedTabIndex == 0
-                                        ? const LinearGradient(
-                                            colors: [
-                                              Color(0xFF3EA6FF),
-                                              Color(0xFF00E5FF),
-                                            ],
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                          )
-                                        : null,
-                                    color: _selectedTabIndex == 0
-                                        ? null
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(23),
-                                    boxShadow: _selectedTabIndex == 0
-                                        ? [
-                                            BoxShadow(
-                                              color: const Color(0xFF3EA6FF).withOpacity(0.35),
-                                              blurRadius: 10,
-                                              offset: const Offset(0, 3),
-                                            ),
-                                          ]
-                                        : null,
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      'Recent',
-                                      style: TextStyle(
-                                        color: _selectedTabIndex == 0
-                                            ? Colors.white
-                                            : Colors.white.withOpacity(0.5),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15,
-                                        letterSpacing: 0.1,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _selectedTabIndex = 1;
-                                  });
-                                  _tabController.animateTo(1);
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 240),
-                                  curve: Curves.easeInOut,
-                                  decoration: BoxDecoration(
-                                    gradient: _selectedTabIndex == 1
-                                        ? const LinearGradient(
-                                            colors: [
-                                              Color(0xFF3EA6FF),
-                                              Color(0xFF00E5FF),
-                                            ],
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                          )
-                                        : null,
-                                    color: _selectedTabIndex == 1
-                                        ? null
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(23),
-                                    boxShadow: _selectedTabIndex == 1
-                                        ? [
-                                            BoxShadow(
-                                              color: const Color(0xFF3EA6FF).withOpacity(0.35),
-                                              blurRadius: 10,
-                                              offset: const Offset(0, 3),
-                                            ),
-                                          ]
-                                        : null,
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      'Old',
-                                      style: TextStyle(
-                                        color: _selectedTabIndex == 1
-                                            ? Colors.white
-                                            : Colors.white.withOpacity(0.5),
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 15,
-                                        letterSpacing: 0.1,
-                                      ),
-                                    ),
-                                  ),
                                 ),
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      Expanded(
-                        child: TabBarView(
-                          controller: _tabController,
-                          children: [_buildRecentContent(), _buildOldContent()],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRecentContent() {
-    if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
-        ),
-      );
-    }
-
-    final dates =
-        _progressImages.keys.where((date) => _isTodayDateKey(date)).toList()
-          ..sort((a, b) => b.compareTo(a));
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          for (int i = 0; i < dates.length; i++) ...[
-            if (_progressImages[dates[i]]!.isNotEmpty) ...[
-              _buildDateCard(dates[i]),
-              if (i < dates.length - 1) const SizedBox(height: 16),
-            ],
-          ],
-          if (dates.isEmpty ||
-              dates.every((date) => (_progressImages[date] ?? []).isEmpty))
-            _buildEmptyState(
-              title: "No recent progress images",
-              subtitle:
-                  "Only today's photos appear here. Tomorrow they move to Old.",
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOldContent() {
-    if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
-        ),
-      );
-    }
-
-    final dates =
-        _progressImages.keys.where((date) => !_isTodayDateKey(date)).toList()
-          ..sort((a, b) => b.compareTo(a));
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          for (int i = 0; i < dates.length; i++) ...[
-            if (_progressImages[dates[i]]!.isNotEmpty) ...[
-              _buildDateCard(dates[i]),
-              if (i < dates.length - 1) const SizedBox(height: 16),
-            ],
-          ],
-          if (dates.isEmpty ||
-              dates.every((date) => (_progressImages[date] ?? []).isEmpty))
-            _buildEmptyState(
-              title: "No old progress images",
-              subtitle:
-                  "Photos from previous days will appear here automatically.",
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState({
-    String title = "No progress images yet",
-    String subtitle = "Tap the + button to add your first progress photo",
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(top: 72),
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        color: const Color(0xFF141414),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 88,
-            height: 88,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white10),
-            ),
-            child: Icon(Icons.photo_library, size: 40, color: Colors.grey[500]),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.grey[400],
-              fontSize: 14,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF3EA6FF).withOpacity(0.12),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: const Color(0xFF3EA6FF).withOpacity(0.22),
-              ),
-            ),
-            child: const Text(
-              "Tap + to add a new progress photo",
-              style: TextStyle(
-                color: Color(0xFF67C3FF),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDateCard(String date) {
-    final images = _progressImages[date] ?? [];
-
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Colors.white.withOpacity(0.04),
-            Colors.white.withOpacity(0.01),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.06),
-          width: 1.0,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.4),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 16.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.calendar_today_rounded,
-                      color: const Color(0xFF3EA6FF),
-                      size: 16,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      date,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.1,
-                      ),
-                    ),
-                  ],
-                ),
-                PopupMenuButton<String>(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.05),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.12),
-                        width: 1.0,
-                      ),
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
-                              ),
-                            ),
-                          )
-                        : Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                "Options",
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.85),
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Icon(
-                                Icons.keyboard_arrow_down_rounded,
-                                color: Colors.white.withOpacity(0.6),
-                                size: 16,
-                              ),
-                            ],
-                          ),
-                  ),
-                  color: const Color(0xFF1C1C1E),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    side: const BorderSide(color: Colors.white10),
-                  ),
-                  onSelected: (String result) {
-                    if (result == 'share_community') {
-                      _handleShareToCommunity(date);
-                    } else if (result == 'delete_day') {
-                      _showDeleteDayDialog(date);
-                    }
+                    );
                   },
-                  itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<String>>[
-                        PopupMenuItem<String>(
-                          value: 'share_community',
-                          child: Row(
-                            children: const [
-                              Icon(Icons.share_rounded, color: Color(0xFF3EA6FF), size: 18),
-                              SizedBox(width: 10),
-                              Text(
-                                'Share to Community',
-                                style: TextStyle(color: Colors.white, fontSize: 14),
-                              ),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem<String>(
-                          value: 'delete_day',
-                          child: Row(
-                            children: [
-                              Icon(Icons.delete_outline_rounded, color: Colors.red[300], size: 18),
-                              const SizedBox(width: 10),
-                              Text(
-                                'Delete all for today',
-                                style: TextStyle(color: Colors.red[300], fontSize: 14),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
                 ),
-              ],
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(
-              left: 18.0,
-              right: 18.0,
-              bottom: 18.0,
-            ),
-            child: _buildImagesGrid(context, images, date),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildImagesGrid(
-    BuildContext context,
-    List<String> imageUrls,
-    String date,
-  ) {
-    final bool isWideWeb = kIsWeb && MediaQuery.of(context).size.width >= 980;
-    final int crossAxisCount = isWideWeb ? 4 : 3;
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1,
-      ),
-      itemCount: imageUrls.length,
-      itemBuilder: (context, index) {
-        return GestureDetector(
-          onLongPress: () => _showDeleteDialog(date, index),
-          onTap: () => _showImageZoom(imageUrls[index]),
-          child: Stack(
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C1E),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.04),
-                    width: 0.8,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 6,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Stack(
-                    fit: StackFit.expand,
+  void _openViewer(LocalProgressPhoto photo) {
+    final c = AppColors.of(context, listen: false);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: c.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!kIsWeb && File(photo.filePath).existsSync())
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 420),
+                child: Image.file(File(photo.filePath), fit: BoxFit.cover),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Image.network(
-                        imageUrls[index],
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Center(
-                            child: CircularProgressIndicator(
-                              value: loadingProgress.expectedTotalBytes != null
-                                  ? loadingProgress.cumulativeBytesLoaded /
-                                        loadingProgress.expectedTotalBytes!
-                                  : null,
-                              valueColor: const AlwaysStoppedAnimation<Color>(
-                                Color(0xFF3EA6FF),
-                              ),
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return const Icon(
-                            Icons.error_outline_rounded,
-                            color: Colors.redAccent,
-                            size: 28,
-                          );
-                        },
+                      Text(
+                        '${photo.category} • ${DateFormat('MMM d, yyyy').format(photo.takenAt.toLocal())}',
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                      // Soft premium bottom-up vignette shade
-                      Positioned.fill(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.black.withOpacity(0.4),
-                                Colors.transparent,
-                                Colors.transparent,
-                              ],
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              stops: const [0.0, 0.4, 1.0],
-                            ),
+                      if (photo.weightKg != null)
+                        Text(
+                          '${photo.weightKg!.toStringAsFixed(1)} kg',
+                          style: TextStyle(
+                            color: c.accent,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
+                    ],
+                  ),
+                  if (photo.caption.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      photo.caption,
+                      style: TextStyle(color: c.textSecondary),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          _deletePhoto(photo);
+                        },
+                        child: Text(
+                          'Delete',
+                          style: TextStyle(color: c.moveRed),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Close'),
                       ),
                     ],
                   ),
-                ),
-              ),
-              Positioned(
-                top: 6,
-                right: 6,
-                child: GestureDetector(
-                  onTap: () => _showDeleteDialog(date, index),
-                  child: Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF6B6B).withOpacity(0.9),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFFF6B6B).withOpacity(0.35),
-                          blurRadius: 6,
-                          spreadRadius: 1,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.delete_rounded,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showDeleteDialog(String date, int index) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Delete Image",
-          icon: Icons.delete_forever_rounded,
-          iconColor: const Color(0xFFFF4B4B),
-          content: const Text(
-            "Are you sure you want to delete this image?",
-          ),
-          actions: [
-            PremiumCancelButton(
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            PremiumConfirmButton(
-              label: "Delete",
-              gradientColors: const [Color(0xFFFF4B4B), Color(0xFFFF7B7B)],
-              onPressed: () {
-                Navigator.of(context).pop();
-                _deleteProgressImage(date, index);
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showDeleteDayDialog(String date) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Delete Day Images",
-          icon: Icons.delete_sweep_rounded,
-          iconColor: const Color(0xFFFF4B4B),
-          content: Text(
-            "Are you sure you want to delete all images uploaded on $date? This will also remove them from Supabase.",
-          ),
-          actions: [
-            PremiumCancelButton(
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            PremiumConfirmButton(
-              label: "Delete All",
-              gradientColors: const [Color(0xFFFF4B4B), Color(0xFFFF7B7B)],
-              onPressed: () {
-                Navigator.of(context).pop();
-                _deleteAllImagesForDate(date);
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showImageZoom(String imageUrl) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        opaque: false,
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            _ImageZoomOverlay(imageUrl: imageUrl),
-      ),
-    );
-  }
-}
-
-class _ImageZoomOverlay extends StatelessWidget {
-  final String imageUrl;
-
-  const _ImageZoomOverlay({required this.imageUrl});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black.withOpacity(0.95),
-      body: GestureDetector(
-        onTap: () => Navigator.pop(context),
-        child: Stack(
-          children: [
-            Center(
-              child: InteractiveViewer(
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  child: Hero(
-                    tag: 'zoomImage',
-                    child: Image.network(
-                      imageUrl,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const Icon(
-                          Icons.error,
-                          color: Colors.red,
-                          size: 64,
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 50,
-              right: 20,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
+                ],
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-// NEW: Custom PhotoEditingScreen for progress images
-class ProgressPhotoEditingScreen extends StatefulWidget {
-  final List<Uint8List> progressImages;
-  final String initialCaption;
-
-  const ProgressPhotoEditingScreen({
-    super.key,
-    required this.progressImages,
-    this.initialCaption = '',
-  });
-
-  @override
-  State<ProgressPhotoEditingScreen> createState() =>
-      _ProgressPhotoEditingScreenState();
-}
-
-class _ProgressPhotoEditingScreenState
-    extends State<ProgressPhotoEditingScreen> {
-  final List<Uint8List> _selectedImages = [];
-  final TextEditingController _captionController = TextEditingController();
-  final SupabaseClient _supabase = Supabase.instance.client;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final fbAuth.FirebaseAuth _firebaseAuth = fbAuth.FirebaseAuth.instance;
-  bool _isUploading = false;
-  int _currentPage = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _captionController.text = widget.initialCaption;
-    _selectedImages.addAll(widget.progressImages);
-  }
-
-  @override
-  void dispose() {
-    _captionController.dispose();
-    super.dispose();
-  }
-
-  Future<List<String>> _uploadImagesToSupabase() async {
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user == null) throw Exception('User not logged in');
-
-      List<String> imageUrls = [];
-
-      for (int i = 0; i < _selectedImages.length; i++) {
-        final String fileName =
-            'post_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
-        final String filePath = 'community-posts/${user.uid}/$fileName';
-
-        try {
-          await _supabase.storage
-              .from('community-posts')
-              .uploadBinary(filePath, _selectedImages[i]);
-
-          final String publicURL = _supabase.storage
-              .from('community-posts')
-              .getPublicUrl(filePath);
-
-          imageUrls.add(publicURL);
-        } catch (e) {
-          print('❌ Binary upload failed for image $i: $e');
-          throw e;
-        }
-      }
-
-      return imageUrls;
-    } catch (e) {
-      print('❌ Error uploading images: $e');
-      throw e;
-    }
-  }
-
-  Future<void> _createPostInFirestore(List<String> imageUrls) async {
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user == null) throw Exception('User not logged in');
-
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
-      final userData = userDoc.data();
-
-      final postData = {
-        'userId': user.uid,
-        'username': userData?['displayName'] ?? 'User',
-        'profileImage': userData?['photoURL'],
-        'caption': _captionController.text.trim(),
-        'postImages': imageUrls,
-        'timePosted': FieldValue.serverTimestamp(),
-        'likes': 0,
-        'commentCount': 0,
-        'likedBy': [],
-      };
-
-      await _firestore.collection('community_posts').add(postData);
-    } catch (e) {
-      print('Error creating post in Firestore: $e');
-      throw e;
-    }
-  }
-
-  Future<void> _handlePost() async {
-    if (_selectedImages.isEmpty || _captionController.text.trim().isEmpty) {
-      _showErrorSnackBar('Please add images and caption');
-      return;
-    }
-
-    setState(() {
-      _isUploading = true;
-    });
-
-    try {
-      final List<String> imageUrls = await _uploadImagesToSupabase();
-      await _createPostInFirestore(imageUrls);
-
-      Navigator.pop(context, {'success': true});
-
-      _showSuccessSnackBar('Progress shared to community successfully!');
-    } catch (e) {
-      print('Error creating post: $e');
-      _showErrorSnackBar('Failed to share progress: ${e.toString()}');
-    } finally {
-      setState(() {
-        _isUploading = false;
-      });
-    }
-  }
-
-  void _removeCurrentImage() {
-    if (_selectedImages.isNotEmpty) {
-      setState(() {
-        _selectedImages.removeAt(_currentPage);
-        if (_currentPage >= _selectedImages.length &&
-            _selectedImages.isNotEmpty) {
-          _currentPage = _selectedImages.length - 1;
-        } else if (_selectedImages.isEmpty) {
-          _currentPage = 0;
-        }
-      });
-    }
-  }
-
-  void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.red),
-    );
-  }
-
-  void _showSuccessSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.green),
-    );
-  }
-
-  Widget _buildImagePreview() {
-    if (_selectedImages.isEmpty) {
-      return Container(
-        width: double.infinity,
-        height: 300,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Colors.grey[800],
-          border: Border.all(color: Colors.grey[700]!, width: 1),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.photo_library, color: Colors.grey[600], size: 60),
-            const SizedBox(height: 16),
-            Text(
-              "No images selected",
-              style: TextStyle(color: Colors.grey[600], fontSize: 16),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      width: double.infinity,
-      height: 300,
-      decoration: BoxDecoration(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-        color: Colors.grey[800],
-      ),
-      child: Stack(
-        children: [
-          PageView.builder(
-            itemCount: _selectedImages.length,
-            onPageChanged: (index) {
-              setState(() {
-                _currentPage = index;
-              });
-            },
-            itemBuilder: (context, index) {
-              return Image.memory(
-                _selectedImages[index],
-                fit: BoxFit.cover,
-                width: double.infinity,
-                height: 300,
-                errorBuilder: (context, error, stackTrace) {
-                  return Center(
-                    child: Icon(Icons.error, color: Colors.grey[600], size: 60),
-                  );
-                },
-              );
-            },
-          ),
-
-          // Image counter
-          if (_selectedImages.length > 1)
-            Positioned(
-              top: 16,
-              right: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${_currentPage + 1}/${_selectedImages.length}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-
-          // Single close button for current image
-          if (_selectedImages.isNotEmpty)
-            Positioned(
-              top: 16,
-              left: 16,
-              child: GestureDetector(
-                onTap: _removeCurrentImage,
-                child: Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.close, color: Colors.white, size: 18),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        toolbarHeight: 80,
-        backgroundColor: Colors.black,
-        title: const Text(
-          "Share Progress",
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white),
-          onPressed: () {
-            Navigator.of(context).pop();
-          },
-        ),
-        actions: [
-          _isUploading
-              ? const Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
-                    ),
-                  ),
-                )
-              : TextButton(
-                  onPressed: _handlePost,
-                  child: const Text(
-                    "Post",
-                    style: TextStyle(
-                      color: Colors.orange,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF191919),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(children: [_buildImagePreview()]),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  "Caption",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF191919),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: TextField(
-                    controller: _captionController,
-                    decoration: const InputDecoration(
-                      hintText: "Share your progress story...",
-                      hintStyle: TextStyle(color: Colors.white70),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    style: const TextStyle(color: Colors.white, fontSize: 16),
-                    maxLines: null,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );

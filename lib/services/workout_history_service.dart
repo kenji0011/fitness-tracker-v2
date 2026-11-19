@@ -1,150 +1,108 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import '../models/workout_model.dart';
 import '../data/exercise_data2.dart';
+import '../data/fitness_journey_workouts.dart';
+import '../models/workout_model.dart';
+import 'tempo_rust_db.dart';
 
 class WorkoutHistoryService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final TempoRustDb _db = TempoRustDb.instance;
+  final String? _explicitProfileId;
 
-  // Get workout history for a specific period
+  WorkoutHistoryService({String? profileId}) : _explicitProfileId = profileId;
+
+  Future<String?> _resolveProfileId() async {
+    if (_explicitProfileId != null && _explicitProfileId.isNotEmpty) {
+      return _explicitProfileId;
+    }
+    return _db.getSetting('active_profile_id');
+  }
+
   Future<List<WorkoutHistory>> getWorkoutHistory({
     DateTime? startDate,
     DateTime? endDate,
   }) async {
-    final user = _auth.currentUser;
-    if (user == null) return [];
+    final pid = await _resolveProfileId();
+    if (pid == null || pid.isEmpty) return [];
 
-    try {
-      Query query = _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('doneInfos');
+    final allKnown = [
+      ...exerciseWorkouts,
+      ...fitnessJourneyWorkoutsById.values.expand((w) => w),
+    ];
 
-      if (startDate != null && endDate != null) {
-        query = query
-            .where('completedAt', isGreaterThanOrEqualTo: startDate)
-            .where('completedAt', isLessThanOrEqualTo: endDate);
-      }
+    final completed = await _db.getCompletedWorkouts(pid, limit: 300);
+    final history = <WorkoutHistory>[];
 
-      final snapshot = await query.get();
-      final history = <WorkoutHistory>[];
+    for (final item in completed) {
+      if (startDate != null && item.completedAt.isBefore(startDate)) continue;
+      if (endDate != null && item.completedAt.isAfter(endDate)) continue;
 
-      for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        final timestamp = data['completedAt'] as Timestamp?;
-        
-        if (timestamp != null) {
-          // Find the corresponding workout from our data
-          final workoutTitle = data['title'] ?? doc.id;
-          final workout = exerciseWorkouts.firstWhere(
-            (workout) => workout.title == workoutTitle,
-            orElse: () => Workout(
-              id: 'unknown',
-              title: workoutTitle,
-              duration: data['duration'] ?? 'Unknown',
-              exercises: data['exercises'] ?? 'Unknown',
-              level: data['level'] ?? 'Unknown',
-              bodyFocus: data['bodyFocus'] ?? 'Unknown',
-              videoAsset: 'assets/defaultVid.jpg',
-              thumbnailAsset: 'assets/abs.png',
-              exerciseList: [],
-            ),
-          );
+      final workout = allKnown.firstWhere(
+        (w) => w.id == item.workoutId || w.title == item.title,
+        orElse: () => Workout(
+          id: item.workoutId.isEmpty ? 'unknown' : item.workoutId,
+          title: item.title,
+          duration: item.durationLabel.isEmpty ? '20 min' : item.durationLabel,
+          exercises: item.exercisesLabel.isEmpty ? 'Workout' : item.exercisesLabel,
+          level: item.level.isEmpty ? 'Intermediate' : item.level,
+          bodyFocus: item.bodyFocus.isEmpty ? 'Full Body' : item.bodyFocus,
+          videoAsset: 'assets/default_picture.jpg',
+          thumbnailAsset: 'assets/default_picture.jpg',
+          exerciseList: const [],
+        ),
+      );
 
-          history.add(WorkoutHistory(
-            id: doc.id,
-            workout: workout,
-            completedAt: timestamp.toDate(),
-            actualDuration: (data['actualDuration'] ?? 0).toInt(),
-            expectedDuration: (data['expectedDuration'] ?? 0).toInt(),
-            isCheated: (data['isCheated'] ?? false) as bool,
-          ));
-        }
-      }
-
-      // Sort by date, most recent first
-      history.sort((a, b) => b.completedAt.compareTo(a.completedAt));
-
-      return history;
-    } catch (e) {
-      print('Error getting workout history: $e');
-      return [];
+      history.add(
+        WorkoutHistory(
+          id: item.id,
+          workout: workout,
+          completedAt: item.completedAt,
+          actualDuration: item.actualDurationSec,
+          expectedDuration: item.expectedDurationSec,
+          isCheated: item.isCheated,
+        ),
+      );
     }
+
+    history.sort((a, b) => b.completedAt.compareTo(a.completedAt));
+    return history;
   }
 
-  // Get exercise history for a specific exercise
- Future<List<ExerciseHistoryRecord>> getExerciseHistory(String exerciseName) async {
-    final user = _auth.currentUser;
-    if (user == null) return [];
+  Future<List<ExerciseHistoryRecord>> getExerciseHistory(
+    String exerciseName,
+  ) async {
+    final pid = await _resolveProfileId();
+    if (pid == null || pid.isEmpty) return [];
 
-    try {
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('exercise_inputs')
-          .where('exerciseName', isEqualTo: exerciseName)
-          .orderBy('date', descending: true)
-          .get();
-
-      final records = <ExerciseHistoryRecord>[];
-
-      for (final doc in snapshot.docs) {
-        final data = doc.data()!;
-        final record = ExerciseHistoryRecord(
-          exerciseName: data['exerciseName'] ?? exerciseName,
-          weightUsed: (data['weight'] ?? 0.0).toDouble(),
-          repsPerformed: (data['reps'] ?? 0).toInt(),
-          setsPerformed: (data['sets'] ?? 0).toInt(),
-          timestamp: (data['date'] as Timestamp?)?.toDate(),
-          workoutId: data['workoutId'] ?? '',
-        );
-        records.add(record);
-      }
-
-      return records;
-    } catch (e) {
-      print('Error getting exercise history: $e');
-      return [];
-    }
+    final records =
+        await _db.getExerciseRecords(pid, exerciseName: exerciseName);
+    return records
+        .map(
+          (r) => ExerciseHistoryRecord(
+            exerciseName: r.exerciseName,
+            weightUsed: r.weightUsed,
+            repsPerformed: r.repsPerformed,
+            setsPerformed: r.setsPerformed,
+            timestamp: r.recordedAt,
+            workoutId: r.workoutId,
+          ),
+        )
+        .toList();
   }
 
-  // Get all exercise names that the user has performed
- Future<List<String>> getAllCompletedExercises() async {
-    final user = _auth.currentUser;
-    if (user == null) return [];
+  Future<List<String>> getAllCompletedExercises() async {
+    final pid = await _resolveProfileId();
+    if (pid == null || pid.isEmpty) return [];
 
-    try {
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('exercise_inputs')
-          .get();
-
-      final Set<String> exerciseNames = <String>{};
-
-      for (final doc in snapshot.docs) {
-        final data = doc.data()!;
-        final exerciseName = data['exerciseName'] as String?;
-        if (exerciseName != null) {
-          exerciseNames.add(exerciseName);
-        }
-      }
-
-      return exerciseNames.toList();
-    } catch (e) {
-      print('Error getting completed exercises: $e');
-      return [];
-    }
- }
+    final records = await _db.getExerciseRecords(pid);
+    return records.map((r) => r.exerciseName).toSet().toList();
+  }
 }
 
 class WorkoutHistory {
   final String id;
   final Workout workout;
   final DateTime completedAt;
- final int actualDuration; // in seconds
- final int expectedDuration; // in seconds
+  final int actualDuration;
+  final int expectedDuration;
   final bool isCheated;
 
   WorkoutHistory({

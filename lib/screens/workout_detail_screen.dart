@@ -1,2022 +1,1055 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui';
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+
 import '../models/workout_model.dart';
+import '../services/active_profile_provider.dart';
 import '../services/journey_progress_service.dart';
-import '../services/workout_goal_service.dart';
+import '../services/live_workout_service.dart';
+import '../services/tempo_rust_db.dart';
+import '../theme/app_colors.dart';
+import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_sliver_header.dart';
 import 'exercise_detail_screen.dart';
-import '../widgets/premium_dialog.dart';
-import '../widgets/premium_back_button.dart';
 
 class WorkoutDetailScreen extends StatefulWidget {
   final Workout workout;
-  final VoidCallback? onWorkoutCompleted; // Add callback for when workout is completed
-  final VoidCallback? onWorkoutReset; // Add callback for when workout is reset
-  const WorkoutDetailScreen({
-    Key? key,
-    required this.workout,
-    this.onWorkoutCompleted,
-    this.onWorkoutReset,
-  }) : super(key: key);
+
+  const WorkoutDetailScreen({super.key, required this.workout});
 
   @override
   State<WorkoutDetailScreen> createState() => _WorkoutDetailScreenState();
 }
 
 class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
-  bool _isWorkoutCompleted = false;
-  bool _isSavingWorkoutCompletion = false;
-  String _currentButtonState = 'start'; // 'start', 'done', 'again'
-  DateTime? _workoutStartTime;
-  bool _isJourneyAccessLoading = false;
-  bool _isJourneyStarted = true;
-  Set<int> _viewedExercises = {}; // Track which exercises have been viewed
-  Set<int> _exercisesWithWeightInput = {}; // Track which exercises have had weight input
-  final Map<int, ExerciseTrackingDraft> _exerciseDrafts = {};
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final Set<int> _checkedExercises = {};
+  Timer? _timer;
+  int _accumulatedSeconds = 0;
+  DateTime? _runStartedAt;
+  bool _isRunning = false;
+  bool _isCountingDown = false;
+  bool _isSaving = false;
 
-  DateTime _startOfToday() {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day);
-  }
-
-  DateTime _endOfToday() {
-    return _startOfToday().add(const Duration(days: 1));
-  }
-
-  String _dateKey(DateTime date) {
-    return DateFormat('yyyy-MM-dd').format(date);
-  }
-
-  DateTime _dateFromKey(String dateKey) {
-    return DateTime.tryParse(dateKey) ?? DateTime.now();
-  }
-
-  String _exerciseRecordDocId(String exerciseName) {
-    final sanitized = exerciseName
-        .trim()
-        .replaceAll(RegExp(r'[\\/]'), '_')
-        .replaceAll(RegExp(r'\s+'), ' ');
-    return sanitized.isEmpty ? 'exercise_record' : sanitized;
-  }
-
-  String? _resolveStoredDayKey(Map<String, dynamic> data) {
-    final lastResetValue = data['lastDailyResetDate'];
-    if (lastResetValue is String && lastResetValue.isNotEmpty) {
-      return lastResetValue;
+  int get _elapsedSeconds {
+    if (_isRunning && _runStartedAt != null) {
+      return _accumulatedSeconds +
+          DateTime.now().difference(_runStartedAt!).inSeconds;
     }
-    if (lastResetValue is Timestamp) {
-      return _dateKey(lastResetValue.toDate());
-    }
-    if (lastResetValue is DateTime) {
-      return _dateKey(lastResetValue);
-    }
-
-    final updatedAt = data['updatedAt'];
-    if (updatedAt is Timestamp) {
-      return _dateKey(updatedAt.toDate());
-    }
-    if (updatedAt is DateTime) {
-      return _dateKey(updatedAt);
-    }
-    if (updatedAt is String) {
-      final parsed = DateTime.tryParse(updatedAt);
-      if (parsed != null) {
-        return _dateKey(parsed);
-      }
-    }
-    return null;
+    return _accumulatedSeconds;
   }
 
   @override
-  void initState() {
-    super.initState();
-    _isJourneyStarted = widget.workout.journeyId == null;
-    _checkWorkoutCompletionStatus();
-    _loadJourneyAccessStatus();
+  void dispose() {
+    _timer?.cancel();
+    LiveWorkoutService.instance.stop();
+    super.dispose();
   }
 
-  // Check if the workout has already been completed by the user today
- Future<void> _checkWorkoutCompletionStatus() async {
-    try {
-      final user = _auth.currentUser;
-      if (user != null) {
-        final completedWorkoutsDoc = await _firestore
-            .collection('users')
-            .doc(user.uid)
-            .collection('completed_workouts')
-            .doc(widget.workout.title);
-        final latestStatusDoc = await completedWorkoutsDoc.get();
+  String get _categoryLabel => (widget.workout.journeyName != null &&
+          widget.workout.journeyName!.isNotEmpty)
+      ? widget.workout.journeyName!
+      : widget.workout.bodyFocus;
 
-        bool isCompletedToday = false;
-
-        if (latestStatusDoc.exists) {
-          final data = latestStatusDoc.data();
-          if (data != null && data['completedAt'] != null) {
-            final completedAt = (data['completedAt'] as Timestamp).toDate();
-            final today = DateTime.now();
-            isCompletedToday = completedAt.year == today.year &&
-                completedAt.month == today.month &&
-                completedAt.day == today.day;
-          }
-        }
-
-        setState(() {
-          _isWorkoutCompleted = isCompletedToday;
-          _currentButtonState = isCompletedToday ? 'again' : 'start';
-        });
-      }
-    } catch (e) {
-      print('Error checking workout completion status: $e');
-      setState(() {
-        _isWorkoutCompleted = false;
-        _currentButtonState = 'start';
-      });
-    }
-  }
-
-  Future<void> _loadJourneyAccessStatus() async {
-    if (widget.workout.journeyId == null) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isJourneyStarted = true;
-        _isJourneyAccessLoading = false;
-      });
-      return;
-    }
-
-    try {
-      final user = _auth.currentUser;
-      if (user == null) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _isJourneyStarted = false;
-          _isJourneyAccessLoading = false;
-        });
-        return;
-      }
-
-      setState(() {
-        _isJourneyAccessLoading = true;
-      });
-
-      final journeyDoc = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('journey_progress')
-          .doc(widget.workout.journeyId)
-          .get();
-
-      final data = journeyDoc.data();
-      final status = data?['status'] as String?;
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isJourneyStarted = status == 'in_progress' || status == 'completed';
-        _isJourneyAccessLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isJourneyStarted = widget.workout.journeyId == null;
-        _isJourneyAccessLoading = false;
-      });
-    }
-  }
-
-  @override
- Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final bool isTabletLayout = screenWidth >= 700;
-    final bool isWideLayout = screenWidth >= 1100;
-    final double contentMaxWidth = isWideLayout
-        ? 1280
-        : (isTabletLayout ? 920 : double.infinity);
-
-    return WillPopScope(
-      onWillPop: _onBackPressed,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(80),
-          child: Container(
-            color: Colors.black,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: isTabletLayout ? contentMaxWidth : screenWidth,
-                ),
-                child: AppBar(
-                  toolbarHeight: 80,
-                  backgroundColor: Colors.black,
-                  elevation: 0,
-                  leading: _isSavingWorkoutCompletion
-                      ? null
-                      : PremiumBackButton(
-                          onPressed: () async {
-                            bool shouldPop = await _onBackPressed();
-                            if (shouldPop) {
-                              Navigator.pop(context);
-                            }
-                          },
-                        ),
-                  title: Text(
-                    widget.workout.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  centerTitle: true,
-                ),
-              ),
-            ),
-          ),
-        ),
-        body: SafeArea(
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: contentMaxWidth),
-              child: isWideLayout
-                  ? _buildDesktopContent()
-                  : SingleChildScrollView(
-                child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Workout Image/Thumbnail
-                  Container(
-                    width: double.infinity,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: widget.workout.thumbnailAsset.startsWith('http')
-                          ? Image.network(
-                              widget.workout.thumbnailAsset,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Icon(
-                                  Icons.fitness_center,
-                                  color: Colors.white,
-                                  size: 60,
-                                );
-                              },
-                            )
-                          : Image.asset(
-                              widget.workout.thumbnailAsset,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Icon(
-                                  Icons.fitness_center,
-                                  color: Colors.white,
-                                  size: 60,
-                                );
-                              },
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Workout Info
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF191919),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.workout.title,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              _buildInfoItem(
-                                icon: Icons.fitness_center,
-                                label: "${widget.workout.exerciseList.length} exercises",
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _getLevelColor(widget.workout.level).withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: _getLevelColor(widget.workout.level).withOpacity(0.4),
-                                  ),
-                                ),
-                                child: Text(
-                                  widget.workout.level,
-                                  style: TextStyle(
-                                    color: _getLevelColor(widget.workout.level),
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.orange.withOpacity(0.4),
-                                  ),
-                                ),
-                                child: Text(
-                                  widget.workout.bodyFocus,
-                                  style: const TextStyle(
-                                    color: Colors.orange,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Workout Description
-                  const Text(
-                    "About this workout",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF191919),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Text(
-                        widget.workout.description != null && widget.workout.description!.isNotEmpty
-                            ? widget.workout.description!
-                            : "This ${widget.workout.level.toLowerCase()} level ${widget.workout.bodyFocus.toLowerCase()} workout is designed to help you build strength and improve your fitness. The routine includes ${widget.workout.exerciseList.length} exercises that target various muscle groups in the ${widget.workout.bodyFocus.toLowerCase()} area.",
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                          height: 1.5,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Exercise List
-                  const Text(
-                    "Exercises",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _isWorkoutSessionActive()
-                        ? "Tap any exercise to continue the active workout."
-                        : _isWorkoutCompleted
-                            ? "Tap any exercise to review this completed workout. Inputs are locked after finishing."
-                            : (!_isJourneyStarted && widget.workout.journeyId != null)
-                                ? "Preview only. Start this journey first to unlock workout tracking."
-                                : "Tap any exercise to preview it. Workout tracking only starts after pressing Start Workout.",
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF191919),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        children: _buildExerciseList(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-          ),
-        ),
-        bottomNavigationBar: isWideLayout ? null : Container(
-          padding: const EdgeInsets.all(16.0),
-          decoration: BoxDecoration(
-            color: Colors.black,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 10,
-                offset: const Offset(0, -4),
-              ),
-            ],
-          ),
-          child: (!_isJourneyStarted && widget.workout.journeyId != null)
-              ? Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF191919),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.08),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      if (_isJourneyAccessLoading)
-                        const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.orange,
-                            ),
-                          ),
-                        )
-                      else
-                        const Icon(
-                          Icons.visibility_outlined,
-                          color: Colors.orange,
-                          size: 18,
-                        ),
-                      const SizedBox(width: 10),
-                      const Expanded(
-                        child: Text(
-                          'Preview mode only. Tap Start Journey on the previous screen to unlock Start Workout.',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              : Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    gradient: _getButtonAction() == null
-                        ? null
-                        : const LinearGradient(
-                            colors: [Color(0xFFFF9800), Color(0xFFFF5722)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                    color: _getButtonAction() == null ? Colors.grey[800] : null,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: _getButtonAction() != null
-                        ? [
-                            BoxShadow(
-                              color: Colors.orange.withOpacity(0.3),
-                              blurRadius: 12,
-                              offset: const Offset(0, 6),
-                            ),
-                          ]
-                        : [],
-                  ),
-                  child: ElevatedButton(
-                    onPressed: _getButtonAction(),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      shadowColor: Colors.transparent,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    child: Text(
-                      _getButtonText(),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ),
-        ),
-      ),
+  void _syncLiveUpdate({required bool isPaused}) {
+    LiveWorkoutService.instance.startOrUpdate(
+      workoutTitle: widget.workout.title,
+      category: _categoryLabel,
+      elapsedSeconds: _elapsedSeconds,
+      completedExercises: _checkedExercises.length,
+      totalExercises: widget.workout.exerciseList.length,
+      isPaused: isPaused,
     );
   }
 
-  Widget _buildDesktopContent() {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 28),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 6,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    height: 300,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: widget.workout.thumbnailAsset.startsWith('http')
-                          ? Image.network(
-                              widget.workout.thumbnailAsset,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Icon(
-                                  Icons.fitness_center,
-                                  color: Colors.white,
-                                  size: 60,
-                                );
-                              },
-                            )
-                          : Image.asset(
-                              widget.workout.thumbnailAsset,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Icon(
-                                  Icons.fitness_center,
-                                  color: Colors.white,
-                                  size: 60,
-                                );
-                              },
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF191919),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.workout.title,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 14,
-                            runSpacing: 8,
-                            children: [
-                              _buildInfoItem(
-                                icon: Icons.fitness_center,
-                                label:
-                                    "${widget.workout.exerciseList.length} exercises",
-                              ),
-                              _buildInfoItem(
-                                icon: Icons.timer_outlined,
-                                label: _getTotalExerciseDuration(),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _getLevelColor(widget.workout.level)
-                                      .withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: _getLevelColor(widget.workout.level)
-                                        .withOpacity(0.4),
-                                  ),
-                                ),
-                                child: Text(
-                                  widget.workout.level,
-                                  style: TextStyle(
-                                    color: _getLevelColor(widget.workout.level),
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange.withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.orange.withOpacity(0.4),
-                                  ),
-                                ),
-                                child: Text(
-                                  widget.workout.bodyFocus,
-                                  style: const TextStyle(
-                                    color: Colors.orange,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    "About this workout",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF191919),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Text(
-                        widget.workout.description != null && widget.workout.description!.isNotEmpty
-                            ? widget.workout.description!
-                            : "This ${widget.workout.level.toLowerCase()} level ${widget.workout.bodyFocus.toLowerCase()} workout is designed to help you build strength and improve your fitness. The routine includes ${widget.workout.exerciseList.length} exercises that target various muscle groups in the ${widget.workout.bodyFocus.toLowerCase()} area.",
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                          height: 1.5,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+  void _startTimerTicking() {
+    _timer?.cancel();
+    setState(() {
+      _isCountingDown = false;
+      _isRunning = true;
+      _runStartedAt = DateTime.now();
+    });
+    _syncLiveUpdate(isPaused: false);
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {});
+    });
+  }
+
+  void _toggleTimer() {
+    if (_isCountingDown) return;
+    HapticFeedback.selectionClick();
+    if (_isRunning) {
+      _timer?.cancel();
+      final totalNow = _elapsedSeconds;
+      setState(() {
+        _accumulatedSeconds = totalNow;
+        _runStartedAt = null;
+        _isRunning = false;
+      });
+      _syncLiveUpdate(isPaused: true);
+    } else if (_elapsedSeconds == 0) {
+      // Request notification permission quietly (non-blocking) for HyperIsland Live Updates
+      LiveWorkoutService.instance.ensureNotificationPermission();
+      // Fresh start -> launch the 3-2-1 countdown animation!
+      setState(() => _isCountingDown = true);
+    } else {
+      // Resume directly when paused mid-session
+      _startTimerTicking();
+    }
+  }
+
+  void _resetTimer() {
+    HapticFeedback.selectionClick();
+    _timer?.cancel();
+    LiveWorkoutService.instance.stop();
+    setState(() {
+      _isRunning = false;
+      _accumulatedSeconds = 0;
+      _runStartedAt = null;
+    });
+  }
+
+  String _formatTime(int sec) {
+    final m = (sec ~/ 60).toString().padLeft(2, '0');
+    final s = (sec % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  int _estimateCalories() {
+    if (widget.workout.exerciseList.isEmpty) {
+      return ((_elapsedSeconds / 60.0) * 7).round().clamp(30, 800);
+    }
+    double total = 0;
+    for (int i = 0; i < widget.workout.exerciseList.length; i++) {
+      final ex = widget.workout.exerciseList[i];
+      total += ex.getCaloriesBurned(sets: 3, reps: 10);
+    }
+    return total.round().clamp(45, 950);
+  }
+
+  Future<void> _completeWorkout() async {
+    final profileProvider = context.read<ActiveProfileProvider>();
+    final profileId = profileProvider.activeProfileId;
+    if (profileId == null) return;
+
+    _timer?.cancel();
+    LiveWorkoutService.instance.stop();
+    final totalElapsed = _elapsedSeconds;
+    setState(() {
+      _accumulatedSeconds = totalElapsed;
+      _runStartedAt = null;
+      _isRunning = false;
+      _isCountingDown = false;
+      _isSaving = true;
+    });
+
+    try {
+      final expectedSec = widget.workout.exerciseList
+          .fold<int>(0, (sum, e) => sum + e.duration);
+      final actualSec = _elapsedSeconds > 0
+          ? _elapsedSeconds
+          : (expectedSec > 0 ? expectedSec : 1200);
+      final calories = _estimateCalories();
+
+      await TempoRustDb.instance.logCompletedWorkout(
+        profileId: profileId,
+        workoutId: widget.workout.id,
+        title: widget.workout.title,
+        durationLabel: widget.workout.duration,
+        exercisesLabel: widget.workout.exercises,
+        level: widget.workout.level,
+        bodyFocus: widget.workout.bodyFocus,
+        journeyId: widget.workout.journeyId ?? '',
+        journeyName: widget.workout.journeyName ?? '',
+        actualDurationSec: actualSec,
+        expectedDurationSec: expectedSec,
+        caloriesBurned: calories,
+        isCheated: false,
+      );
+
+      if (widget.workout.journeyId != null &&
+          widget.workout.journeyId!.isNotEmpty) {
+        await JourneyProgressService.syncJourneyProgressForProfile(
+          profileId: profileId,
+          journeyId: widget.workout.journeyId!,
+          journeyName: widget.workout.journeyName ?? widget.workout.bodyFocus,
+          isSelected: true,
+          markStarted: true,
+        );
+      }
+
+      profileProvider.notifyDataChanged();
+
+      if (!mounted) return;
+      HapticFeedback.heavyImpact();
+      await showCupertinoDialog<void>(
+        context: context,
+        builder: (ctx) => CupertinoAlertDialog(
+          title: const Text('Workout Completed'),
+          content: Text(
+            '${widget.workout.title}\n\nDuration: ${_formatTime(actualSec)}\nEstimated Burn: $calories kcal',
+          ),
+          actions: [
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Done'),
             ),
-            const SizedBox(width: 24),
-            Expanded(
-              flex: 5,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    "Exercises",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+          ],
+        ),
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving workout: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final exercises = widget.workout.exerciseList;
+    final categoryText = (widget.workout.journeyName != null &&
+            widget.workout.journeyName!.isNotEmpty)
+        ? widget.workout.journeyName!
+        : widget.workout.bodyFocus;
+
+    return Scaffold(
+      backgroundColor: c.scaffold,
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              Expanded(
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    TempoSliverHeader(
+                      title: widget.workout.title,
+                      showBackButton: true,
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _isWorkoutSessionActive()
-                        ? "Tap any exercise to continue the active workout."
-                        : _isWorkoutCompleted
-                            ? "Tap any exercise to review this completed workout. Inputs are locked after finishing."
-                            : (!_isJourneyStarted && widget.workout.journeyId != null)
-                                ? "Preview only. Start this journey first to unlock workout tracking."
-                                : "Tap any exercise to preview it. Workout tracking only starts after pressing Start Workout.",
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF191919),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        children: _buildExerciseList(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF191919),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: (!_isJourneyStarted && widget.workout.journeyId != null)
-                        ? Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.25),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.08),
-                              ),
-                            ),
-                            child: Row(
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+                      sliver: SliverList.list(
+                        children: [
+                          // 1. Minimal Overview & Session Timer Card
+                          AppleCard(
+                            borderRadius: 24,
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                if (_isJourneyAccessLoading)
-                                  const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.orange,
+                                // Minimal category & workout name/level indicators
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        categoryText,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: c.textSecondary,
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
                                     ),
-                                  )
-                                else
-                                  const Icon(
-                                    Icons.visibility_outlined,
-                                    color: Colors.orange,
-                                    size: 18,
-                                  ),
-                                const SizedBox(width: 10),
-                                const Expanded(
-                                  child: Text(
-                                    'Preview mode only. Tap Start Journey on the previous screen to unlock Start Workout.',
-                                    style: TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 2.5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(color: c.cardBorder),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        widget.workout.level,
+                                        style: TextStyle(
+                                          color: c.textSecondary,
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
                                     ),
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                                // Clean hairline-separated summary metrics
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _OverviewMetric(
+                                        label: 'Duration',
+                                        value: widget.workout.duration,
+                                      ),
+                                    ),
+                                    Container(
+                                      width: 1,
+                                      height: 28,
+                                      color: c.divider,
+                                    ),
+                                    Expanded(
+                                      child: _OverviewMetric(
+                                        label: 'Exercises',
+                                        value: '${exercises.length}',
+                                      ),
+                                    ),
+                                    Container(
+                                      width: 1,
+                                      height: 28,
+                                      color: c.divider,
+                                    ),
+                                    Expanded(
+                                      child: _OverviewMetric(
+                                        label: 'Est. burn',
+                                        value: '${_estimateCalories()} kcal',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 18),
+                                Divider(height: 1, color: c.divider),
+                                const SizedBox(height: 16),
+
+                                // Session Timer Row
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              AnimatedContainer(
+                                                duration: const Duration(
+                                                  milliseconds: 250,
+                                                ),
+                                                width: 7,
+                                                height: 7,
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: _isRunning
+                                                      ? c.accent
+                                                      : c.textTertiary
+                                                          .withValues(
+                                                              alpha: 0.45),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                _isRunning
+                                                    ? 'In progress'
+                                                    : 'Session timer',
+                                                style: TextStyle(
+                                                  color: _isRunning
+                                                      ? c.accent
+                                                      : c.textSecondary,
+                                                  fontSize: 12.5,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            _formatTime(_elapsedSeconds),
+                                            style: TextStyle(
+                                              color: c.textPrimary,
+                                              fontSize: 34,
+                                              fontWeight: FontWeight.w700,
+                                              letterSpacing: -1.0,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (!_isRunning && _elapsedSeconds > 0) ...[
+                                      GestureDetector(
+                                        onTap: _resetTimer,
+                                        child: Container(
+                                          width: 40,
+                                          height: 40,
+                                          margin:
+                                              const EdgeInsets.only(right: 8),
+                                          decoration: BoxDecoration(
+                                            color: c.searchBg,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            CupertinoIcons.refresh,
+                                            size: 17,
+                                            color: c.textSecondary,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                    _SessionActionButton(
+                                      isRunning: _isRunning,
+                                      hasStarted: _elapsedSeconds > 0,
+                                      onTap: _toggleTimer,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+
+                          // 2. Exercises Section Header
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Row(
+                              children: [
+                                Text(
+                                  'Exercises',
+                                  style: TextStyle(
+                                    color: c.textPrimary,
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: -0.3,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  '${_checkedExercises.length}/${exercises.length} done',
+                                  style: TextStyle(
+                                    color: c.textTertiary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w500,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
                                   ),
                                 ),
                               ],
                             ),
-                          )
-                        : Container(
-                            width: double.infinity,
-                            decoration: BoxDecoration(
-                              gradient: _getButtonAction() == null
-                                  ? null
-                                  : const LinearGradient(
-                                      colors: [Color(0xFFFF9800), Color(0xFFFF5722)],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                              color: _getButtonAction() == null ? Colors.grey[800] : null,
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: _getButtonAction() != null
-                                  ? [
-                                      BoxShadow(
-                                        color: Colors.orange.withOpacity(0.3),
-                                        blurRadius: 12,
-                                        offset: const Offset(0, 6),
+                          ),
+
+                          // 3. Clean Grouped Exercises Card
+                          AppleCard(
+                            borderRadius: 24,
+                            padding: EdgeInsets.zero,
+                            child: Column(
+                              children: List.generate(exercises.length, (idx) {
+                                final ex = exercises[idx];
+                                final checked = _checkedExercises.contains(idx);
+                                final isLast = idx == exercises.length - 1;
+                                return Column(
+                                  children: [
+                                    InkWell(
+                                      onTap: () async {
+                                        HapticFeedback.selectionClick();
+                                        final logged =
+                                            await Navigator.push<bool>(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                ExerciseDetailScreen(
+                                              exercise: ex,
+                                              workout: widget.workout,
+                                            ),
+                                          ),
+                                        );
+                                        if (logged == true && mounted) {
+                                          setState(
+                                            () => _checkedExercises.add(idx),
+                                          );
+                                          if (_isRunning || _elapsedSeconds > 0) {
+                                            _syncLiveUpdate(
+                                              isPaused: !_isRunning,
+                                            );
+                                          }
+                                        }
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 15,
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            GestureDetector(
+                                              behavior: HitTestBehavior.opaque,
+                                              onTap: () {
+                                                HapticFeedback.selectionClick();
+                                                setState(() {
+                                                  if (checked) {
+                                                    _checkedExercises
+                                                        .remove(idx);
+                                                  } else {
+                                                    _checkedExercises.add(idx);
+                                                  }
+                                                });
+                                                if (_isRunning ||
+                                                    _elapsedSeconds > 0) {
+                                                  _syncLiveUpdate(
+                                                    isPaused: !_isRunning,
+                                                  );
+                                                }
+                                              },
+                                              child: Padding(
+                                                padding: const EdgeInsets.all(4),
+                                                child: AnimatedContainer(
+                                                  duration: const Duration(
+                                                    milliseconds: 200,
+                                                  ),
+                                                  curve: Curves.easeOutCubic,
+                                                  width: 24,
+                                                  height: 24,
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color: checked
+                                                        ? c.textPrimary
+                                                        : Colors.transparent,
+                                                    border: Border.all(
+                                                      color: checked
+                                                          ? c.textPrimary
+                                                          : c.textTertiary
+                                                              .withValues(
+                                                                  alpha: 0.6),
+                                                      width: 1.6,
+                                                    ),
+                                                  ),
+                                                  child: checked
+                                                      ? Icon(
+                                                          CupertinoIcons
+                                                              .checkmark_alt,
+                                                          size: 14,
+                                                          color: c.isDark
+                                                              ? Colors.black
+                                                              : Colors.white,
+                                                        )
+                                                      : null,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    ex.name,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      color: checked
+                                                          ? c.textSecondary
+                                                          : c.textPrimary,
+                                                      fontSize: 15.5,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      decoration: checked
+                                                          ? TextDecoration
+                                                              .lineThrough
+                                                          : null,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    ex.description,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      color: c.textSecondary,
+                                                      fontSize: 12.5,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Icon(
+                                              CupertinoIcons.play_circle,
+                                              color: c.textTertiary,
+                                              size: 22,
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ]
-                                  : [],
-                            ),
-                            child: ElevatedButton(
-                              onPressed: _getButtonAction(),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.transparent,
-                                shadowColor: Colors.transparent,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 18),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                              child: Text(
-                                _getButtonText(),
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
+                                    ),
+                                    if (!isLast)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(left: 56),
+                                        child: Divider(
+                                          height: 1,
+                                          color: c.divider,
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              }),
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Unified Signature Primary Button
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: c.accent,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: _isSaving ? null : _completeWorkout,
+                      child: _isSaving
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              'Complete Workout (${_checkedExercises.length}/${exercises.length})',
+                              style: const TextStyle(
+                                fontSize: 15.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                    ),
                   ),
-                ],
+                ),
+              ),
+            ],
+          ),
+
+          // Full-screen iOS 27 Frosted 3 · 2 · 1 · GO Countdown Overlay
+          if (_isCountingDown)
+            Positioned.fill(
+              child: _SessionCountdownOverlay(
+                workoutTitle: widget.workout.title,
+                onComplete: _startTimerTicking,
+                onCancel: () => setState(() => _isCountingDown = false),
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
+}
 
-  // Handle back button press to properly manage workout state
-  Future<bool> _onBackPressed() async {
-    if (_isSavingWorkoutCompletion) {
-      return false;
-    }
+class _OverviewMetric extends StatelessWidget {
+  final String label;
+  final String value;
 
-    // Keep the cancel confirmation active until the workout is actually saved.
-    if (_isWorkoutSessionActive() && !_isWorkoutCompleted) {
-      return await showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return PremiumDialog(
-            title: "Workout in Progress",
-            icon: Icons.warning_amber_rounded,
-            iconColor: const Color(0xFFFF9800),
-            content: const Text(
-              "You have a workout in progress. Are you sure you want to exit? Your progress will not be saved.",
-            ),
-            actions: [
-              PremiumCancelButton(
-                label: "Cancel",
-                onPressed: () {
-                  Navigator.of(context).pop(false);
-                },
-              ),
-              PremiumConfirmButton(
-                label: "Exit",
-                gradientColors: const [Color(0xFFFF9800), Color(0xFFFF5722)],
-                onPressed: () {
-                  _cancelWorkoutSession();
-                  Navigator.of(context).pop(true);
-                },
-              ),
-            ],
-          );
-        },
-      ) ?? false;
-    }
+  const _OverviewMetric({required this.label, required this.value});
 
-    // If no workout is in progress, allow normal exit
-    return true;
-  }
-
-  Widget _buildInfoItem({required IconData icon, required String label}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Icon(icon, color: Colors.white70, size: 16),
-        const SizedBox(width: 4),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: c.textPrimary,
+            fontSize: 15.5,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(height: 2),
         Text(
           label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
+          style: TextStyle(
+            color: c.textTertiary,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ],
     );
   }
+}
 
-  bool _isWorkoutSessionActive() {
-    return _workoutStartTime != null;
-  }
+class _SessionActionButton extends StatefulWidget {
+  final bool isRunning;
+  final bool hasStarted;
+  final VoidCallback onTap;
 
-  Future<void> _openWorkoutExercise(
-    int exerciseIndex, {
-    bool isReadOnlyMode = false,
-  }) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ExerciseDetailScreen(
-          exerciseNumber: exerciseIndex + 1,
-          workout: widget.workout,
-          isPreviewMode: false,
-          isReadOnlyMode: isReadOnlyMode,
-          initialDraft: _getExerciseDraft(exerciseIndex),
-          draftForExercise: _getExerciseDraft,
-          onExerciseViewed: markExerciseAsViewed,
-          onWeightInput: markExerciseWithWeightInput,
-          onDraftChanged: _updateExerciseDraft,
-          onWorkoutCancelled: _cancelWorkoutSession,
+  const _SessionActionButton({
+    required this.isRunning,
+    required this.hasStarted,
+    required this.onTap,
+  });
+
+  @override
+  State<_SessionActionButton> createState() => _SessionActionButtonState();
+}
+
+class _SessionActionButtonState extends State<_SessionActionButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final bg = widget.isRunning ? c.searchBg : c.accent;
+    final fg = widget.isRunning ? c.textPrimary : Colors.white;
+    final label = widget.isRunning
+        ? 'Pause'
+        : (widget.hasStarted ? 'Resume' : 'Start');
+
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        widget.onTap();
+      },
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.94 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(99),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                widget.isRunning
+                    ? CupertinoIcons.pause_fill
+                    : CupertinoIcons.play_fill,
+                color: fg,
+                size: 15,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
- List<Widget> _buildExerciseList() {
-    // Use the exerciseList from the workout model instead of calculating count
-    List<Widget> exercises = [];
-    for (int i = 0; i < widget.workout.exerciseList.length; i++) {
-      final exercise = widget.workout.exerciseList[i];
-      
-      exercises.add(
-        GestureDetector(
-          onTap: () async {
-            if (_isWorkoutSessionActive()) {
-              await _openWorkoutExercise(i);
-              return;
-            }
+/// Frosted-glass Apple Fitness-inspired 3 · 2 · 1 · GO countdown overlay with
+/// radial sweep ring, spring-pop numerals, and progressive haptics.
+class _SessionCountdownOverlay extends StatefulWidget {
+  final String workoutTitle;
+  final VoidCallback onComplete;
+  final VoidCallback onCancel;
 
-            if (_isWorkoutCompleted) {
-              await _openWorkoutExercise(i, isReadOnlyMode: true);
-              return;
-            }
+  const _SessionCountdownOverlay({
+    required this.workoutTitle,
+    required this.onComplete,
+    required this.onCancel,
+  });
 
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ExerciseDetailScreen(
-                  exerciseNumber: i + 1, // Use 1-based indexing for display
-                  workout: widget.workout,
-                  isPreviewMode: true,
-                ),
-              ),
-            );
-          },
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.04),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
+  @override
+  State<_SessionCountdownOverlay> createState() =>
+      _SessionCountdownOverlayState();
+}
+
+class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
+    with TickerProviderStateMixin {
+  late final AnimationController _beatController;
+  late final AnimationController _fadeController;
+
+  /// Steps: 3 -> 2 -> 1 -> 0 ("GO")
+  int _step = 3;
+  bool _finished = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    )..forward();
+
+    _beatController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 920),
+    )..addStatusListener(_onBeatStatus);
+
+    HapticFeedback.mediumImpact();
+    _beatController.forward(from: 0);
+  }
+
+  void _onBeatStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed || !mounted || _finished) return;
+
+    if (_step > 1) {
+      setState(() => _step--);
+      HapticFeedback.mediumImpact();
+      _beatController.forward(from: 0);
+    } else if (_step == 1) {
+      setState(() => _step = 0); // "GO"
+      HapticFeedback.heavyImpact();
+      _beatController.duration = const Duration(milliseconds: 520);
+      _beatController.forward(from: 0);
+    } else {
+      _complete();
+    }
+  }
+
+  Future<void> _complete() async {
+    if (_finished) return;
+    _finished = true;
+    await _fadeController.reverse();
+    if (mounted) widget.onComplete();
+  }
+
+  Future<void> _cancel() async {
+    if (_finished) return;
+    _finished = true;
+    HapticFeedback.selectionClick();
+    await _fadeController.reverse();
+    if (mounted) widget.onCancel();
+  }
+
+  @override
+  void dispose() {
+    _beatController.dispose();
+    _fadeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final label = _step > 0 ? '$_step' : 'GO';
+
+    return FadeTransition(
+      opacity: CurvedAnimation(
+        parent: _fadeController,
+        curve: Curves.easeOutCubic,
+      ),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          color: c.isDark
+              ? Colors.black.withValues(alpha: 0.72)
+              : Colors.white.withValues(alpha: 0.78),
+          child: SafeArea(
+            child: Column(
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFFF9800), Color(0xFFFF5722)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.orange.withOpacity(0.4),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Center(
-                    child: Text(
-                      (i + 1).toString(), // Use 1-based indexing for display
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
-                    ),
+                const Spacer(flex: 2),
+                Text(
+                  'Get ready',
+                  style: TextStyle(
+                    color: c.textSecondary,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.2,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
                   child: Text(
-                    exercise.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.3,
+                    widget.workoutTitle,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.4,
                     ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.arrow_forward_ios,
-                    size: 14,
-                    color: Colors.white70,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    return exercises;
-  }
-
-  Color _getLevelColor(String level) {
-    switch (level.toLowerCase()) {
-      case 'beginner':
-        return Colors.green;
-      case 'intermediate':
-        return Colors.orange;
-      case 'hard':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  // Helper methods to determine button text, color, and action based on state
- String _getButtonText() {
-    if (_isSavingWorkoutCompletion) {
-      return 'Saving...';
-    }
-    switch (_currentButtonState) {
-      case 'start':
-        return 'Start Workout';
-      case 'done':
-        return 'Done';
-      case 'again':
-        return 'Start Workout Again';
-      default:
-        return 'Start Workout';
-    }
- }
-
-  Color _getButtonColor() {
-    if (_isSavingWorkoutCompletion) {
-      return Colors.grey;
-    }
-    // Always show orange color for active buttons, grey when disabled
-    if (_currentButtonState == 'start') {
-      return Colors.orange;
-    } else if (_currentButtonState == 'done') {
-      return Colors.orange;
-    } else if (_currentButtonState == 'again') {
-      return Colors.orange;
-    } else {
-      return Colors.grey;
-    }
-  }
-
-  VoidCallback? _getButtonAction() {
-    if (_isSavingWorkoutCompletion) {
-      return null;
-    }
-    if (_currentButtonState == 'start') {
-      return _onStartWorkoutPressed;
-    } else if (_currentButtonState == 'done') {
-      return _onDoneWorkoutPressed;
-    } else if (_currentButtonState == 'again') {
-      return _onAgainWorkoutPressed;
-    } else {
-      return null;
-    }
-  }
-
-   // Helper method to convert duration string to seconds
-  int _parseDurationToSeconds(String duration) {
-    // Expected format: "X min" or "X mins" or "X minutes"
-    // For example: "25 mins", "30 min", "45 minutes"
-    final List<String> parts = duration.split(' ');
-    if (parts.length >= 2) {
-      try {
-        final int minutes = int.parse(parts[0]);
-        return minutes * 60; // Convert to seconds
-      } catch (e) {
-        print('Error parsing duration: $e');
-        return 0; // Default to 0 seconds if parsing fails
-      }
-    }
-    return 0; // Default to 0 seconds if format is unexpected
-  }
-
-   // Method to mark an exercise as viewed
-  void markExerciseAsViewed(int exerciseIndex) {
-    setState(() {
-      _viewedExercises.add(exerciseIndex);
-      // Check if all exercises have been viewed
-      if (_viewedExercises.length == widget.workout.exerciseList.length) {
-        _currentButtonState = 'done';
-      }
-    });
-  }
-
-  // Check if all exercises have been viewed
-  bool areAllExercisesViewed() {
-    return _viewedExercises.length == widget.workout.exerciseList.length;
-  }
-
-  Future<void> _beginWorkoutSession() async {
-    setState(() {
-      _workoutStartTime = DateTime.now();
-      _viewedExercises.clear(); // Reset viewed exercises when starting
-      _exercisesWithWeightInput.clear(); // Reset weight input tracking when starting
-      _exerciseDrafts.clear(); // Reset exercise drafts when starting
-      _currentButtonState = 'start'; // Keep as start initially, will change when all exercises are viewed
-    });
-
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ExerciseDetailScreen(
-          exerciseNumber: 1, // Always start with the first exercise
-          workout: widget.workout,
-          isPreviewMode: false,
-          initialDraft: _getExerciseDraft(0),
-          draftForExercise: _getExerciseDraft,
-          onExerciseViewed: markExerciseAsViewed, // Pass the callback to mark exercises as viewed
-          onWeightInput: markExerciseWithWeightInput, // Pass the callback to mark exercises as having weight input
-          onDraftChanged: _updateExerciseDraft,
-          onWorkoutCancelled: _cancelWorkoutSession,
-        ),
-      ),
-    );
-
-    // When returning from exercises, check if all exercises have been viewed to update button state
-    if (mounted && areAllExercisesViewed()) {
-      setState(() {
-        _currentButtonState = 'done';
-      });
-    }
-  }
-
-  // New methods for handling the different button states with popups
-  void _onStartWorkoutPressed() {
-    _beginWorkoutSession();
-  }
-
-  bool _draftHasRequiredInputs(int exerciseIndex, ExerciseTrackingDraft? draft) {
-    if (draft == null) {
-      return false;
-    }
-
-    final exercise = widget.workout.exerciseList[exerciseIndex];
-    final hasRequiredWeight = !exercise.requiresWeightInput || draft.hasValidWeight;
-
-    return hasRequiredWeight && draft.hasValidReps && draft.hasValidSets;
-  }
-
-  // Check if all exercises have had weight input
-  bool areAllExercisesWithWeightInput() {
-    if (_exerciseDrafts.length != widget.workout.exerciseList.length) {
-      return false;
-    }
-
-    return List.generate(widget.workout.exerciseList.length, (index) => index)
-        .every((index) {
-      final draft = _exerciseDrafts[index];
-      return _draftHasRequiredInputs(index, draft);
-    });
-  }
-
-  int _completedExerciseDraftCount() {
-    return _exerciseDrafts.entries.where((entry) {
-      return _draftHasRequiredInputs(entry.key, entry.value);
-    }).length;
-  }
-
-  // Mark an exercise as having weight input
-  void markExerciseWithWeightInput(int exerciseIndex) {
-    setState(() {
-      _exercisesWithWeightInput.add(exerciseIndex);
-    });
-  }
-
-  void _updateExerciseDraft(int exerciseIndex, ExerciseTrackingDraft draft) {
-    setState(() {
-      _exerciseDrafts[exerciseIndex] = draft;
-      if (_draftHasRequiredInputs(exerciseIndex, draft)) {
-        _exercisesWithWeightInput.add(exerciseIndex);
-      } else {
-        _exercisesWithWeightInput.remove(exerciseIndex);
-      }
-    });
-  }
-
-  ExerciseTrackingDraft? _getExerciseDraft(int exerciseIndex) {
-    return _exerciseDrafts[exerciseIndex];
-  }
-
-  void _cancelWorkoutSession() {
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _workoutStartTime = null;
-      _currentButtonState = _isWorkoutCompleted ? 'again' : 'start';
-      _viewedExercises.clear();
-      _exercisesWithWeightInput.clear();
-      _exerciseDrafts.clear();
-    });
-  }
-
-  void _onDoneWorkoutPressed() async {
-    if (_isSavingWorkoutCompletion) {
-      return;
-    }
-
-    // Check if all exercises have weight input before allowing completion
-    if (!areAllExercisesWithWeightInput()) {
-      // Show notification that not all exercises have weight input
-      await showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return PremiumDialog(
-            title: "Exercise Input Required",
-            icon: Icons.info_outline_rounded,
-            iconColor: const Color(0xFF3EA6FF),
-            content: Text(
-              "Please complete reps, sets, and weight where needed before finishing the workout. ${widget.workout.exerciseList.length - _completedExerciseDraftCount()} exercises are still incomplete.",
-            ),
-            actions: [
-              PremiumConfirmButton(
-                label: "OK",
-                onPressed: () {
-                  Navigator.of(context).pop(); // Close dialog
-                },
-              ),
-            ],
-          );
-        },
-      );
-      return; // Don't proceed with completion
-    }
-
-    // Check if workout was started to calculate duration
-    int actualDurationSeconds = 0;
-    if (_workoutStartTime != null) {
-      actualDurationSeconds = DateTime.now().difference(_workoutStartTime!).inSeconds;
-    }
-
-    // Show congratulations popup
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Congratulations!",
-          icon: Icons.emoji_events_rounded,
-          iconColor: const Color(0xFFFFD700),
-          content: Text(
-            "Great job completing the ${widget.workout.title} workout in ${_formatSecondsToMinutes(actualDurationSeconds)}! Your progress has been saved.",
-          ),
-          actions: [
-            PremiumConfirmButton(
-              label: "OK",
-              gradientColors: const [Color(0xFFFFD700), Color(0xFFFF8C00)],
-              onPressed: _isSavingWorkoutCompletion
-                  ? null
-                  : () async {
-                      if (mounted) {
-                        setState(() {
-                          _isSavingWorkoutCompletion = true;
-                        });
-                      }
-                      Navigator.of(context).pop(); // Close dialog
-                      await _saveWorkoutCompletion();
-                    },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _onAgainWorkoutPressed() {
-    // Show "Are you sure you want to do this again?" popup
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Start Workout Again?",
-          icon: Icons.refresh_rounded,
-          iconColor: const Color(0xFF3EA6FF),
-          content: const Text(
-            "Are you sure you want to start this workout again?",
-          ),
-          actions: [
-            PremiumCancelButton(
-              label: "Cancel",
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog and do nothing
-              },
-            ),
-            PremiumConfirmButton(
-              label: "Yes",
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-                _beginWorkoutSession();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Helper method to format seconds to minutes for display
-  String _formatSecondsToMinutes(int seconds) {
-    int minutes = seconds ~/ 60;
-    int remainingSeconds = seconds % 60;
-    if (remainingSeconds > 0) {
-      return "${minutes}m ${remainingSeconds}s";
-    } else {
-      return "${minutes}m";
-    }
-  }
-
-  int _calculateExpectedWorkoutDurationFromDrafts() {
-    int totalSeconds = 0;
-
-    for (int index = 0; index < widget.workout.exerciseList.length; index++) {
-      final draft = _exerciseDrafts[index];
-      final exercise = widget.workout.exerciseList[index];
-      if (!_draftHasRequiredInputs(index, draft)) {
-        continue;
-      }
-
-      final safeDraft = draft!;
-      final int reps = int.parse(safeDraft.reps);
-      final int sets = int.parse(safeDraft.sets);
-      final int activeSeconds = exercise.getEstimatedTotalDurationSeconds(
-        sets: sets,
-        reps: reps,
-      );
-      totalSeconds += activeSeconds;
-    }
-
-    return totalSeconds;
-  }
-
-  int _calculateWorkoutCaloriesFromDrafts() {
-    double totalCalories = 0;
-
-    for (int index = 0; index < widget.workout.exerciseList.length; index++) {
-      final draft = _exerciseDrafts[index];
-      final exercise = widget.workout.exerciseList[index];
-      if (!_draftHasRequiredInputs(index, draft)) {
-        continue;
-      }
-
-      final safeDraft = draft!;
-      final int reps = int.parse(safeDraft.reps);
-      final int sets = int.parse(safeDraft.sets);
-      totalCalories += exercise.getCaloriesBurned(
-        sets: sets,
-        reps: reps,
-      );
-    }
-
-    return totalCalories.round();
-  }
-
-  int _calculateWorkoutMinutesFromDrafts() {
-    final expectedSeconds = _calculateExpectedWorkoutDurationFromDrafts();
-    if (expectedSeconds <= 0) {
-      return 0;
-    }
-
-    return (expectedSeconds / 60).ceil();
-  }
-
-  int _calculateFallbackWorkoutCalories() {
-    double totalCalories = 0;
-
-    for (final exercise in widget.workout.exerciseList) {
-      totalCalories += exercise.getCaloriesBurned(
-        sets: 1,
-        reps: 10,
-      );
-    }
-
-    return totalCalories.round();
-  }
-
-  int _parseStoredMetric(dynamic value) {
-    if (value is int) {
-      return value;
-    }
-    if (value is double) {
-      return value.round();
-    }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value) ??
-          double.tryParse(value)?.round() ??
-          0;
-    }
-    return 0;
-  }
-
-  Future<void> _updateHealthDashboardMetrics({
-    required User user,
-    required int workoutCalories,
-    required int workoutMinutes,
-    required int workoutCountChange,
-  }) async {
-    final healthRef = _firestore
-        .collection('users')
-        .doc(user.uid)
-        .collection('health_metrics')
-        .doc('current');
-
-    final healthSnapshot = await healthRef.get();
-    final healthData = healthSnapshot.data() ?? <String, dynamic>{};
-
-    final currentCalories = _parseStoredMetric(
-      healthData['dailyCalories'] ?? healthData['weeklyCalories'],
-    );
-    final currentMinutes = _parseStoredMetric(
-      healthData['dailyMinutes'] ?? healthData['weeklyMinutes'],
-    );
-    final currentWorkouts =
-        _parseStoredMetric(
-          healthData['dailyWorkoutsCount'] ?? healthData['weeklyWorkoutsCount'],
-        );
-    final todayKey = _dateKey(DateTime.now());
-    final storedDayKey = _resolveStoredDayKey(healthData);
-
-    int baseCalories = currentCalories;
-    int baseMinutes = currentMinutes;
-    int baseWorkouts = currentWorkouts;
-
-    if (storedDayKey != null && storedDayKey != todayKey) {
-      final archivedDate = _dateFromKey(storedDayKey);
-      if (currentCalories > 0 || currentMinutes > 0 || currentWorkouts > 0) {
-        await _firestore
-            .collection('users')
-            .doc(user.uid)
-            .collection('daily_activity')
-            .doc(storedDayKey)
-            .set({
-          'date': archivedDate,
-          'dailyMinutes': currentMinutes,
-          'dailyCalories': currentCalories,
-          'dailyWorkoutsCount': currentWorkouts,
-        }, SetOptions(merge: true));
-      }
-
-      baseCalories = 0;
-      baseMinutes = 0;
-      baseWorkouts = 0;
-    }
-
-    await healthRef.set({
-      'dailyCalories': (baseCalories + workoutCalories).clamp(0, 999999),
-      'dailyMinutes': (baseMinutes + workoutMinutes).clamp(0, 999999),
-      'dailyWorkoutsCount':
-          (baseWorkouts + workoutCountChange).clamp(0, 999999),
-      'lastDailyResetDate': todayKey,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-
-    try {
-      await healthRef.update({
-        'weeklyCalories': FieldValue.delete(),
-        'weeklyMinutes': FieldValue.delete(),
-        'weeklyWorkoutsCount': FieldValue.delete(),
-      });
-    } catch (_) {
-      // Keep workout completion successful even if legacy key cleanup fails.
-    }
-  }
-
-  Future<void> _saveExerciseDraftsToFirebase(User user) async {
-    for (int index = 0; index < widget.workout.exerciseList.length; index++) {
-      final draft = _exerciseDrafts[index];
-      final exercise = widget.workout.exerciseList[index];
-      if (!_draftHasRequiredInputs(index, draft)) {
-        continue;
-      }
-
-      final safeDraft = draft!;
-      final int weight =
-          exercise.requiresWeightInput ? int.parse(safeDraft.weight) : 0;
-      final int reps = int.parse(safeDraft.reps);
-      final int sets = int.parse(safeDraft.sets);
-      final int totalDurationSeconds = exercise.getEstimatedTotalDurationSeconds(
-        sets: sets,
-        reps: reps,
-      );
-      final double totalDurationMinutes = totalDurationSeconds / 60;
-      final String durationString =
-          "${totalDurationMinutes.toStringAsFixed(1)} min";
-      final double totalCalories = exercise.getCaloriesBurned(
-        sets: sets,
-        reps: reps,
-      );
-      final String caloriesString = "${totalCalories.toStringAsFixed(1)} cal";
-      final primaryGoal = inferPrimaryGoalForWorkout(widget.workout);
-      final goalTags = inferGoalTagsForWorkout(widget.workout);
-
-      await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('exercise_records')
-          .doc(_exerciseRecordDocId(exercise.name))
-          .set({
-        'exerciseName': exercise.name,
-        'workoutId': widget.workout.id,
-        'weightUsed': weight.toDouble(),
-        'repsPerformed': reps,
-        'setsPerformed': sets,
-        'timestamp': FieldValue.serverTimestamp(),
-        'bodyFocus': widget.workout.bodyFocus,
-        'level': widget.workout.level,
-        'journeyId': widget.workout.journeyId,
-        'journeyName': widget.workout.journeyName,
-        'isPartOfJourney': widget.workout.journeyId != null,
-        'primaryGoal': primaryGoal,
-        'goalTags': goalTags,
-        'totalDurationString': durationString,
-        'totalCaloriesString': caloriesString,
-        'calculatedSeconds': totalDurationSeconds,
-        'calculatedCalories': totalCalories,
-      }, SetOptions(merge: true));
-    }
-  }
-
-  Future<void> _syncLatestWorkoutStatusDocument({
-    required User user,
-    required Map<String, dynamic>? latestEntryData,
-  }) async {
-    final latestStatusRef = _firestore
-        .collection('users')
-        .doc(user.uid)
-        .collection('completed_workouts')
-        .doc(widget.workout.title);
-
-    if (latestEntryData == null) {
-      await latestStatusRef.delete();
-      return;
-    }
-
-    await latestStatusRef.set(latestEntryData);
-  }
-
-  // Helper method to save workout completion to Firebase
-  Future<void> _saveWorkoutCompletion() async {
-    try {
-      final user = _auth.currentUser;
-      if (user != null) {
-        // Calculate duration
-        int actualDurationSeconds = 0;
-        if (_workoutStartTime != null) {
-          actualDurationSeconds = DateTime.now().difference(_workoutStartTime!).inSeconds;
-        }
-
-        final int parsedDurationSeconds = _parseDurationToSeconds(widget.workout.duration);
-        final int draftExpectedDurationSeconds =
-            _calculateExpectedWorkoutDurationFromDrafts();
-        final int expectedDurationSeconds = draftExpectedDurationSeconds > 0
-            ? draftExpectedDurationSeconds
-            : (parsedDurationSeconds > 0 ? parsedDurationSeconds : 30 * 60);
-
-        final int workoutCalories =
-            _calculateWorkoutCaloriesFromDrafts() > 0
-                ? _calculateWorkoutCaloriesFromDrafts()
-                : _calculateFallbackWorkoutCalories();
-        final int workoutMinutes =
-            _calculateWorkoutMinutesFromDrafts() > 0
-                ? _calculateWorkoutMinutesFromDrafts()
-                : (expectedDurationSeconds / 60).ceil();
-        const int workoutCount = 1;
-        final primaryGoal = inferPrimaryGoalForWorkout(widget.workout);
-        final goalTags = inferGoalTagsForWorkout(widget.workout);
-
-        await _saveExerciseDraftsToFirebase(user);
-
-        final completionEntry = {
-          'title': widget.workout.title,
-          'workoutId': widget.workout.id,
-          'duration': widget.workout.duration,
-          'exercises': widget.workout.exercises,
-          'level': widget.workout.level,
-          'bodyFocus': widget.workout.bodyFocus,
-          'journeyId': widget.workout.journeyId,
-          'journeyName': widget.workout.journeyName,
-          'journeyOrder': widget.workout.journeyOrder,
-          'isPartOfJourney': widget.workout.journeyId != null,
-          'primaryGoal': primaryGoal,
-          'goalTags': goalTags,
-          'completedAt': FieldValue.serverTimestamp(),
-          'actualDuration': actualDurationSeconds, // Store actual duration for reference
-          'expectedDuration': expectedDurationSeconds, // Store expected duration for reference
-          'isCheated': false, // Flag disabled as cheating detection is removed
-          'recordedCalories': workoutCalories,
-          'recordedMinutes': workoutMinutes,
-          'recordedWorkoutCount': workoutCount,
-        };
-
-        // Keep append-only workout history so clean and cheated runs are both preserved.
-        await _firestore
-            .collection('users')
-            .doc(user.uid)
-            .collection('doneInfos')
-            .add(completionEntry);
-
-        // Keep one latest-status document per workout for card/detail UI.
-        await _syncLatestWorkoutStatusDocument(
-          user: user,
-          latestEntryData: completionEntry,
-        );
-
-        if (widget.workout.journeyId != null && widget.workout.journeyName != null) {
-          await JourneyProgressService.syncJourneyProgressForUser(
-            firestore: _firestore,
-            uid: user.uid,
-            journeyId: widget.workout.journeyId!,
-            journeyName: widget.workout.journeyName!,
-            isSelected: true,
-            markStarted: true,
-          );
-        }
-
-        await _updateHealthDashboardMetrics(
-          user: user,
-          workoutCalories: workoutCalories,
-          workoutMinutes: workoutMinutes,
-          workoutCountChange: workoutCount,
-        );
-
-        setState(() {
-          _isWorkoutCompleted = true;
-          _workoutStartTime = null;
-          _currentButtonState = 'again';
-        });
-
-        // Call the callback if provided to notify parent screen of completion
-        if (widget.onWorkoutCompleted != null) {
-          widget.onWorkoutCompleted!();
-        }
-
-        if (mounted) {
-          Navigator.pop(context, true);
-        }
-      } else if (mounted) {
-        setState(() {
-          _isSavingWorkoutCompletion = false;
-        });
-      }
-    } catch (e) {
-      print('Error saving workout completion: $e');
-      if (mounted) {
-        setState(() {
-          _isSavingWorkoutCompletion = false;
-        });
-      }
-      
-      // Show error dialog
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return PremiumDialog(
-            title: "Error",
-            icon: Icons.error_outline_rounded,
-            iconColor: const Color(0xFFFF4B4B),
-            content: const Text(
-              "There was an error saving your workout progress. Please try again.",
-            ),
-            actions: [
-              PremiumConfirmButton(
-                label: "OK",
-                gradientColors: const [Color(0xFFFF4B4B), Color(0xFFFF7B7B)],
-                onPressed: () {
-                  Navigator.of(context).pop(); // Close dialog
-                },
-              ),
-            ],
-          );
-        },
-      );
-    }
-  }
-
-  // Helper method to reset workout completion status in Firebase
-  Future<void> _resetWorkoutCompletion() async {
-    try {
-      final user = _auth.currentUser;
-      if (user != null) {
-        final todayStart = _startOfToday();
-        final todayEnd = _endOfToday();
-        final doneInfosRef = _firestore
-            .collection('users')
-            .doc(user.uid)
-            .collection('doneInfos');
-
-        final latestTodayEntries = await doneInfosRef
-            .where('completedAt', isGreaterThanOrEqualTo: todayStart)
-            .where('completedAt', isLessThan: todayEnd)
-            .get();
-
-        final matchingTodayEntries = latestTodayEntries.docs.where((doc) {
-          final data = doc.data();
-          return data['title'] == widget.workout.title;
-        }).toList()
-          ..sort((a, b) {
-            final aTime = (a.data()['completedAt'] as Timestamp?)?.toDate();
-            final bTime = (b.data()['completedAt'] as Timestamp?)?.toDate();
-            if (aTime == null && bTime == null) return 0;
-            if (aTime == null) return 1;
-            if (bTime == null) return -1;
-            return bTime.compareTo(aTime);
-          });
-
-        if (matchingTodayEntries.isNotEmpty) {
-          final deletedEntryData = matchingTodayEntries.first.data();
-          final int recordedCalories =
-              (deletedEntryData['recordedCalories'] as num?)?.toInt() ?? 0;
-          final int recordedMinutes =
-              (deletedEntryData['recordedMinutes'] as num?)?.toInt() ?? 0;
-          final int recordedWorkoutCount =
-              (deletedEntryData['recordedWorkoutCount'] as num?)?.toInt() ?? 1;
-
-          await matchingTodayEntries.first.reference.delete();
-
-          await _updateHealthDashboardMetrics(
-            user: user,
-            workoutCalories: -recordedCalories,
-            workoutMinutes: -recordedMinutes,
-            workoutCountChange: -recordedWorkoutCount,
-          );
-        }
-
-        final replacementLatestEntry = await doneInfosRef
-            .orderBy('completedAt', descending: true)
-            .get();
-
-        Map<String, dynamic>? replacementData;
-        for (final doc in replacementLatestEntry.docs) {
-          final data = doc.data();
-          if (data['title'] == widget.workout.title) {
-            replacementData = data;
-            break;
-          }
-        }
-
-        await _syncLatestWorkoutStatusDocument(
-          user: user,
-          latestEntryData: replacementData,
-        );
-
-        if (widget.workout.journeyId != null && widget.workout.journeyName != null) {
-          await JourneyProgressService.syncJourneyProgressForUser(
-            firestore: _firestore,
-            uid: user.uid,
-            journeyId: widget.workout.journeyId!,
-            journeyName: widget.workout.journeyName!,
-            isSelected: true,
-          );
-        }
-
-        bool hasCompletionToday = false;
-        if (replacementData != null && replacementData['completedAt'] != null) {
-          final completedAt = (replacementData['completedAt'] as Timestamp).toDate();
-          final today = DateTime.now();
-          hasCompletionToday = completedAt.year == today.year &&
-              completedAt.month == today.month &&
-              completedAt.day == today.day;
-        }
-
-        setState(() {
-          _isWorkoutCompleted = hasCompletionToday;
-          _currentButtonState = hasCompletionToday ? 'again' : 'start';
-        });
-
-        // Call the callback if provided to notify parent screen of reset
-        if (widget.onWorkoutReset != null) {
-          widget.onWorkoutReset!();
-        }
-
-        // Show success message
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (BuildContext context) {
-              return PremiumDialog(
-                title: "Workout Reset",
-                icon: Icons.check_circle_outline_rounded,
-                iconColor: const Color(0xFF3EA6FF),
-                content: const Text(
-                  "Workout status has been reset successfully.",
-                ),
-                actions: [
-                  PremiumConfirmButton(
-                    label: "OK",
-                    onPressed: () {
-                      Navigator.of(context).pop(); // Close dialog
-                    },
-                  ),
-                ],
-              );
-            },
-          );
-        }
-      }
-    } catch (e) {
-      print('Error resetting workout completion: $e');
-      
-      // Show error dialog
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (BuildContext context) {
-            return PremiumDialog(
-              title: "Error",
-              icon: Icons.error_outline_rounded,
-              iconColor: const Color(0xFFFF4B4B),
-              content: const Text(
-                "There was an error resetting your workout progress. Please try again.",
-              ),
-              actions: [
-                PremiumConfirmButton(
-                  label: "OK",
-                  gradientColors: const [Color(0xFFFF4B4B), Color(0xFFFF7B7B)],
-                  onPressed: () {
-                    Navigator.of(context).pop(); // Close dialog
+                const SizedBox(height: 44),
+                // Animated sweeping radial ring + spring pop numeral
+                AnimatedBuilder(
+                  animation: _beatController,
+                  builder: (_, __) {
+                    final t = _beatController.value;
+                    final popCurve = Curves.easeOutBack.transform(
+                      (t / 0.35).clamp(0.0, 1.0),
+                    );
+                    final exitT = ((t - 0.78) / 0.22).clamp(0.0, 1.0);
+                    final scale = _step > 0
+                        ? (1.38 - 0.38 * popCurve) * (1.0 - 0.14 * exitT)
+                        : (0.72 + 0.34 * popCurve);
+                    final opacity = (t / 0.14).clamp(0.0, 1.0) *
+                        (1.0 - exitT * 0.85);
+                    final ringProgress = _step > 0 ? (1.0 - t) : 1.0;
+
+                    return SizedBox(
+                      width: 196,
+                      height: 196,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // Subtle ambient glow ring
+                          Container(
+                            width: 196,
+                            height: 196,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: c.accent.withValues(
+                                alpha: c.isDark ? 0.08 : 0.06,
+                              ),
+                            ),
+                          ),
+                          CustomPaint(
+                            size: const Size(184, 184),
+                            painter: _CountdownRingPainter(
+                              progress: ringProgress,
+                              trackColor: c.divider,
+                              activeColor: c.accent,
+                            ),
+                          ),
+                          Opacity(
+                            opacity: opacity.clamp(0.0, 1.0),
+                            child: Transform.scale(
+                              scale: scale.clamp(0.5, 1.6),
+                              child: Text(
+                                label,
+                                style: TextStyle(
+                                  color: _step == 0 ? c.accent : c.textPrimary,
+                                  fontSize: _step > 0 ? 78 : 56,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -2.0,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
                   },
                 ),
+                const Spacer(flex: 3),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    TextButton(
+                      onPressed: _cancel,
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          color: c.textSecondary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    TextButton(
+                      onPressed: _complete,
+                      child: Text(
+                        'Skip',
+                        style: TextStyle(
+                          color: c.accent,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
               ],
-            );
-          },
-        );
-      }
-    }
-  }
-
-  // Show confirmation dialog for resetting workout status
-  void _showResetConfirmationDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Reset Workout Status",
-          icon: Icons.restart_alt_rounded,
-          iconColor: const Color(0xFFFF9800),
-          content: Text(
-            "Are you sure you want to reset the status for ${widget.workout.title}? This will mark the workout as not completed.",
+            ),
           ),
-          actions: [
-            PremiumCancelButton(
-              label: "Cancel",
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog without resetting
-              },
-            ),
-            PremiumConfirmButton(
-              label: "Reset",
-              gradientColors: const [Color(0xFFFF9800), Color(0xFFFF5722)],
-              onPressed: () async {
-                Navigator.of(context).pop(); // Close dialog
-                await _resetWorkoutCompletion(); // Reset the workout status
-              },
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
   }
+}
 
-  // Calculate total duration from all exercises in the workout
-  String _getTotalExerciseDuration() {
-    int totalSeconds = 0;
-    
-    // Sum up the duration of all exercises
-    for (Exercise exercise in widget.workout.exerciseList) {
-      totalSeconds += exercise.duration;
+class _CountdownRingPainter extends CustomPainter {
+  final double progress;
+  final Color trackColor;
+  final Color activeColor;
+
+  const _CountdownRingPainter({
+    required this.progress,
+    required this.trackColor,
+    required this.activeColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    const strokeWidth = 7.0;
+    final radius = (size.width - strokeWidth) / 2;
+
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = trackColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth,
+    );
+
+    final sweep = 2 * math.pi * progress.clamp(0.0, 1.0);
+    if (sweep > 0.001) {
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        -math.pi / 2,
+        sweep,
+        false,
+        Paint()
+          ..color = activeColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth
+          ..strokeCap = StrokeCap.round,
+      );
     }
-    
-    // Convert total seconds to minutes and format as "X min" or "X mins"
-    int totalMinutes = totalSeconds ~/ 60;
-    
-    // Handle edge cases: if total minutes is 0, return "0 min", otherwise format appropriately
-    if (totalMinutes == 0) {
-      // If there are exercises but total is 0 minutes, at least show 1 min to avoid confusion
-      if (widget.workout.exerciseList.isNotEmpty) {
-        // Check if there are any exercises with duration less than 60 seconds
-        bool hasShortExercises = widget.workout.exerciseList.any((exercise) => exercise.duration > 0);
-        return hasShortExercises ? "1 min" : "0 min";
-      }
-      return "0 min";
-    }
-    
-    return totalMinutes > 1 ? "${totalMinutes} mins" : "${totalMinutes} min";
   }
 
-  // Original _startWorkout method is now replaced by the new methods above
+  @override
+  bool shouldRepaint(covariant _CountdownRingPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.trackColor != trackColor ||
+      oldDelegate.activeColor != activeColor;
 }

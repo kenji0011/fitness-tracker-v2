@@ -1,428 +1,296 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+import '../services/active_profile_provider.dart';
+import '../services/tempo_rust_db.dart';
+import '../theme/app_colors.dart';
+import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_sliver_header.dart';
 
 class AddDataScreen extends StatefulWidget {
-  final String title;
-  final VoidCallback? onDataSaved;
-  const AddDataScreen({
-    super.key,
-    required this.title,
-    this.onDataSaved,
-  });
+  final String? initialMetric;
+
+  const AddDataScreen({super.key, this.initialMetric});
 
   @override
   State<AddDataScreen> createState() => _AddDataScreenState();
 }
 
 class _AddDataScreenState extends State<AddDataScreen> {
-  static const double _minValidWeightKg = 20.0;
-  static const double _maxValidWeightKg = 400.0;
-  static const double _minValidHeightCm = 80.0;
-  static const double _maxValidHeightCm = 250.0;
-  static const double _minDisplayBmi = 10.0;
-  static const double _maxDisplayBmi = 80.0;
+  final _valueCtrl = TextEditingController();
+  late String _selectedMetric;
+  bool _saving = false;
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final TextEditingController _valueController = TextEditingController();
-  bool _isLoading = false;
+  static const _metrics = <Map<String, dynamic>>[
+    {
+      'key': 'steps',
+      'label': 'Today\'s Steps',
+      'unit': 'steps',
+      'hint': 'e.g. 4050',
+      'icon': CupertinoIcons.hare_fill,
+    },
+    {
+      'key': 'calories',
+      'label': 'Calories Burned',
+      'unit': 'kcal',
+      'hint': 'e.g. 250',
+      'icon': CupertinoIcons.flame_fill,
+    },
+    {
+      'key': 'minutes',
+      'label': 'Activity Mins',
+      'unit': 'mins',
+      'hint': 'e.g. 30',
+      'icon': CupertinoIcons.clock_fill,
+    },
+    {
+      'key': 'weight',
+      'label': 'Weight',
+      'unit': 'kg',
+      'hint': 'e.g. 68.5',
+      'icon': CupertinoIcons.gauge,
+    },
+    {
+      'key': 'waist',
+      'label': 'Waist',
+      'unit': 'cm',
+      'hint': 'e.g. 78.0',
+      'icon': CupertinoIcons.resize_h,
+    },
+    {
+      'key': 'sleep',
+      'label': 'Sleep',
+      'unit': 'hours',
+      'hint': 'e.g. 7.5',
+      'icon': CupertinoIcons.bed_double_fill,
+    },
+    {
+      'key': 'height',
+      'label': 'Height',
+      'unit': 'cm',
+      'hint': 'e.g. 175',
+      'icon': CupertinoIcons.arrow_up_down,
+    },
+  ];
 
-  double _parseDoubleValue(dynamic value) {
-    if (value is num) return value.toDouble();
-    if (value is String) return double.tryParse(value.replaceAll(',', '.')) ?? 0.0;
-    return 0.0;
+  @override
+  void initState() {
+    super.initState();
+    _selectedMetric = widget.initialMetric ?? 'weight';
   }
 
-  double _computeSafeBmi(double weightKg, double heightCm) {
-    if (weightKg < _minValidWeightKg ||
-        weightKg > _maxValidWeightKg ||
-        heightCm < _minValidHeightCm ||
-        heightCm > _maxValidHeightCm) {
-      return 0.0;
-    }
-
-    final bmi = weightKg / ((heightCm / 100) * (heightCm / 100));
-    if (bmi < _minDisplayBmi || bmi > _maxDisplayBmi) {
-      return 0.0;
-    }
-
-    return double.parse(bmi.toStringAsFixed(1));
+  @override
+  void dispose() {
+    _valueCtrl.dispose();
+    super.dispose();
   }
 
-  bool _isDisplayableBmiPair(double weightKg, double heightCm) {
-    if (weightKg < _minValidWeightKg ||
-        weightKg > _maxValidWeightKg ||
-        heightCm < _minValidHeightCm ||
-        heightCm > _maxValidHeightCm) {
-      return false;
-    }
+  Map<String, dynamic> get _currentSpec => _metrics.firstWhere(
+        (m) => m['key'] == _selectedMetric,
+        orElse: () => _metrics.first,
+      );
 
-    final bmi = weightKg / ((heightCm / 100) * (heightCm / 100));
-    return bmi >= _minDisplayBmi && bmi <= _maxDisplayBmi;
-  }
+  Future<void> _save() async {
+    final profileProvider = context.read<ActiveProfileProvider>();
+    final profileId = profileProvider.activeProfileId;
+    if (profileId == null) return;
 
-  Future<void> _saveData() async {
-    if (_valueController.text.isEmpty) {
+    final raw = double.tryParse(_valueCtrl.text.trim());
+    if (raw == null || raw <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a value'),
-          backgroundColor: Colors.orange,
-        ),
+        const SnackBar(content: Text('Please enter a valid positive number')),
       );
       return;
     }
 
-    final value = double.tryParse(_valueController.text.replaceAll(',', '.'));
-    if (value == null || value <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid positive number'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
+    setState(() => _saving = true);
     try {
-      final user = _auth.currentUser;
-      if (user != null) {
-        switch (widget.title) {
-          case "Waist Measurement":
-            // Update waist measurement in main health metrics and subcollection
-            await _firestore
-                .collection('users')
-                .doc(user.uid)
-                .collection('health_metrics')
-                .doc('current')
-                .set({
-                  'waistMeasurement': value,
-                  'updatedAt': FieldValue.serverTimestamp(),
-                }, SetOptions(merge: true));
-
-            // Add to waist history subcollection for Android compatibility
-            await _firestore
-                .collection('users')
-                .doc(user.uid)
-                .collection('waist_history')
-                .doc(DateTime.now().toIso8601String())
-                .set({
-                  'waist': value,
-                  'date': DateTime.now(),
-                  'timestamp': FieldValue.serverTimestamp(),
-                });
-            break;
-          case "Height":
-            if (value < _minValidHeightCm || value > _maxValidHeightCm) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Please enter a realistic height between 80 and 250 cm'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-              return;
-            }
-
-            final userDoc = await _firestore.collection('users').doc(user.uid).get();
-            final userData = userDoc.data() ?? <String, dynamic>{};
-            final profileData = userData['profile'] as Map<String, dynamic>? ?? <String, dynamic>{};
-            final currentWeight = _parseDoubleValue(profileData['weight']) > 0
-                ? _parseDoubleValue(profileData['weight'])
-                : _parseDoubleValue(userData['profile.weight']);
-
-            if (currentWeight >= _minValidWeightKg &&
-                !_isDisplayableBmiPair(currentWeight, value)) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('That height does not match your current weight. Please enter a more realistic value'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-              return;
-            }
-
-            final updatedHeightBmi = _computeSafeBmi(currentWeight, value);
-
-            await _firestore
-                .collection('users')
-                .doc(user.uid)
-                .collection('health_metrics')
-                .doc('current')
-                .set({
-                  'height': value,
-                  'bmi': updatedHeightBmi,
-                  'updatedAt': FieldValue.serverTimestamp(),
-                }, SetOptions(merge: true));
-
-            await _firestore.collection('users').doc(user.uid).set({
-              'profile': {
-                'weight': currentWeight,
-                'height': value,
-                'bmi': updatedHeightBmi,
-                'lastUpdated': FieldValue.serverTimestamp(),
-              },
-              'profile.weight': currentWeight,
-              'profile.height': value,
-              'profile.bmi': updatedHeightBmi,
-              'profile.lastUpdated': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
-            break;
-          case "Weight":
-            if (value < _minValidWeightKg || value > _maxValidWeightKg) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Please enter a realistic weight between 20 and 400 kg'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-              return;
-            }
-
-            final userDoc = await _firestore.collection('users').doc(user.uid).get();
-            final userData = userDoc.data() ?? <String, dynamic>{};
-            final profileData = userData['profile'] as Map<String, dynamic>? ?? <String, dynamic>{};
-            final currentHeight = _parseDoubleValue(profileData['height']) > 0
-                ? _parseDoubleValue(profileData['height'])
-                : _parseDoubleValue(userData['profile.height']);
-
-            if (currentHeight >= _minValidHeightCm &&
-                !_isDisplayableBmiPair(value, currentHeight)) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('That weight does not match your current height. Please enter a more realistic value'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-              return;
-            }
-
-            final updatedBmi = _computeSafeBmi(value, currentHeight);
-
-            // Update weight in main health metrics and subcollection
-            await _firestore
-                .collection('users')
-                .doc(user.uid)
-                .collection('health_metrics')
-                .doc('current')
-                .set({
-                  'weight': value,
-                  'bmi': updatedBmi,
-                  'updatedAt': FieldValue.serverTimestamp(),
-                }, SetOptions(merge: true));
-
-            // Update in user profile with dot notation to avoid overwriting the whole profile map
-            await _firestore.collection('users').doc(user.uid).set({
-              'profile': {
-                'weight': value,
-                'height': currentHeight,
-                'bmi': updatedBmi,
-                'lastUpdated': FieldValue.serverTimestamp(),
-              },
-              'profile.weight': value,
-              'profile.height': currentHeight,
-              'profile.bmi': updatedBmi,
-              'profile.lastUpdated': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
-
-            // Add to weight history subcollection for Android compatibility
-            await _firestore
-                .collection('users')
-                .doc(user.uid)
-                .collection('weight_history')
-                .doc(DateTime.now().toIso8601String())
-                .set({
-                  'weight': value,
-                  'date': DateTime.now(),
-                  'timestamp': FieldValue.serverTimestamp(),
-                });
-            break;
-          case "Sleep Hours":
-            // Update sleep hours in main health metrics and subcollection
-            await _firestore
-                .collection('users')
-                .doc(user.uid)
-                .collection('health_metrics')
-                .doc('current')
-                .set({
-                  'sleepHours': value,
-                  'updatedAt': FieldValue.serverTimestamp(),
-                }, SetOptions(merge: true));
-
-            // Add to sleep history subcollection for Android compatibility
-            await _firestore
-                .collection('users')
-                .doc(user.uid)
-                .collection('sleep_history')
-                .doc(DateTime.now().toIso8601String())
-                .set({
-                  'sleepHours': value,
-                  'date': DateTime.now(),
-                  'timestamp': FieldValue.serverTimestamp(),
-                });
-            break;
-        }
-
-        // Notify parent screen of the update
-        widget.onDataSaved?.call();
-
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Data saved successfully!'),
-            backgroundColor: Colors.green,
-          ),
+      final db = TempoRustDb.instance;
+      if (_selectedMetric == 'steps') {
+        await db.upsertDailyActivity(
+          profileId: profileId,
+          steps: raw.round(),
         );
-
-        // Close the screen
-        Navigator.pop(context);
+      } else if (_selectedMetric == 'calories') {
+        await db.upsertDailyActivity(
+          profileId: profileId,
+          calories: raw.round(),
+        );
+      } else if (_selectedMetric == 'minutes') {
+        await db.upsertDailyActivity(
+          profileId: profileId,
+          minutes: raw.round(),
+        );
+      } else {
+        await db.logBodyMetric(
+          profileId: profileId,
+          metricType: _selectedMetric,
+          value: raw,
+        );
       }
+      await profileProvider.refreshProfiles();
+      if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
-      print('Error saving data: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to save data: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving data: $e')),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    String unit = '';
-    String hintText = '';
-    double maxValue = 999.0;
-
-    switch (widget.title) {
-      case "Waist Measurement":
-        unit = "cm";
-        hintText = "Enter waist measurement in cm";
-        maxValue = 300.0;
-        break;
-      case "Weight":
-        unit = "kg";
-        hintText = "Enter weight in kg";
-        maxValue = 500.0;
-        break;
-      case "Sleep Hours":
-        unit = "hours";
-        hintText = "Enter sleep hours";
-        maxValue = 24.0;
-        break;
-    }
+    final c = AppColors.of(context);
+    final spec = _currentSpec;
 
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        toolbarHeight: 80,
-        backgroundColor: Colors.black,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          "Add ${widget.title}",
-          style: const TextStyle(color: Colors.white),
-        ),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Card(
-              color: const Color(0xFF191919),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "New ${widget.title}",
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+      backgroundColor: c.scaffold,
+      body: CustomScrollView(
+        slivers: [
+          TempoSliverHeader(
+            title: 'Log Health Data',
+            showBackButton: true,
+            onBack: () => Navigator.of(context).pop(false),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+            sliver: SliverList.list(
+              children: [
+                Text(
+                  'Select Metric',
+              style: TextStyle(
+                color: c.textSecondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: _metrics.map((m) {
+                final selected = m['key'] == _selectedMetric;
+                return GestureDetector(
+                  onTap: () => setState(() {
+                    _selectedMetric = m['key'] as String;
+                    _valueCtrl.clear();
+                  }),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected ? c.accent : c.card,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: selected ? c.accent : c.cardBorder,
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _valueController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'^\d*[\.,]?\d{0,2}')),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          m['icon'] as IconData,
+                          size: 17,
+                          color: selected ? Colors.white : c.textSecondary,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          m['label'] as String,
+                          style: TextStyle(
+                            color: selected ? Colors.white : c.textPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
                       ],
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        hintText: hintText,
-                        hintStyle: const TextStyle(color: Colors.grey),
-                        filled: true,
-                        fillColor: Colors.grey[900],
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: Colors.grey),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: Colors.grey),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(color: Colors.orange),
-                        ),
-                      ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      "Unit: $unit",
-                      style: const TextStyle(color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              }).toList(),
             ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _isLoading ? null : _saveData,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+            const SizedBox(height: 24),
+            AppleCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${spec['label']} (${spec['unit']})',
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _valueCtrl,
+                    autofocus: true,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: spec['hint'] as String,
+                      hintStyle: TextStyle(
+                        color: c.textHint,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w500,
                       ),
-                    )
-                  : const Text(
-                      "Save",
-                      style: TextStyle(
-                        color: Colors.black,
+                      suffixText: spec['unit'] as String,
+                      suffixStyle: TextStyle(
+                        color: c.textSecondary,
                         fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+            const SizedBox(height: 24),
+            SizedBox(
+              height: 54,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: c.accent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                ),
+                onPressed: _saving ? null : _save,
+                child: _saving
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        'Save to Local Database',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+              ),
+            ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

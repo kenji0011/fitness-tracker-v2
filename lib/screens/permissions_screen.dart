@@ -1,659 +1,225 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart' as fbAuth;
-import '../screens/login_screen.dart';
-import '../screens/profile_screen.dart';
-import '../widgets/web_auth_shell.dart';
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+import '../services/live_workout_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_sliver_header.dart';
 
 class PermissionsScreen extends StatefulWidget {
   const PermissionsScreen({super.key});
 
   @override
-  _PermissionsScreenState createState() => _PermissionsScreenState();
+  State<PermissionsScreen> createState() => _PermissionsScreenState();
 }
 
-class _PermissionsScreenState extends State<PermissionsScreen> {
-  bool agreePolicy = false;
-  bool joinProgram = false;
-  bool _isLoading = false;
-  bool _showFullText = false;
+class _PermissionsScreenState extends State<PermissionsScreen>
+    with WidgetsBindingObserver {
+  PermissionStatus _activityStatus = PermissionStatus.denied;
+  PermissionStatus _cameraStatus = PermissionStatus.denied;
+  PermissionStatus _notificationStatus = PermissionStatus.denied;
+  LiveUpdateStatus _liveUpdateStatus = LiveUpdateStatus.unsupported;
 
-  final fbAuth.FirebaseAuth _firebaseAuth = fbAuth.FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+  }
 
-  Future<void> _exitOnboarding() async {
-    setState(() => _isLoading = true);
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
-    try {
-      await _firebaseAuth.signOut();
-
-      if (!mounted) return;
-
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-        (route) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error exiting setup: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _check();
     }
   }
 
-  Future<void> _savePermissionData() async {
-    if (!agreePolicy) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("You must agree to the User Agreement first."),
-        ),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user != null) {
-        await _firestore.collection('users').doc(user.uid).update({
-          'permissions': {
-            'agreedToPolicy': agreePolicy,
-            'joinedUserExperienceProgram': joinProgram,
-            'permissionsAcceptedAt': FieldValue.serverTimestamp(),
-          },
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const MyProfileScreen()),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving data: $e')),
-      );
-    } finally {
-      setState(() => _isLoading = false);
+  Future<void> _check() async {
+    if (kIsWeb) return;
+    final act = await Permission.activityRecognition.status;
+    final cam = await Permission.camera.status;
+    final notif = await Permission.notification.status;
+    final live = await LiveWorkoutService.instance.getStatus();
+    if (mounted) {
+      setState(() {
+        _activityStatus = act;
+        _cameraStatus = cam;
+        _notificationStatus = notif;
+        _liveUpdateStatus = live;
+      });
     }
   }
 
-  Widget _buildWebPermissionScreen(BuildContext context) {
-    return WebAuthShell(
-      leftTitle: 'Welcome',
-      leftSubtitle: 'Rockies Fitness Gym Tracker',
-      rightChild: Padding(
-        padding: const EdgeInsets.all(40.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'Terms and Conditions',
-              style: TextStyle(
-                color: Color(0xFF1A1A1A),
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 20),
-            
-            // Collapsible text section
-            AnimatedCrossFade(
-              duration: const Duration(milliseconds: 300),
-              crossFadeState: _showFullText 
-                  ? CrossFadeState.showFirst 
-                  : CrossFadeState.showSecond,
-              firstChild: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Welcome to Rockies Fitness Gym Tracker. You can use this app to manage and track your workouts and view your progress data. We shall protect your information in accordance with relevant laws, regulations, and privacy policies. To be able to work normally, the app needs to connect to the internet.\n\nTo provide you with additional services while you\'re using the app, we might need the following permissions:',
-                    style: TextStyle(
-                      color: Color(0xFF666666),
-                      fontSize: 14,
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  // Permission 1
-                  const Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.location_on, color: Color(0xFFFF7317), size: 20),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Access Location',
-                              style: TextStyle(
-                                color: Color(0xFF1A1A1A),
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'For tracking your workout distance and routes',
-                              style: TextStyle(
-                                color: Color(0xFF888888),
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Permission 2
-                  const Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.fitness_center, color: Color(0xFFFF7317), size: 20),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Access Activity Info',
-                              style: TextStyle(
-                                color: Color(0xFF1A1A1A),
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'For recording your workouts and health information',
-                              style: TextStyle(
-                                color: Color(0xFF888888),
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'You can always adjust your permissions preferences in the Settings',
-                    style: TextStyle(
-                      color: Color(0xFF999999),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-              secondChild: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Welcome to Rockies Fitness Gym Tracker...',
-                    style: TextStyle(
-                      color: Color(0xFF666666),
-                      fontSize: 14,
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'You can always adjust your permissions preferences in the Settings',
-                    style: TextStyle(
-                      color: Color(0xFF999999),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            
-            const SizedBox(height: 12),
-            // Show More / Show Less button
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: () {
-                  setState(() {
-                    _showFullText = !_showFullText;
-                  });
-                },
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFFFF7317),
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size(0, 32),
-                ),
-                child: Text(
-                  _showFullText ? 'Show less' : 'Show more',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 24),
-            // Checkbox 1
-            Row(
-              children: [
-                Checkbox(
-                  value: agreePolicy,
-                  onChanged: _isLoading ? null : (value) {
-                    setState(() => agreePolicy = value ?? false);
-                  },
-                  activeColor: const Color(0xFFFF7317),
-                ),
-                const Expanded(
-                  child: Text(
-                    'Read and Agree to our User Agreement and Privacy Policy',
-                    style: TextStyle(
-                      color: Color(0xFF333333),
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // Checkbox 2
-            Row(
-              children: [
-                Checkbox(
-                  value: joinProgram,
-                  onChanged: _isLoading ? null : (value) {
-                    setState(() => joinProgram = value ?? false);
-                  },
-                  activeColor: const Color(0xFFFF7317),
-                ),
-                const Expanded(
-                  child: Text(
-                    'Enroll in User Experience Program to help us improve our products and services by sharing your stats with us',
-                    style: TextStyle(
-                      color: Color(0xFF333333),
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 32),
-            // Buttons Row
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _savePermissionData,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF7317),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        : const Text(
-                            'Agree',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _isLoading ? null : _exitOnboarding,
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0xFFDDDDDD)),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text(
-                      'Exit',
-                      style: TextStyle(
-                        color: Color(0xFF666666),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _request(Permission p) async {
+    if (kIsWeb) return;
+    HapticFeedback.selectionClick();
+    await p.request();
+    await _check();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb && MediaQuery.of(context).size.width >= 800) {
-      return _buildWebPermissionScreen(context);
-    }
-
-    final colors = AppColors.of(context);
-
-    // MOBILE UI - ENHANCED
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: colors.scaffold,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 20),
-              Text(
-                "Terms & Conditions",
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w900,
-                  color: colors.textPrimary,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: 60,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF7317),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Expanded(
-                child: SingleChildScrollView(
+      backgroundColor: c.scaffold,
+      body: CustomScrollView(
+        slivers: [
+          const TempoSliverHeader(
+            title: 'Permissions',
+            showBackButton: true,
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 36),
+            sliver: SliverList.list(
+              children: [
+                AppleCard(
+                  borderRadius: 24,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        "Welcome to Rockies Fitness Gym Tracker. You can use this app to manage and track your workouts and view your progress data. We shall protect your information in accordance with relevant laws, regulations, and privacy policies. To be able to work normally, the app needs to connect to the internet.\n\n"
-                        "To provide you with additional services while you're using the app, we might need the following permissions:",
-                        style: TextStyle(
-                          color: colors.textSecondary,
-                          fontSize: 14,
-                          height: 1.6,
-                        ),
+                      _permRow(
+                        icon: CupertinoIcons.hare_fill,
+                        badgeColor: const Color(0xFF4AC9A5),
+                        title: 'Physical Activity & Steps',
+                        subtitle: 'Count daily steps offline on your phone.',
+                        granted: _activityStatus.isGranted,
+                        actionLabel: 'Allow',
+                        onRequest: () =>
+                            _request(Permission.activityRecognition),
+                        c: c,
                       ),
-                      const SizedBox(height: 30),
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: colors.cardAlt,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: colors.cardBorder),
-                        ),
-                        child: Column(
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFF7317).withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(Icons.location_on, color: Color(0xFFFF7317), size: 24),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        "Access Location",
-                                        style: TextStyle(
-                                          color: colors.textPrimary,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        "For tracking your workout distance and routes",
-                                        style: TextStyle(
-                                          color: colors.textSecondary,
-                                          fontSize: 13,
-                                          height: 1.4,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 16),
-                              child: Divider(color: Colors.white10, height: 1),
-                            ),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFF7317).withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(Icons.directions_run, color: Color(0xFFFF7317), size: 24),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        "Access Activity Info",
-                                        style: TextStyle(
-                                          color: colors.textPrimary,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        "For recording your workouts and health information",
-                                        style: TextStyle(
-                                          color: colors.textSecondary,
-                                          fontSize: 13,
-                                          height: 1.4,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                      _permRow(
+                        icon: CupertinoIcons.camera_fill,
+                        badgeColor: const Color(0xFF7A6FF0),
+                        title: 'Camera & Photos',
+                        subtitle:
+                            'Save avatars and progress photos privately on device.',
+                        granted: _cameraStatus.isGranted,
+                        actionLabel: 'Allow',
+                        onRequest: () => _request(Permission.camera),
+                        c: c,
                       ),
-                      const SizedBox(height: 24),
-                      Text(
-                        "You can always adjust your permissions preferences in the Settings",
-                        style: TextStyle(color: colors.textSecondary.withOpacity(0.6), fontSize: 12),
+                      _permRow(
+                        icon: CupertinoIcons.bell_fill,
+                        badgeColor: const Color(0xFFF4BD3E),
+                        title: 'Notifications',
+                        subtitle:
+                            'Display active workout timers and session status.',
+                        granted: _notificationStatus.isGranted,
+                        actionLabel: 'Allow',
+                        onRequest: () => _request(Permission.notification),
+                        c: c,
                       ),
-                      const SizedBox(height: 20),
+                      _permRow(
+                        icon: CupertinoIcons.sparkles,
+                        badgeColor: const Color(0xFF3D9CF6),
+                        title: 'Live Updates (HyperIsland)',
+                        subtitle: _liveUpdateStatus.supported
+                            ? 'Show live workout timer & progress in HyperIsland.'
+                            : 'Available on Android 16+ / HyperOS 3 devices.',
+                        granted: _liveUpdateStatus.canPostPromoted,
+                        actionLabel: 'Settings',
+                        onRequest: () async {
+                          HapticFeedback.selectionClick();
+                          await LiveWorkoutService.instance
+                              .openLiveUpdatesSettings();
+                        },
+                        c: c,
+                      ),
                     ],
                   ),
                 ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                decoration: BoxDecoration(
-                  border: Border(top: BorderSide(color: colors.cardBorder)),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: Checkbox(
-                            value: agreePolicy,
-                            onChanged: _isLoading
-                                ? null
-                                : (value) {
-                                    setState(() => agreePolicy = value ?? false);
-                                  },
-                            activeColor: const Color(0xFFFF7317),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                            side: BorderSide(color: colors.textSecondary.withOpacity(0.5)),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            "Read and Agree to our User Agreement and Privacy Policy",
-                            style: TextStyle(color: colors.textSecondary, fontSize: 13, height: 1.4),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: Checkbox(
-                            value: joinProgram,
-                            onChanged: _isLoading
-                                ? null
-                                : (value) {
-                                    setState(() => joinProgram = value ?? false);
-                                  },
-                            activeColor: const Color(0xFFFF7317),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                            side: BorderSide(color: colors.textSecondary.withOpacity(0.5)),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            "Enroll in User Experience Program to help us improve our products and services by sharing your stats with us",
-                            style: TextStyle(color: colors.textSecondary, fontSize: 13, height: 1.4),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Column(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    height: 54,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF7317),
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.5),
-                        width: 1.5,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFFF7317).withOpacity(0.4),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: _isLoading ? null : _savePermissionData,
-                        borderRadius: BorderRadius.circular(30),
-                        child: Center(
-                          child: _isLoading
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                  ),
-                                )
-                              : const Text(
-                                  "Agree",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    width: double.infinity,
-                    height: 54,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.4),
-                        width: 1.5,
-                      ),
-                    ),
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: _isLoading ? null : _exitOnboarding,
-                        borderRadius: BorderRadius.circular(30),
-                        child: const Center(
-                          child: Text(
-                            "Exit",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+        ],
+      ),
+    );
+  }
+
+  Widget _permRow({
+    required IconData icon,
+    required Color badgeColor,
+    required String title,
+    required String subtitle,
+    required bool granted,
+    required String actionLabel,
+    required VoidCallback onRequest,
+    required AppColors c,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: badgeColor,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: Colors.white, size: 17),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: c.textSecondary,
+                    fontSize: 12.5,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          granted
+              ? Icon(
+                  CupertinoIcons.checkmark_circle_fill,
+                  color: c.accent,
+                  size: 22,
+                )
+              : FilledButton.tonal(
+                  onPressed: onRequest,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(
+                    actionLabel,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+        ],
       ),
     );
   }

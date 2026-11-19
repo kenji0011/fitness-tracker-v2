@@ -1,2307 +1,390 @@
-import 'dart:convert';
-import 'dart:async';
-
-import 'package:flutter/foundation.dart';
+import 'package:chewie/chewie.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
+
+import '../models/local_profile.dart';
 import '../models/workout_model.dart';
-import '../services/workout_goal_service.dart';
+import '../services/active_profile_provider.dart';
+import '../services/tempo_rust_db.dart';
 import '../services/video_mapping_service.dart';
-import '../widgets/premium_dialog.dart';
-import '../widgets/premium_back_button.dart';
-
-class ExerciseTrackingDraft {
-  final String weight;
-  final String reps;
-  final String sets;
-
-  const ExerciseTrackingDraft({
-    required this.weight,
-    required this.reps,
-    required this.sets,
-  });
-
-  int? _parsePositiveWholeNumber(String text) {
-    final normalized = text.trim();
-    if (normalized.isEmpty) {
-      return null;
-    }
-
-    final value = int.tryParse(normalized);
-    if (value == null || value <= 0) {
-      return null;
-    }
-
-    return value;
-  }
-
-  bool get hasValidWeight => _parsePositiveWholeNumber(weight) != null;
-  bool get hasValidReps => _parsePositiveWholeNumber(reps) != null;
-  bool get hasValidSets => _parsePositiveWholeNumber(sets) != null;
-}
+import '../services/workout_goal_service.dart';
+import '../theme/app_colors.dart';
+import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_sliver_header.dart';
 
 class ExerciseDetailScreen extends StatefulWidget {
-  final int exerciseNumber;
+  final Exercise exercise;
   final Workout workout;
-  final bool isPreviewMode;
-  final bool isReadOnlyMode;
-  final ExerciseTrackingDraft? initialDraft;
-  final ExerciseTrackingDraft? Function(int)? draftForExercise;
-  final Function(int)? onExerciseViewed; // Callback to mark exercise as viewed
-  final Function(int)?
-  onWeightInput; // Callback to mark exercise as having weight input
-  final void Function(int exerciseIndex, ExerciseTrackingDraft draft)?
-  onDraftChanged;
-  final VoidCallback? onWorkoutCancelled;
 
   const ExerciseDetailScreen({
-    Key? key,
-    required this.exerciseNumber,
+    super.key,
+    required this.exercise,
     required this.workout,
-    this.isPreviewMode = false,
-    this.isReadOnlyMode = false,
-    this.initialDraft,
-    this.draftForExercise,
-    this.onExerciseViewed,
-    this.onWeightInput,
-    this.onDraftChanged,
-    this.onWorkoutCancelled,
-  }) : super(key: key);
+  });
 
   @override
   State<ExerciseDetailScreen> createState() => _ExerciseDetailScreenState();
 }
 
 class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
-  late Exercise exercise;
-  late TextEditingController weightController;
-  late TextEditingController repsController;
-  late TextEditingController setsController;
+  final _weightCtrl = TextEditingController();
+  final _repsCtrl = TextEditingController(text: '10');
+  final _setsCtrl = TextEditingController(text: '3');
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-
-  // State variables for calculations
-  String displayTotalDuration = "0 min";
-  String displayTotalCalories = "0 cal";
-  int _recommendedTotalDurationSeconds = 0;
-  int _remainingTimerSeconds = 0;
-  bool _isTimerRunning = false;
-  bool _isTimerCompleted = false;
-
-  Timer? _exerciseTimer;
-  VideoPlayerController? _controller;
-  bool _isLoadingData = true;
-  bool _isVideoMuted = false;
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
+  bool _videoError = false;
+  bool _saving = false;
+  List<LocalExerciseRecord> _history = [];
 
   @override
   void initState() {
     super.initState();
-    exercise = widget.workout.exerciseList[widget.exerciseNumber - 1];
+    _initVideo();
+    _loadHistory();
+  }
 
-    // Initialize controllers with computed defaults based on exercise properties
-    weightController = TextEditingController(text: "");
-    repsController = TextEditingController(
-      text: _computeDefaultReps().toString(),
-    );
-    setsController = TextEditingController(
-      text: _computeDefaultSets().toString(),
-    );
-
-    // Add listeners to controllers to automatically recalculate when values change
-    if (!widget.isPreviewMode && !widget.isReadOnlyMode) {
-      weightController.addListener(_calculateValues);
-      repsController.addListener(_calculateValues);
-      setsController.addListener(_calculateValues);
-
-      // Keep the current exercise inputs in memory while the workout is in progress
-      weightController.addListener(_autoSave);
-      repsController.addListener(_autoSave);
-      setsController.addListener(_autoSave);
+  Future<void> _initVideo() async {
+    final path = widget.exercise.customVideoAsset ??
+        VideoMappingService.getVideoPath(
+          widget.exercise.name,
+          journeyName: widget.workout.journeyName,
+          workoutTitle: widget.workout.title,
+        );
+    if (path == null || path.isEmpty) {
+      if (mounted) setState(() => _videoError = true);
+      return;
     }
 
-    // Initialize video
-    _initializeVideoPlayer();
-
-    // Load saved user data for active tracking and completed-workout review.
-    if (widget.initialDraft != null) {
-      weightController.text = widget.initialDraft!.weight;
-      repsController.text = widget.initialDraft!.reps;
-      setsController.text = widget.initialDraft!.sets;
-      _isLoadingData = false;
-      _calculateValues();
-      _scheduleDraftSync();
-    } else if (widget.isPreviewMode) {
-      _isLoadingData = false;
-      _calculateValues();
-    } else {
-      _loadUserData();
-    }
-  }
-
-  // Method to compute default reps based on exercise properties
-  int _computeDefaultReps() {
-    // Default to 8 reps, but could be adjusted based on exercise type or difficulty
-    // For now, using a simple approach - could be enhanced based on exercise characteristics
-    if (exercise.name.toLowerCase().contains('beginner') ||
-        exercise.name.toLowerCase().contains('easy')) {
-      return 6; // Lower reps for beginner exercises
-    } else if (exercise.name.toLowerCase().contains('hard') ||
-        exercise.name.toLowerCase().contains('advanced')) {
-      return 12; // Higher reps for advanced exercises
-    } else {
-      return 8; // Standard reps for intermediate exercises
-    }
-  }
-
-  // Method to compute default sets based on exercise properties
-  int _computeDefaultSets() {
-    // Default to 3 sets, but could be adjusted based on exercise type or difficulty
-    if (exercise.name.toLowerCase().contains('beginner') ||
-        exercise.name.toLowerCase().contains('easy')) {
-      return 2; // Fewer sets for beginner exercises
-    } else if (exercise.name.toLowerCase().contains('hard') ||
-        exercise.name.toLowerCase().contains('advanced')) {
-      return 4; // More sets for advanced exercises
-    } else {
-      return 3; // Standard sets for intermediate exercises
-    }
-  }
-
-  String _exerciseRecordDocId(String exerciseName) {
-    final sanitized = exerciseName
-        .trim()
-        .replaceAll(RegExp(r'[\\/]'), '_')
-        .replaceAll(RegExp(r'\s+'), ' ');
-    return sanitized.isEmpty ? 'exercise_record' : sanitized;
-  }
-
-  Map<String, dynamic> _goalMetadataForWorkout() {
-    return {
-      'bodyFocus': widget.workout.bodyFocus,
-      'level': widget.workout.level,
-      'journeyId': widget.workout.journeyId,
-      'journeyName': widget.workout.journeyName,
-      'isPartOfJourney': widget.workout.journeyId != null,
-      'primaryGoal': inferPrimaryGoalForWorkout(widget.workout),
-      'goalTags': inferGoalTagsForWorkout(widget.workout),
-    };
-  }
-
-  Future<void> _loadUserData() async {
     try {
-      final user = _auth.currentUser;
-      if (user != null) {
-        final docSnapshot = await _firestore
-            .collection('users')
-            .doc(user.uid)
-            .collection('exercise_records')
-            .doc(_exerciseRecordDocId(exercise.name))
-            .get();
-
-        if (docSnapshot.exists && docSnapshot.data() != null) {
-          final data = docSnapshot.data()!;
-
-          // Check if the data is from today
-          bool isToday = false;
-          if (data['timestamp'] != null) {
-            final Timestamp timestamp = data['timestamp'];
-            final DateTime date = timestamp.toDate();
-            final DateTime now = DateTime.now();
-            isToday =
-                date.year == now.year &&
-                date.month == now.month &&
-                date.day == now.day;
-          }
-
-          if (isToday) {
-            // Restore inputs if from today
-            setState(() {
-              final num savedWeight = (data['weightUsed'] ?? 0) as num;
-              weightController.text = savedWeight > 0
-                  ? savedWeight.toInt().toString()
-                  : "";
-              repsController.text = (data['repsPerformed'] ?? 8).toString();
-              setsController.text = (data['setsPerformed'] ?? 3).toString();
-
-              // Restore calculated displays
-              if (data['totalDurationString'] != null) {
-                displayTotalDuration = data['totalDurationString'];
-              }
-              if (data['totalCaloriesString'] != null) {
-                displayTotalCalories = data['totalCaloriesString'];
-              }
-            });
-          } else {
-            // Reset inputs if not from today (new day, new start)
-            // We keep the defaults set in initState (empty weight, computed reps, computed sets)
-            // and don't load the old values into the controllers.
-            setState(() {
-              weightController.text = "";
-              repsController.text = _computeDefaultReps().toString();
-              setsController.text = _computeDefaultSets().toString();
-              displayTotalDuration = "0 min";
-              displayTotalCalories = "0 cal";
-            });
-          }
-        } else {
-          // If no data exists for this exercise, use computed default values
-          setState(() {
-            weightController.text = "";
-            repsController.text = _computeDefaultReps().toString();
-            setsController.text = _computeDefaultSets().toString();
-            displayTotalDuration = "0 min";
-            displayTotalCalories = "0 cal";
-          });
-        }
-      }
-    } catch (e) {
-      print("Error loading user data: $e");
-    } finally {
+      final controller = VideoPlayerController.asset(path);
+      await controller.initialize();
+      final chewie = ChewieController(
+        videoPlayerController: controller,
+        autoPlay: true,
+        looping: true,
+        showControls: true,
+        aspectRatio: controller.value.aspectRatio > 0
+            ? controller.value.aspectRatio
+            : 16 / 9,
+      );
       if (!mounted) {
+        controller.dispose();
+        chewie.dispose();
         return;
       }
       setState(() {
-        _isLoadingData = false;
+        _videoController = controller;
+        _chewieController = chewie;
       });
-      // Perform initial calculation after loading data
-      _calculateValues();
-      _scheduleDraftSync();
+    } catch (_) {
+      if (mounted) setState(() => _videoError = true);
     }
   }
 
-  Future<void> _initializeVideoPlayer() async {
-    VideoPlayerController? initializedController;
-    try {
-      final candidatePaths = await _resolveVideoCandidatePaths();
-
-      for (final videoPath in candidatePaths) {
-        try {
-          final controller = kIsWeb
-              ? VideoPlayerController.networkUrl(
-                  Uri.base.resolve(Uri.encodeFull(videoPath)),
-                )
-              : VideoPlayerController.asset(videoPath);
-          await controller.initialize();
-          await controller.setVolume(_isVideoMuted ? 0.0 : 1.0);
-          initializedController = controller;
-          break;
-        } catch (error) {
-          print(
-            "Failed video candidate '$videoPath' for '${exercise.name}': $error",
-          );
-        }
-      }
-
-      if (!mounted) {
-        await initializedController?.dispose();
-        return;
-      }
-
-      if (initializedController != null) {
-        setState(() {
-          _controller = initializedController;
-        });
-      }
-    } catch (e) {
-      print("Error initializing video player: $e");
-    }
-  }
-
-  String _normalizeAssetText(String value) {
-    return value
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^\w\s]'), ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-  }
-
-  Future<List<String>> _resolveVideoCandidatePaths() async {
-    final candidates = <String>[];
-
-    void addCandidate(String? path) {
-      if (path == null || path.isEmpty || candidates.contains(path)) {
-        return;
-      }
-      candidates.add(path);
-    }
-
-    if (exercise.customVideoAsset != null && exercise.customVideoAsset!.isNotEmpty) {
-      addCandidate(exercise.customVideoAsset);
-    }
-
-    final mappedCandidates = VideoMappingService.getVideoCandidatePaths(
-      exercise.name,
-      journeyName: widget.workout.journeyName,
-      workoutTitle: widget.workout.title,
+  Future<void> _loadHistory() async {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    if (pid == null) return;
+    final list = await TempoRustDb.instance.getExerciseRecords(
+      pid,
+      exerciseName: widget.exercise.name,
     );
-    for (final path in mappedCandidates) {
-      addCandidate(path);
+    if (mounted) {
+      setState(() {
+        _history = list;
+        if (list.isNotEmpty && _weightCtrl.text.isEmpty && list.first.weightUsed > 0) {
+          _weightCtrl.text = list.first.weightUsed.toStringAsFixed(1);
+        }
+      });
     }
+  }
 
+  Future<void> _logSet() async {
+    final profileProvider = context.read<ActiveProfileProvider>();
+    final pid = profileProvider.activeProfileId;
+    if (pid == null) return;
+
+    final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
+    final reps = int.tryParse(_repsCtrl.text.trim()) ?? 10;
+    final sets = int.tryParse(_setsCtrl.text.trim()) ?? 3;
+
+    setState(() => _saving = true);
     try {
-      final manifestContent = await rootBundle.loadString('AssetManifest.json');
-      final manifest = jsonDecode(manifestContent) as Map<String, dynamic>;
-      final normalizedExercise = _normalizeAssetText(exercise.name);
-      final normalizedWorkout = _normalizeAssetText(widget.workout.title);
-      final normalizedJourney = _normalizeAssetText(
-        widget.workout.journeyName ?? '',
+      await TempoRustDb.instance.logExerciseRecord(
+        profileId: pid,
+        exerciseName: widget.exercise.name,
+        workoutId: widget.workout.id,
+        weightUsed: widget.exercise.requiresWeightInput ? weight : 0.0,
+        repsPerformed: reps,
+        setsPerformed: sets,
+        bodyFocus: widget.workout.bodyFocus,
+        level: widget.workout.level,
+        journeyId: widget.workout.journeyId ?? '',
+        journeyName: widget.workout.journeyName ?? '',
+        primaryGoal: inferPrimaryGoalForWorkout(widget.workout),
+        goalTags: inferGoalTagsForWorkout(widget.workout),
       );
-
-      final manifestMatches =
-          manifest.keys
-              .where((key) => key.toLowerCase().endsWith('.mp4'))
-              .map((key) {
-                final normalizedKey = _normalizeAssetText(key);
-                int score = 0;
-
-                if (normalizedKey.contains(normalizedExercise)) {
-                  score += 100;
-                }
-                if (normalizedWorkout.isNotEmpty &&
-                    normalizedKey.contains(normalizedWorkout)) {
-                  score += 60;
-                }
-                if (normalizedJourney.isNotEmpty &&
-                    normalizedKey.contains(normalizedJourney)) {
-                  score += 40;
-                }
-                if ((widget.workout.journeyName ?? '').isNotEmpty &&
-                    normalizedKey.contains('fitness journey')) {
-                  score += 20;
-                }
-
-                return MapEntry(key, score);
-              })
-              .where((entry) => entry.value > 0)
-              .toList()
-            ..sort((a, b) => b.value.compareTo(a.value));
-
-      for (final entry in manifestMatches) {
-        addCandidate(entry.key);
+      profileProvider.notifyDataChanged();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Exercise set logged locally!')),
+        );
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
-      print("Error reading asset manifest for '${exercise.name}': $e");
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not log exercise: $e')),
+        );
+      }
     }
-
-    return candidates;
   }
 
   @override
   void dispose() {
-    // Remove listeners before disposing controllers
-    if (!widget.isPreviewMode && !widget.isReadOnlyMode) {
-      weightController.removeListener(_calculateValues);
-      repsController.removeListener(_calculateValues);
-      setsController.removeListener(_calculateValues);
-    }
-
-    _exerciseTimer?.cancel();
-    _controller?.dispose();
-    weightController.dispose();
-    repsController.dispose();
-    setsController.dispose();
+    _chewieController?.dispose();
+    _videoController?.dispose();
+    _weightCtrl.dispose();
+    _repsCtrl.dispose();
+    _setsCtrl.dispose();
     super.dispose();
-  }
-
-  int? _parsePositiveWholeNumber(String text) {
-    final normalized = text.trim();
-    if (normalized.isEmpty) {
-      return null;
-    }
-
-    final value = int.tryParse(normalized);
-    if (value == null || value <= 0) {
-      return null;
-    }
-
-    return value;
-  }
-
-  bool _hasValidWeight() =>
-      _parsePositiveWholeNumber(weightController.text) != null;
-
-  bool _hasValidReps() =>
-      _parsePositiveWholeNumber(repsController.text) != null;
-
-  bool _hasValidSets() =>
-      _parsePositiveWholeNumber(setsController.text) != null;
-
-  bool get _requiresWeightInput => exercise.requiresWeightInput;
-
-  Future<void> _showInputRequiredDialog(String message) async {
-    await showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Input Required",
-          icon: Icons.error_outline_rounded,
-          iconColor: const Color(0xFFFF9800),
-          content: Text(message),
-          actions: [
-            PremiumConfirmButton(
-              label: "OK",
-              gradientColors: const [Color(0xFFFF9800), Color(0xFFFF5722)],
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<bool> _validateTrackingInputs() async {
-    if (_requiresWeightInput && !_hasValidWeight()) {
-      await _showInputRequiredDialog(
-        "Please enter the weight you used as a whole number greater than 0.",
-      );
-      return false;
-    }
-
-    if (!_hasValidReps()) {
-      await _showInputRequiredDialog(
-        "Please enter reps as a whole number greater than 0.",
-      );
-      return false;
-    }
-
-    if (!_hasValidSets()) {
-      await _showInputRequiredDialog(
-        "Please enter sets as a whole number greater than 0.",
-      );
-      return false;
-    }
-
-    return true;
-  }
-
-  void _notifyValidWeightInput() {
-    if (!widget.isPreviewMode &&
-        !widget.isReadOnlyMode &&
-        widget.onWeightInput != null &&
-        (!_requiresWeightInput || _hasValidWeight())) {
-      widget.onWeightInput!(widget.exerciseNumber - 1);
-    }
-  }
-
-  void _notifyDraftChanged() {
-    if (widget.isPreviewMode ||
-        widget.isReadOnlyMode ||
-        widget.onDraftChanged == null) {
-      return;
-    }
-
-    widget.onDraftChanged!(
-      widget.exerciseNumber - 1,
-      ExerciseTrackingDraft(
-        weight: weightController.text,
-        reps: repsController.text,
-        sets: setsController.text,
-      ),
-    );
-  }
-
-  void _scheduleDraftSync() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      _notifyDraftChanged();
-    });
-  }
-
-  String _formatCountdown(int totalSeconds) {
-    final minutes = totalSeconds ~/ 60;
-    final seconds = totalSeconds % 60;
-    final minuteText = minutes.toString().padLeft(2, '0');
-    final secondText = seconds.toString().padLeft(2, '0');
-    return '$minuteText:$secondText';
-  }
-
-  void _syncTimerWithRecommendation() {
-    if (_isTimerRunning) {
-      return;
-    }
-
-    _exerciseTimer?.cancel();
-    _remainingTimerSeconds = _recommendedTotalDurationSeconds;
-    _isTimerCompleted = _recommendedTotalDurationSeconds == 0;
-  }
-
-  void _toggleTimer() {
-    if (_recommendedTotalDurationSeconds <= 0) {
-      return;
-    }
-
-    if (_isTimerRunning) {
-      _exerciseTimer?.cancel();
-      setState(() {
-        _isTimerRunning = false;
-      });
-      return;
-    }
-
-    if (_remainingTimerSeconds <= 0) {
-      _remainingTimerSeconds = _recommendedTotalDurationSeconds;
-      _isTimerCompleted = false;
-    }
-
-    setState(() {
-      _isTimerRunning = true;
-    });
-
-    _exerciseTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-
-      if (_remainingTimerSeconds <= 1) {
-        timer.cancel();
-        setState(() {
-          _remainingTimerSeconds = 0;
-          _isTimerRunning = false;
-          _isTimerCompleted = true;
-        });
-        return;
-      }
-
-      setState(() {
-        _remainingTimerSeconds--;
-      });
-    });
-  }
-
-  void _cancelTimer() {
-    _exerciseTimer?.cancel();
-    setState(() {
-      _isTimerRunning = false;
-      _isTimerCompleted = false;
-      _remainingTimerSeconds = _recommendedTotalDurationSeconds;
-    });
-  }
-
-  void _completeTimer() {
-    _exerciseTimer?.cancel();
-    setState(() {
-      _isTimerRunning = false;
-      _isTimerCompleted = true;
-      _remainingTimerSeconds = 0;
-    });
-  }
-
-  void _markExerciseAsViewed() {
-    if (!widget.isPreviewMode &&
-        !widget.isReadOnlyMode &&
-        widget.onExerciseViewed != null) {
-      widget.onExerciseViewed!(widget.exerciseNumber - 1);
-    }
-  }
-
-  Future<void> _openExercise(int exerciseNumber) async {
-    await Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ExerciseDetailScreen(
-          exerciseNumber: exerciseNumber,
-          workout: widget.workout,
-          isPreviewMode: widget.isPreviewMode,
-          isReadOnlyMode: widget.isReadOnlyMode,
-          initialDraft: widget.draftForExercise?.call(exerciseNumber - 1),
-          draftForExercise: widget.draftForExercise,
-          onExerciseViewed: widget.onExerciseViewed,
-          onWeightInput: widget.onWeightInput,
-          onDraftChanged: widget.onDraftChanged,
-          onWorkoutCancelled: widget.onWorkoutCancelled,
-        ),
-      ),
-    );
-  }
-
-  Future<bool> _handleBackNavigation() async {
-    if (widget.isPreviewMode || widget.isReadOnlyMode) {
-      return true;
-    }
-
-    if (widget.exerciseNumber > 1) {
-      _notifyDraftChanged();
-
-      if (!mounted) {
-        return false;
-      }
-
-      await _openExercise(widget.exerciseNumber - 1);
-      return false;
-    }
-
-    _notifyDraftChanged();
-    return true;
-  }
-
-  // Automatic calculation method
-  void _calculateValues() {
-    // Get current values from controllers
-    int reps;
-    int sets;
-
-    // Use computed defaults if text fields are empty or invalid
-    if (repsController.text.isEmpty ||
-        int.tryParse(repsController.text) == null) {
-      reps = _computeDefaultReps();
-    } else {
-      reps = int.tryParse(repsController.text)!;
-    }
-
-    if (setsController.text.isEmpty ||
-        int.tryParse(setsController.text) == null) {
-      sets = _computeDefaultSets();
-    } else {
-      sets = int.tryParse(setsController.text)!;
-    }
-
-    // Perform calculations based on both sets and reps
-    int totalDurationSeconds = exercise.getEstimatedTotalDurationSeconds(
-      sets: sets,
-      reps: reps,
-    );
-    double totalDurationMinutes = totalDurationSeconds / 60;
-    String durationString = "${totalDurationMinutes.toStringAsFixed(1)} min";
-
-    double totalCalories = exercise.getCaloriesBurned(sets: sets, reps: reps);
-    String caloriesString = "${totalCalories.toStringAsFixed(1)} cal";
-
-    setState(() {
-      displayTotalDuration = durationString;
-      displayTotalCalories = caloriesString;
-      _recommendedTotalDurationSeconds = totalDurationSeconds;
-      _syncTimerWithRecommendation();
-    });
-  }
-
-  // Automatic save method
-  void _autoSave() {
-    _notifyDraftChanged();
-  }
-
-  // Calculate and Save Data
-  Future<void> _saveExerciseRecord() async {
-    _notifyDraftChanged();
-  }
-
-  bool _shouldUseWebLayout(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    return kIsWeb && screenWidth >= 1024;
-  }
-
-  Widget _buildWebQuickStat({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF191919),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.orange, size: 18),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: const TextStyle(color: Colors.white54, fontSize: 11),
-              ),
-              Text(
-                value,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildGradientButton({
-    required String text,
-    required VoidCallback? onPressed,
-    required List<Color> gradientColors,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        gradient: onPressed != null
-            ? LinearGradient(
-                colors: gradientColors,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              )
-            : null,
-        color: onPressed == null ? Colors.white.withOpacity(0.05) : null,
-        boxShadow: onPressed != null
-            ? [
-                BoxShadow(
-                  color: gradientColors.first.withOpacity(0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                )
-              ]
-            : null,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onPressed,
-          splashColor: Colors.white.withOpacity(0.1),
-          highlightColor: Colors.white.withOpacity(0.05),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  text,
-                  style: TextStyle(
-                    color: onPressed != null ? Colors.white : Colors.white38,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomActionRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildGradientButton(
-            text: "Previous",
-            onPressed: widget.exerciseNumber > 1
-                ? () async {
-                    if (widget.isReadOnlyMode) {
-                      await _openExercise(widget.exerciseNumber - 1);
-                    } else {
-                      await _handleBackNavigation();
-                    }
-                  }
-                : null,
-            gradientColors: [Colors.grey[800]!, Colors.grey[700]!],
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildGradientButton(
-            text: widget.isReadOnlyMode
-                ? (widget.exerciseNumber < widget.workout.exerciseList.length
-                    ? "Next"
-                    : "Back")
-                : widget.exerciseNumber < widget.workout.exerciseList.length
-                    ? "Next"
-                    : "Done",
-            onPressed: () async {
-              int totalExercises = widget.workout.exerciseList.length;
-
-              if (widget.isReadOnlyMode) {
-                if (widget.exerciseNumber < totalExercises) {
-                  await _openExercise(widget.exerciseNumber + 1);
-                } else if (mounted) {
-                  Navigator.pop(context);
-                }
-                return;
-              }
-
-              if (!await _validateTrackingInputs()) {
-                return;
-              }
-
-              _markExerciseAsViewed();
-              _notifyValidWeightInput();
-
-              if (widget.exerciseNumber < totalExercises) {
-                await _saveExerciseRecord();
-                await _openExercise(widget.exerciseNumber + 1);
-              } else {
-                await _saveExerciseRecord();
-                Navigator.pop(context);
-              }
-            },
-            gradientColors: widget.isReadOnlyMode
-                ? (widget.exerciseNumber < widget.workout.exerciseList.length ? [Colors.orange, Colors.deepOrange] : [Colors.grey[800]!, Colors.grey[700]!])
-                : (widget.exerciseNumber < widget.workout.exerciseList.length ? [Colors.orange, Colors.deepOrange] : [Colors.green, Colors.green[700]!]),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSectionCard({required Widget child}) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Padding(padding: const EdgeInsets.all(16.0), child: child),
-    );
-  }
-
-  Widget _buildSectionTitle(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 18,
-        fontWeight: FontWeight.bold,
-      ),
-    );
-  }
-
-  Widget _buildPremiumTextField({
-    required TextEditingController controller,
-    required String labelText,
-    String? helperText,
-    void Function(String)? onChanged,
-  }) {
-    return TextField(
-      controller: controller,
-      enabled: !widget.isReadOnlyMode,
-      readOnly: widget.isReadOnlyMode,
-      keyboardType: TextInputType.number,
-      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-      onChanged: widget.isReadOnlyMode ? null : onChanged,
-      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
-      decoration: InputDecoration(
-        labelText: labelText,
-        helperText: helperText,
-        helperStyle: const TextStyle(color: Colors.white54, fontSize: 12),
-        labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.w500),
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.05),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.orange, width: 2),
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      ),
-    );
-  }
-
-  Widget _buildWebBody() {
-    final String currentModeLabel = widget.isPreviewMode
-        ? "Preview"
-        : widget.isReadOnlyMode
-        ? "Review"
-        : "Tracking";
-
-    return SingleChildScrollView(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1400),
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildSectionCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  exercise.name,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 28,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  widget.workout.title,
-                                  style: const TextStyle(
-                                    color: Colors.orange,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 10,
-                            children: [
-                              _buildWebQuickStat(
-                                icon: Icons.format_list_numbered,
-                                label: "Exercise",
-                                value:
-                                    "${widget.exerciseNumber}/${widget.workout.exerciseList.length}",
-                              ),
-                              _buildWebQuickStat(
-                                icon: Icons.timer,
-                                label: "Duration",
-                                value: displayTotalDuration,
-                              ),
-                              _buildWebQuickStat(
-                                icon: Icons.local_fire_department,
-                                label: "Calories",
-                                value: displayTotalCalories,
-                              ),
-                              _buildWebQuickStat(
-                                icon: Icons.devices,
-                                label: "Mode",
-                                value: currentModeLabel,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 7,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_controller != null &&
-                              _controller!.value.isInitialized)
-                            _buildSectionCard(
-                              child: Column(
-                                children: [
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(12),
-                                    child: AspectRatio(
-                                      aspectRatio:
-                                          _controller!.value.aspectRatio,
-                                      child: VideoPlayer(
-                                        _controller!,
-                                        key: ValueKey(_controller.hashCode),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      IconButton(
-                                        icon: Icon(
-                                          _controller!.value.isPlaying
-                                              ? Icons.pause
-                                              : Icons.play_arrow,
-                                          color: Colors.white,
-                                          size: 32,
-                                        ),
-                                        onPressed: () {
-                                          setState(() {
-                                            if (_controller!.value.isPlaying) {
-                                              _controller!.pause();
-                                            } else {
-                                              _controller!.play();
-                                            }
-                                          });
-                                        },
-                                      ),
-                                      const SizedBox(width: 8),
-                                      IconButton(
-                                        icon: Icon(
-                                          _isVideoMuted
-                                              ? Icons.volume_off
-                                              : Icons.volume_up,
-                                          color: Colors.white,
-                                          size: 28,
-                                        ),
-                                        onPressed: () async {
-                                          final controller = _controller;
-                                          if (controller == null) {
-                                            return;
-                                          }
-
-                                          final nextMutedState = !_isVideoMuted;
-                                          await controller.setVolume(
-                                            nextMutedState ? 0.0 : 1.0,
-                                          );
-
-                                          if (!mounted) {
-                                            return;
-                                          }
-
-                                          setState(() {
-                                            _isVideoMuted = nextMutedState;
-                                          });
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            )
-                          else
-                            _buildSectionCard(
-                              child: Column(
-                                children: [
-                                  Container(
-                                    width: double.infinity,
-                                    height: 320,
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey[800],
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: const Icon(
-                                      Icons.videocam_off,
-                                      size: 64,
-                                      color: Colors.white54,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    "Video not available for ${exercise.name}",
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          const SizedBox(height: 24),
-                          if (!widget.isPreviewMode &&
-                              !widget.isReadOnlyMode) ...[
-                            _buildSectionTitle("Exercise Timer"),
-                            const SizedBox(height: 10),
-                            _buildSectionCard(
-                              child: Column(
-                                children: [
-                                  Text(
-                                    _formatCountdown(_remainingTimerSeconds),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 42,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    _isTimerCompleted
-                                        ? "Timer completed"
-                                        : "Recommended time updates with your reps and sets",
-                                    style: TextStyle(
-                                      color: _isTimerCompleted
-                                          ? Colors.greenAccent
-                                          : Colors.white70,
-                                      fontSize: 13,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 14),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: ElevatedButton(
-                                          onPressed: _toggleTimer,
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.orange,
-                                            foregroundColor: Colors.white,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                          ),
-                                          child: Text(
-                                            _isTimerRunning ? "Pause" : "Start",
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: OutlinedButton(
-                                          onPressed: _cancelTimer,
-                                          style: OutlinedButton.styleFrom(
-                                            foregroundColor: Colors.white70,
-                                            side: const BorderSide(
-                                              color: Colors.white24,
-                                            ),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                          ),
-                                          child: const Text("Cancel"),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: OutlinedButton(
-                                          onPressed: _completeTimer,
-                                          style: OutlinedButton.styleFrom(
-                                            foregroundColor: Colors.greenAccent,
-                                            side: const BorderSide(
-                                              color: Colors.greenAccent,
-                                            ),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                          ),
-                                          child: const Text("Done"),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                          ],
-                          if (widget.isPreviewMode) ...[
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(16.0),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: Colors.orange.withOpacity(0.2),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(Icons.info_outline, color: Colors.orange, size: 24),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  const Expanded(
-                                    child: Text(
-                                      "Preview only. Start the workout from the previous screen to log weight, reps, and sets.",
-                                      style: TextStyle(
-                                        color: Colors.orange,
-                                        fontSize: 14,
-                                        height: 1.4,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ] else if (widget.isReadOnlyMode) ...[
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(16.0),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: Colors.blue.withOpacity(0.2),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(Icons.lock_outline, color: Colors.blue, size: 24),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  const Expanded(
-                                    child: Text(
-                                      "Completed workout review. Inputs are locked after finishing. Tap Again on the previous screen to log a new session.",
-                                      style: TextStyle(
-                                        color: Colors.blue,
-                                        fontSize: 14,
-                                        height: 1.4,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ] else ...[
-                            _buildSectionTitle("Performance Tracking"),
-                            const SizedBox(height: 5),
-                            Text(
-                              _requiresWeightInput
-                                  ? "Input the weight, sets and reps you have done"
-                                  : "Input the sets and reps you have done. Weight is locked for this bodyweight exercise.",
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            _buildSectionCard(
-                              child: Column(
-                                children: [
-                                  if (_requiresWeightInput)
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _buildPremiumTextField(
-                                            controller: weightController,
-                                            labelText: 'Weight (kg)',
-                                            helperText: 'Whole numbers only',
-                                            onChanged: (_) => _notifyValidWeightInput(),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        const Text(
-                                          "kg",
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  else
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(14),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withOpacity(0.18),
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(
-                                          color: Colors.white24,
-                                        ),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          const Icon(
-                                            Icons.accessibility_new,
-                                            color: Colors.orange,
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: const [
-                                                Text(
-                                                  'Weight (kg)',
-                                                  style: TextStyle(
-                                                    color: Colors.orange,
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                                SizedBox(height: 4),
-                                                Text(
-                                                  'Bodyweight only',
-                                                  style: TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 15,
-                                                    fontWeight: FontWeight.w600,
-                                                  ),
-                                                ),
-                                                SizedBox(height: 2),
-                                                Text(
-                                                  'No manual weight entry needed for this exercise.',
-                                                  style: TextStyle(
-                                                    color: Colors.white54,
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  const SizedBox(height: 10),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: _buildPremiumTextField(
-                                          controller: repsController,
-                                          labelText: 'Reps',
-                                          helperText: 'Whole numbers only',
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: _buildPremiumTextField(
-                                          controller: setsController,
-                                          labelText: 'Sets',
-                                          helperText: 'Whole numbers only',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      flex: 5,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!widget.isPreviewMode &&
-                              !widget.isReadOnlyMode) ...[
-                            _buildSectionTitle("Result Details"),
-                            const SizedBox(height: 10),
-                            _buildSectionCard(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildInfoRow(
-                                    Icons.fitness_center,
-                                    "Exercise Type",
-                                    exercise.name,
-                                  ),
-                                  const Divider(
-                                    height: 20,
-                                    color: Colors.white10,
-                                  ),
-                                  _buildInfoRow(
-                                    Icons.timer,
-                                    "Total Duration",
-                                    displayTotalDuration,
-                                  ),
-                                  const Divider(
-                                    height: 20,
-                                    color: Colors.white10,
-                                  ),
-                                  _buildInfoRow(
-                                    Icons.local_fire_department,
-                                    "Total Calories",
-                                    displayTotalCalories,
-                                  ),
-                                  const Divider(
-                                    height: 20,
-                                    color: Colors.white10,
-                                  ),
-                                  _buildInfoRow(
-                                    Icons.repeat,
-                                    "Rec. Reps/Sets",
-                                    "3-4 sets x 8-12 reps",
-                                  ),
-                                  const Divider(
-                                    height: 20,
-                                    color: Colors.white10,
-                                  ),
-                                  _buildInfoRow(
-                                    Icons.directions_run,
-                                    "Rest Period",
-                                    "60-90 seconds",
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                          ],
-                          _buildSectionTitle("Description"),
-                          const SizedBox(height: 10),
-                          _buildSectionCard(
-                            child: Text(
-                              exercise.description,
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 14,
-                                height: 1.5,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          _buildSectionTitle("Tips"),
-                          const SizedBox(height: 10),
-                          _buildSectionCard(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildTip(
-                                  Icons.check_circle,
-                                  "Maintain proper posture throughout the exercise",
-                                ),
-                                const SizedBox(height: 8),
-                                _buildTip(
-                                  Icons.check_circle,
-                                  "Breathe consistently - exhale on exertion",
-                                ),
-                                const SizedBox(height: 8),
-                                _buildTip(
-                                  Icons.check_circle,
-                                  "Start with lighter weights and progress gradually",
-                                ),
-                                const SizedBox(height: 8),
-                                _buildTip(
-                                  Icons.check_circle,
-                                  "Focus on the muscle being worked",
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final bool isWebLayout = _shouldUseWebLayout(context);
+    final c = AppColors.of(context);
 
-    return WillPopScope(
-      onWillPop: _handleBackNavigation,
-      child: Scaffold(
-        resizeToAvoidBottomInset: true,
-        backgroundColor: Colors.black,
-        appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(80),
-          child: Container(
-            color: Colors.black,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: isWebLayout ? 1400.0 : MediaQuery.of(context).size.width,
-                ),
-                child: AppBar(
-                  backgroundColor: Colors.black,
-                  automaticallyImplyLeading: false,
-                  elevation: 0,
-                  leading:
-                      widget.isPreviewMode ||
-                          widget.isReadOnlyMode ||
-                          widget.exerciseNumber == 1
-                      ? PremiumBackButton(
-                          onPressed: () async {
-                            final shouldPop = await _handleBackNavigation();
-                            if (shouldPop && mounted) {
-                              Navigator.pop(context);
-                            }
-                          },
-                        )
-                      : null,
-                  title: Text(
-                    exercise.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+    return Scaffold(
+      backgroundColor: c.scaffold,
+      body: CustomScrollView(
+        slivers: [
+          TempoSliverHeader(
+            title: widget.exercise.name,
+            showBackButton: true,
+            onBack: () => Navigator.of(context).pop(false),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+            sliver: SliverList.list(
+              children: [
+                // Video Demonstration Card
+          ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Container(
+              height: 220,
+              color: Colors.black,
+              child: _chewieController != null
+                  ? Chewie(controller: _chewieController!)
+                  : Center(
+                      child: _videoError
+                          ? Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  CupertinoIcons.film,
+                                  color: Colors.white54,
+                                  size: 36,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  widget.exercise.name,
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                              ],
+                            )
+                          : const CupertinoActivityIndicator(
+                              color: Colors.white,
+                            ),
                     ),
-                  ),
-                  centerTitle: true,
-                ),
-              ),
             ),
           ),
-        ),
-        body: _isLoadingData
-            ? const Center(
-                child: CircularProgressIndicator(color: Colors.orange),
-              )
-            : SafeArea(
-                child: isWebLayout
-                    ? _buildWebBody()
-                    : SingleChildScrollView(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 16),
+
+          AppleCard(
+            borderRadius: 24,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        (widget.workout.journeyName != null &&
+                                widget.workout.journeyName!.isNotEmpty)
+                            ? '${widget.workout.journeyName!} · ${widget.workout.bodyFocus}'
+                            : widget.workout.bodyFocus,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: c.textSecondary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2.5,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: c.cardBorder),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        widget.workout.level,
+                        style: TextStyle(
+                          color: c.textSecondary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  widget.exercise.name,
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  widget.exercise.description,
+                  style: TextStyle(
+                    color: c.textSecondary,
+                    fontSize: 14,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Divider(height: 1, color: c.divider),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    if (widget.exercise.requiresWeightInput) ...[
+                      Expanded(
+                        child: _field('Weight (kg)', _weightCtrl, '20', c),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    Expanded(child: _field('Sets', _setsCtrl, '3', c)),
+                    const SizedBox(width: 10),
+                    Expanded(child: _field('Reps', _repsCtrl, '10', c)),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: c.accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: _saving ? null : _logSet,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text(
+                            'Log Set & Mark Done',
+                            style: TextStyle(
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 22),
+
+          if (_history.isNotEmpty) ...[
+            Text(
+              'Previous Logs',
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
+              ),
+            ),
+            const SizedBox(height: 10),
+            AppleCard(
+              borderRadius: 22,
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: List.generate(
+                  _history.take(8).length,
+                  (i) {
+                    final rec = _history[i];
+                    final isLast = i == _history.take(8).length - 1;
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 14,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              // Video Player Section
-                              if (_controller != null &&
-                                  _controller!.value.isInitialized)
-                                Container(
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.04),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.2),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      children: [
-                                        ClipRRect(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                          child: AspectRatio(
-                                            aspectRatio:
-                                                _controller!.value.aspectRatio,
-                                            child: VideoPlayer(
-                                              _controller!,
-                                              key: ValueKey(_controller.hashCode),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 12),
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            IconButton(
-                                              icon: Icon(
-                                                _controller!.value.isPlaying
-                                                    ? Icons.pause
-                                                    : Icons.play_arrow,
-                                                color: Colors.white,
-                                                size: 32,
-                                              ),
-                                              onPressed: () {
-                                                setState(() {
-                                                  if (_controller!
-                                                      .value
-                                                      .isPlaying) {
-                                                    _controller!.pause();
-                                                  } else {
-                                                    _controller!.play();
-                                                  }
-                                                });
-                                              },
-                                            ),
-                                            const SizedBox(width: 8),
-                                            IconButton(
-                                              icon: Icon(
-                                                _isVideoMuted
-                                                    ? Icons.volume_off
-                                                    : Icons.volume_up,
-                                                color: Colors.white,
-                                                size: 28,
-                                              ),
-                                              onPressed: () async {
-                                                final controller = _controller;
-                                                if (controller == null) {
-                                                  return;
-                                                }
-
-                                                final nextMutedState =
-                                                    !_isVideoMuted;
-                                                await controller.setVolume(
-                                                  nextMutedState ? 0.0 : 1.0,
-                                                );
-
-                                                if (!mounted) {
-                                                  return;
-                                                }
-
-                                                setState(() {
-                                                  _isVideoMuted =
-                                                      nextMutedState;
-                                                });
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                )
-                              else
-                                Container(
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.04),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.2),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      children: [
-                                        Container(
-                                          width: double.infinity,
-                                          height: 200,
-                                          decoration: BoxDecoration(
-                                            color: Colors.grey[800],
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                          ),
-                                          child: const Icon(
-                                            Icons.videocam_off,
-                                            size: 64,
-                                            color: Colors.white54,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 12),
-                                        Text(
-                                          "Video not available for ${exercise.name}",
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              const SizedBox(height: 20),
-
-                              // Exercise Header
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    children: [
-                                      Text(
-                                        exercise.name,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 24,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        widget.workout.title,
-                                        style: const TextStyle(
-                                          color: Colors.orange,
-                                          fontSize: 16,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 20),
-
-                              if (!widget.isPreviewMode &&
-                                  !widget.isReadOnlyMode) ...[
-                                const Text(
-                                  "Exercise Timer",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Container(
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.04),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.2),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      children: [
-                                        Text(
-                                          _formatCountdown(
-                                            _remainingTimerSeconds,
-                                          ),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 36,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          _isTimerCompleted
-                                              ? "Timer completed"
-                                              : "Recommended time updates with your reps and sets",
-                                          style: TextStyle(
-                                            color: _isTimerCompleted
-                                                ? Colors.greenAccent
-                                                : Colors.white70,
-                                            fontSize: 13,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                        const SizedBox(height: 14),
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: _buildGradientButton(
-                                                text: _isTimerRunning ? "Pause" : "Start",
-                                                onPressed: _toggleTimer,
-                                                gradientColors: const [Colors.orange, Colors.deepOrange],
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            Expanded(
-                                              child: _buildGradientButton(
-                                                text: "Cancel",
-                                                onPressed: _cancelTimer,
-                                                gradientColors: [Colors.grey[800]!, Colors.grey[700]!],
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            Expanded(
-                                              child: _buildGradientButton(
-                                                text: "Done",
-                                                onPressed: _completeTimer,
-                                                gradientColors: [Colors.green, Colors.green[700]!],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                              ],
-
-                              if (widget.isPreviewMode) ...[
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orange.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: Colors.orange.withOpacity(0.2),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(Icons.info_outline, color: Colors.orange, size: 24),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      const Expanded(
-                                        child: Text(
-                                          "Preview only. Start the workout from the previous screen to log weight, reps, and sets.",
-                                          style: TextStyle(
-                                            color: Colors.orange,
-                                            fontSize: 14,
-                                            height: 1.4,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                              ] else if (widget.isReadOnlyMode) ...[
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue.withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          color: Colors.blue.withOpacity(0.2),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(Icons.lock_outline, color: Colors.blue, size: 24),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      const Expanded(
-                                        child: Text(
-                                          "Completed workout review. Inputs are locked after finishing. Tap Again on the previous screen to log a new session.",
-                                          style: TextStyle(
-                                            color: Colors.blue,
-                                            fontSize: 14,
-                                            height: 1.4,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                              ] else ...[
-                                // Performance Tracking
-                                const Text(
-                                  "Performance Tracking",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  _requiresWeightInput
-                                      ? "Input the weight, sets and reps you have done"
-                                      : "Input the sets and reps you have done. Weight is locked for this bodyweight exercise.",
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Container(
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.04),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.2),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      children: [
-                                        // Weight Input
-                                        if (_requiresWeightInput)
-                                          Row(
-                                            children: [
-                                              Expanded(
-                                                child: _buildPremiumTextField(
-                                                  controller: weightController,
-                                                  labelText: 'Weight (kg)',
-                                                  helperText: 'Whole numbers only',
-                                                  onChanged: (_) => _notifyValidWeightInput(),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 10),
-                                              const Text(
-                                                "kg",
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 16,
-                                                ),
-                                              ),
-                                            ],
-                                          )
-                                        else
-                                          Container(
-                                            width: double.infinity,
-                                            padding: const EdgeInsets.all(14),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black.withOpacity(
-                                                0.18,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              border: Border.all(
-                                                color: Colors.white24,
-                                              ),
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                const Icon(
-                                                  Icons.accessibility_new,
-                                                  color: Colors.orange,
-                                                ),
-                                                const SizedBox(width: 12),
-                                                Expanded(
-                                                  child: Column(
-                                                    crossAxisAlignment:
-                                                        CrossAxisAlignment
-                                                            .start,
-                                                    children: const [
-                                                      Text(
-                                                        'Weight (kg)',
-                                                        style: TextStyle(
-                                                          color: Colors.orange,
-                                                          fontSize: 14,
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                        ),
-                                                      ),
-                                                      SizedBox(height: 4),
-                                                      Text(
-                                                        'Bodyweight only',
-                                                        style: TextStyle(
-                                                          color: Colors.white,
-                                                          fontSize: 15,
-                                                          fontWeight:
-                                                              FontWeight.w600,
-                                                        ),
-                                                      ),
-                                                      SizedBox(height: 2),
-                                                      Text(
-                                                        'No manual weight entry needed for this exercise.',
-                                                        style: TextStyle(
-                                                          color: Colors.white54,
-                                                          fontSize: 12,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        const SizedBox(height: 10),
-                                        // Reps Input
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: _buildPremiumTextField(
-                                                controller: repsController,
-                                                labelText: 'Reps',
-                                                helperText: 'Whole numbers only',
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            const Text(
-                                              "reps",
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 16,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 10),
-                                        // Sets Input
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: _buildPremiumTextField(
-                                                controller: setsController,
-                                                labelText: 'Sets',
-                                                helperText: 'Whole numbers only',
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            const Text(
-                                              "sets",
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 16,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-
-                                // Exercise Info (Updated to show Calculated Results)
-                                const Text(
-                                  "Result Details",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Container(
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.04),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.2),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        _buildInfoRow(
-                                          Icons.fitness_center,
-                                          "Exercise Type",
-                                          exercise.name,
-                                        ),
-                                        const Divider(
-                                          height: 20,
-                                          color: Colors.white10,
-                                        ),
-                                        // Changed label and value to dynamic calculation
-                                        _buildInfoRow(
-                                          Icons.timer,
-                                          "Total Duration",
-                                          displayTotalDuration,
-                                        ),
-                                        const Divider(
-                                          height: 20,
-                                          color: Colors.white10,
-                                        ),
-                                        // Changed label and value to dynamic calculation
-                                        _buildInfoRow(
-                                          Icons.local_fire_department,
-                                          "Total Calories",
-                                          displayTotalCalories,
-                                        ),
-                                        const Divider(
-                                          height: 20,
-                                          color: Colors.white10,
-                                        ),
-                                        _buildInfoRow(
-                                          Icons.repeat,
-                                          "Rec. Reps/Sets",
-                                          "3-4 sets x 8-12 reps",
-                                        ),
-                                        const Divider(
-                                          height: 20,
-                                          color: Colors.white10,
-                                        ),
-                                        _buildInfoRow(
-                                          Icons.directions_run,
-                                          "Rest Period",
-                                          "60-90 seconds",
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                              ],
-
-                              // Description
-                              const Text(
-                                "Description",
+                              Text(
+                                DateFormat('MMM d, yyyy')
+                                    .format(rec.recordedAt.toLocal()),
                                 style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
+                                  color: c.textSecondary,
+                                  fontSize: 13.5,
                                 ),
                               ),
-                              const SizedBox(height: 10),
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Text(
-                                    exercise.description,
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 14,
-                                      height: 1.5,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 20),
-
-                              // Tips
-                              const Text(
-                                "Tips",
+                              Text(
+                                rec.weightUsed > 0
+                                    ? '${rec.weightUsed.toStringAsFixed(1)} kg · ${rec.setsPerformed}×${rec.repsPerformed}'
+                                    : '${rec.setsPerformed} sets × ${rec.repsPerformed} reps',
                                 style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 4),
-                                    ),
+                                  color: c.textPrimary,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
                                   ],
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _buildTip(
-                                        Icons.check_circle,
-                                        "Maintain proper posture throughout the exercise",
-                                      ),
-                                      const SizedBox(height: 8),
-                                      _buildTip(
-                                        Icons.check_circle,
-                                        "Breathe consistently - exhale on exertion",
-                                      ),
-                                      const SizedBox(height: 8),
-                                      _buildTip(
-                                        Icons.check_circle,
-                                        "Start with lighter weights and progress gradually",
-                                      ),
-                                      const SizedBox(height: 8),
-                                      _buildTip(
-                                        Icons.check_circle,
-                                        "Focus on the muscle being worked",
-                                      ),
-                                    ],
-                                  ),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                      ),
-              ),
-        bottomNavigationBar: widget.isPreviewMode
-            ? null
-            : Container(
-                padding: const EdgeInsets.all(16.0),
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 10,
-                      offset: const Offset(0, -4),
-                    ),
-                  ],
+                        if (!isLast)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                            child: Divider(height: 1, color: c.divider),
+                          ),
+                      ],
+                    );
+                  },
                 ),
-                child: isWebLayout
-                    ? Center(
-                        heightFactor: 1.0,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1000),
-                          child: _buildBottomActionRow(),
-                        ),
-                      )
-                    : _buildBottomActionRow(),
               ),
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: Colors.orange, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 3,
-            child: Text(
-              label,
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 4,
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              softWrap: true,
-              overflow: TextOverflow.visible,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
+          ],
+              ],
             ),
           ),
         ],
@@ -2309,17 +392,34 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     );
   }
 
-  // Fixed function instead of class
-  Widget _buildTip(IconData icon, String text) {
-    return Row(
+  Widget _field(
+    String label,
+    TextEditingController ctrl,
+    String hint,
+    AppColors c,
+  ) {
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: Colors.green, size: 16),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(color: Colors.white70, fontSize: 14),
+        Text(
+          label,
+          style: TextStyle(
+            color: c.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: ctrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          style: TextStyle(
+            color: c.textPrimary,
+            fontWeight: FontWeight.w700,
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: c.textHint),
           ),
         ),
       ],

@@ -1,87 +1,96 @@
 import 'package:flutter/material.dart';
-import 'theme_provider.dart';
 import 'package:provider/provider.dart';
+import 'theme_provider.dart';
 
-/// Centralized helper for theme-aware colors across the app.
-/// Use `AppColors.of(context)` to get theme-appropriate colors.
+/// Centralized Apple-inspired semantic color tokens for Tempo (Light & Dark Mode).
+/// Use `AppColors.of(context)` everywhere so all screens react cleanly to Light/Dark switching.
 class AppColors {
   final bool isDark;
 
-  AppColors._(this.isDark);
+  const AppColors._(this.isDark);
 
-  factory AppColors.of(BuildContext context) {
-    final isDark = Provider.of<ThemeProvider>(context).isDarkMode;
+  factory AppColors.of(BuildContext context, {bool listen = true}) {
+    final isDark = Provider.of<ThemeProvider>(context, listen: listen).isDarkMode;
     return AppColors._(isDark);
   }
 
-  // --- Scaffolds & backgrounds ---
-  Color get scaffold => isDark ? Colors.black : const Color(0xFFF5F5F7);
-  Color get appBar => isDark ? Colors.black : const Color(0xFFF5F5F7);
+  // --- Scaffolds & Grouped Surfaces (Apple Health / iOS 26-27) ---
+  Color get scaffold => isDark ? const Color(0xFF000000) : const Color(0xFFF2F2F7);
+  Color get appBar => isDark ? const Color(0xFF000000) : const Color(0xFFF2F2F7);
 
-  // --- Card surfaces ---
-  Color get card => isDark ? const Color(0xFF191919) : Colors.white;
-  Color get cardAlt => isDark
-      ? Colors.white.withOpacity(0.04)
-      : Colors.white;
+  // --- Cards & Elevated Surfaces ---
+  Color get card => isDark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF);
+  Color get cardAlt => isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF7F7FA);
   Color get cardBorder => isDark
-      ? Colors.white.withOpacity(0.08)
-      : Colors.black.withOpacity(0.06);
+      ? Colors.white.withValues(alpha: 0.10)
+      : Colors.black.withValues(alpha: 0.06);
 
-  // --- Text ---
-  Color get textPrimary => isDark ? Colors.white : const Color(0xFF1B1B1B);
-  Color get textSecondary => isDark ? Colors.white70 : const Color(0xFF585858);
-  Color get textTertiary => isDark ? Colors.white54 : const Color(0xFF8E8E93);
-  Color get textHint => isDark ? Colors.grey[400]! : Colors.grey[600]!;
+  // --- Primary & Semantic Apple Accents ---
+  Color get accent => isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
+  Color get accentSoft => accent.withValues(alpha: isDark ? 0.18 : 0.12);
+  Color get moveRed => isDark ? const Color(0xFFFF453A) : const Color(0xFFFF3B30);
+  Color get exerciseGreen => isDark ? const Color(0xFF30D158) : const Color(0xFF34C759);
+  Color get energyOrange => isDark ? const Color(0xFFFF9F0A) : const Color(0xFFFF9500);
+  Color get sleepPurple => isDark ? const Color(0xFFBF5AF2) : const Color(0xFFAF52DE);
+  Color get bodyCyan => isDark ? const Color(0xFF64D2FF) : const Color(0xFF32ADE6);
+
+  // --- Typography ---
+  Color get textPrimary => isDark ? const Color(0xFFFFFFFF) : const Color(0xFF1C1C1E);
+  Color get textSecondary => isDark ? const Color(0xFFAEAEB2) : const Color(0xFF636366);
+  Color get textTertiary => isDark ? const Color(0xFF8E8E93) : const Color(0xFF8E8E93);
+  Color get textHint => isDark ? const Color(0xFF636366) : const Color(0xFFAEAEB2);
 
   // --- Icons ---
-  Color get icon => isDark ? Colors.white : const Color(0xFF1B1B1B);
-  Color get iconSecondary => isDark ? Colors.white70 : const Color(0xFF585858);
+  Color get icon => isDark ? const Color(0xFFFFFFFF) : const Color(0xFF1C1C1E);
+  Color get iconSecondary => isDark ? const Color(0xFFAEAEB2) : const Color(0xFF636366);
 
-  // --- Overlays & glass ---
+  // --- Liquid Glass / Soft Glass Tokens ---
   Color get glassBg => isDark
-      ? Colors.white.withOpacity(0.06)
-      : Colors.black.withOpacity(0.04);
+      ? const Color(0xFF1C1C1E).withValues(alpha: 0.72)
+      : Colors.white.withValues(alpha: 0.72);
+  Color get glassPillBg => isDark
+      ? Colors.white.withValues(alpha: 0.16)
+      : Colors.white.withValues(alpha: 0.90);
   Color get glassBorder => isDark
-      ? Colors.white.withOpacity(0.06)
-      : Colors.black.withOpacity(0.06);
+      ? Colors.white.withValues(alpha: 0.18)
+      : Colors.black.withValues(alpha: 0.08);
+  Color get glassHighlight => isDark
+      ? Colors.white.withValues(alpha: 0.22)
+      : Colors.white.withValues(alpha: 0.95);
 
-  // --- Dividers ---
+  // --- Dividers & Shadows ---
   Color get divider => isDark
-      ? Colors.white.withOpacity(0.08)
-      : Colors.black.withOpacity(0.06);
-
-  // --- Shadows ---
+      ? Colors.white.withValues(alpha: 0.10)
+      : Colors.black.withValues(alpha: 0.07);
   Color get shadow => isDark
-      ? Colors.black.withOpacity(0.3)
-      : Colors.black.withOpacity(0.06);
+      ? Colors.black.withValues(alpha: 0.45)
+      : Colors.black.withValues(alpha: 0.08);
 
-  // --- Input fields ---
+  // --- Inputs & Search ---
   Color get inputFill => isDark
-      ? Colors.white.withOpacity(0.06)
-      : Colors.grey[100]!;
+      ? const Color(0xFF2C2C2E)
+      : const Color(0xFFE9E9EE);
   Color get inputBorder => isDark
-      ? Colors.white.withOpacity(0.12)
-      : Colors.grey[300]!;
-
-  // --- Search bar ---
+      ? Colors.white.withValues(alpha: 0.12)
+      : Colors.black.withValues(alpha: 0.08);
   Color get searchBg => isDark
-      ? Colors.white.withOpacity(0.08)
-      : Colors.grey[200]!;
+      ? const Color(0xFF2C2C2E)
+      : const Color(0xFFE5E5EA);
 
-  // --- Bottom nav ---
-  Color get navBar => isDark ? const Color(0xFF0D0D0D) : Colors.white;
-  Color get navInactive => isDark ? Colors.white54 : Colors.grey;
+  // --- Navigation ---
+  Color get navBar => isDark ? const Color(0xFF161618) : const Color(0xFFFFFFFF);
+  Color get navInactive => isDark ? const Color(0xFFD1D1D6) : const Color(0xFF1C1C1E);
 
-  // --- Card gradient (for health metric cards) ---
+  // --- Subtle Card Gradient ---
   LinearGradient get cardGradient => isDark
       ? const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF1F1F24), Color(0xFF141416)],
+          colors: [Color(0xFF222226), Color(0xFF171719)],
         )
       : const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFFFFFFFF), Color(0xFFF8F8FA)],
+          colors: [Color(0xFFFFFFFF), Color(0xFFFBFBFD)],
         );
 }

@@ -1,68 +1,75 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import '../widgets/premium_back_button.dart';
+
+import '../theme/app_colors.dart';
+import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_sliver_header.dart';
 
 class MovingInfoScreen extends StatelessWidget {
   const MovingInfoScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        toolbarHeight: 80,
-        backgroundColor: Colors.black,
-        leading: PremiumBackButton(
-          onPressed: () {
-            Navigator.pop(context);
-          },
-        ),
-        title: const Text(
-          'Learn more',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
+      backgroundColor: c.scaffold,
+      body: CustomScrollView(
+        slivers: [
+          const TempoSliverHeader(
+            title: 'Exercise Minutes',
+            showBackButton: true,
           ),
-        ),
-        centerTitle: true,
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 32),
+            sliver: SliverList.list(
               children: [
-                const Text(
-                  '"Moving" records the time during which you engage in moderate- or high-intensity exercise.',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Low-intensity exercise will not count towards your "Moving" time. Medium- to -high-intensity exercise is defined as exercise in which your cadence is higher than 100 steps per minute or your heart rate exceeds 64% of your maximum heart rate.',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Engaging in 30-60 minutes of moderate-intensity exercise every day (at least 150 minutes per week) or 20-60 minutes of high-intensity exercise per day (at least 75 minutes per week) will have positive effects on your health.',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.4,
+                AppleCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.timer,
+                            color: c.exerciseGreen,
+                            size: 22,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Active Movement',
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Exercise minutes record the time spent in moderate- or high-intensity training sessions.',
+                        style: TextStyle(
+                          color: c.textSecondary,
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Engaging in 30–60 minutes of moderate-intensity exercise most days (at least 150 minutes per week) or 75 minutes of vigorous activity per week delivers major cardiovascular and strength benefits.',
+                        style: TextStyle(
+                          color: c.textSecondary,
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-        ),
+        ],
       ),
     );
   }

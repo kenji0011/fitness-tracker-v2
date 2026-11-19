@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../services/fitness_chat_service.dart';
+import 'ios_stretch_sheet.dart';
 
 const double _chatbotButtonSize = 56;
 const double _chatbotEdgeInset = 12;
@@ -40,9 +41,8 @@ class _ChatbotLauncherState extends State<ChatbotLauncher> {
   bool _isDragging = false;
 
   void _openChatbot(BuildContext context) {
-    showModalBottomSheet<void>(
+    showTempoSheet<void>(
       context: context,
-      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _ChatbotSheet(title: widget.title),
     );

@@ -352,18 +352,15 @@ class VideoMappingService {
     String? journeyName,
     String? workoutTitle,
   }) {
-    print("Looking for video for exercise: '$exerciseName'"); // Debug log
     final candidates = getVideoCandidatePaths(
       exerciseName,
       journeyName: journeyName,
       workoutTitle: workoutTitle,
     );
     if (candidates.isEmpty) {
-      print("No video found for exercise: '$exerciseName'"); // Debug log
       return null;
     }
 
-    print("Using video candidate for '$exerciseName' -> '${candidates.first}'");
     return candidates.first;
   }
 

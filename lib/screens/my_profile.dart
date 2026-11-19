@@ -1,29 +1,36 @@
-import 'dart:typed_data';
-import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart' as fbAuth;
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'progress_album_screen.dart';
-import 'about_app_screen.dart';
-import 'login_screen.dart';
-import '../widgets/chatbot_launcher.dart';
 import 'package:provider/provider.dart';
-import '../theme/theme_provider.dart';
-import '../widgets/premium_dialog.dart';
-import '../widgets/premium_snackbar.dart';
+
+import '../models/local_profile.dart';
+import '../services/active_profile_provider.dart';
+import '../services/local_media_service.dart';
+import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import '../theme/theme_provider.dart';
+import '../widgets/ios_stretch_sheet.dart';
+import '../widgets/liquid_glass_surface.dart';
+import '../widgets/pin_pad_sheet.dart';
+import '../widgets/tempo_sliver_header.dart';
+import 'about_app_screen.dart';
+import 'intro_walkthrough_screen.dart';
+import 'permissions_screen.dart';
+import 'profile_switcher_screen.dart';
+import 'progress_album_screen.dart';
+import 'terms_and_conditions_screen.dart';
 
 class MyProfile extends StatefulWidget {
   final int refreshVersion;
   final bool showChatbot;
+  final VoidCallback? onOpenProfileSwitcher;
 
   const MyProfile({
     super.key,
     this.refreshVersion = 0,
-    this.showChatbot = true,
+    this.showChatbot = false,
+    this.onOpenProfileSwitcher,
   });
 
   @override
@@ -31,1970 +38,587 @@ class MyProfile extends StatefulWidget {
 }
 
 class _MyProfileState extends State<MyProfile> {
-  static const double _minValidHeightCm = 80.0;
-  static const double _maxValidHeightCm = 250.0;
-  static const double _minValidWeightKg = 20.0;
-  static const double _maxValidWeightKg = 400.0;
-  static const double _minDisplayBmi = 10.0;
-  static const double _maxDisplayBmi = 80.0;
-
-  final fbAuth.FirebaseAuth _firebaseAuth = fbAuth.FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final SupabaseClient _supabase = Supabase.instance.client;
   final ImagePicker _imagePicker = ImagePicker();
 
-  Map<String, dynamic>? _userData;
-  bool _isLoading = true;
-  bool _isUpdatingProfile = false;
-  String? _profileImageUrl;
-  String? _recentProgressImage; // Store the most recent progress image URL
-  final TextEditingController _feedbackController = TextEditingController();
-  int _selectedFeedbackRating = 0;
-  bool _isSubmittingFeedback = false;
-  bool _isFeedbackExpanded = false;
-  bool _isPrivateAccount = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadUserData();
-    _loadRecentProgressImage();
-  }
-
-  @override
-  void didUpdateWidget(covariant MyProfile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.refreshVersion != oldWidget.refreshVersion) {
-      _loadUserData();
-      _loadRecentProgressImage();
-    }
-  }
-
-  @override
-  void dispose() {
-    _feedbackController.dispose();
-    super.dispose();
-  }
-
-  Widget _buildDefaultProfileImage(double size) {
-    return Image.asset(
-      'assets/default_picture.jpg',
-      width: size,
-      height: size,
-      fit: BoxFit.cover,
+  Future<void> _changeAvatar(LocalProfile profile) async {
+    final picked = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 600,
     );
-  }
+    if (picked == null || !mounted) return;
 
-  bool _isPlaceholderProfileUrl(String? url) {
-    final normalizedUrl = url?.trim() ?? '';
-    return normalizedUrl.isEmpty ||
-        normalizedUrl.contains('via.placeholder.com');
-  }
-
-  Widget _buildProfileAvatar(double size) {
-    final profileImageUrl = _profileImageUrl?.trim();
-    if (_isPlaceholderProfileUrl(profileImageUrl)) {
-      return _buildDefaultProfileImage(size);
-    }
-
-    final imageUrl = profileImageUrl!;
-
-    return Image.network(
-      imageUrl,
-      width: size,
-      height: size,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        return _buildDefaultProfileImage(size);
-      },
+    final savedPath = await LocalMediaService.saveProfileAvatar(
+      profileId: profile.id,
+      sourcePath: picked.path,
     );
-  }
-
-  /// ✅ Load user data from Firestore
-  Future<void> _loadUserData() async {
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user != null) {
-        final userDoc = await _firestore
-            .collection('users')
-            .doc(user.uid)
-            .get();
-
-        if (userDoc.exists && mounted) {
-          final userData = userDoc.data();
-          final storedPhotoUrl =
-              userData?['photoURL'] ?? userData?['profile']?['photoURL'];
-          final hasPlaceholderPhoto = !_isPlaceholderProfileUrl(storedPhotoUrl)
-              ? false
-              : (storedPhotoUrl?.toString().trim().isNotEmpty ?? false);
-
-          if (hasPlaceholderPhoto) {
-            await _firestore.collection('users').doc(user.uid).update({
-              'photoURL': '',
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-
-          setState(() {
-            _userData = userData;
-            _profileImageUrl = _isPlaceholderProfileUrl(storedPhotoUrl)
-                ? null
-                : storedPhotoUrl;
-            _isPrivateAccount = userData?['isPrivateAccount'] ?? false;
-          });
-        }
-      }
-    } catch (e) {
-      print('Error loading user data: $e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  /// ✅ Load the most recent progress image from Firestore subcollection
-  Future<void> _loadRecentProgressImage() async {
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user == null) return;
-
-      print('🔄 Loading recent progress image...');
-
-      // Get reference to progress images subcollection
-      final progressImagesRef = _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('progressImages');
-
-      // Get all documents from the subcollection
-      final querySnapshot = await progressImagesRef.get();
-
-      if (querySnapshot.docs.isNotEmpty && mounted) {
-        // Sort documents by date (newest first)
-        final sortedDocs = querySnapshot.docs.toList()
-          ..sort(
-            (a, b) => b.id.compareTo(a.id),
-          ); // Sort by date string descending
-
-        // Get the most recent document
-        final mostRecentDoc = sortedDocs.first;
-        final data = mostRecentDoc.data() as Map<String, dynamic>;
-        final images = data['urls'] as List<dynamic>?;
-
-        if (images != null && images.isNotEmpty && mounted) {
-          // Get the first image from the most recent date
-          setState(() {
-            _recentProgressImage = images.first as String;
-          });
-          print('📸 Loaded recent progress image: $_recentProgressImage');
-        } else {
-          print('ℹ️ No images found in the most recent document');
-          if (mounted) {
-            setState(() {
-              _recentProgressImage = null;
-            });
-          }
-        }
-      } else {
-        print('ℹ️ No progress images found in subcollection');
-        if (mounted) {
-          setState(() {
-            _recentProgressImage = null;
-          });
-        }
-      }
-    } catch (e) {
-      print('❌ Error loading recent progress image: $e');
-      if (mounted) {
-        setState(() {
-          _recentProgressImage = null;
-        });
-      }
-    }
-  }
-
-  /// ✅ Navigate to Progress Album and refresh when returning
-  void _navigateToProgressAlbum() async {
-    // Navigate to Progress Album screen and wait for result
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const ProgressAlbumScreen()),
-    );
-
-    // Refresh the recent progress image when returning from Progress Album
-    print('🔄 Returning from Progress Album, refreshing recent image...');
-    await _loadRecentProgressImage();
-  }
-
-  /// ✅ Calculate age from date of birth
-  int? _calculateAge() {
-    try {
-      final birthdate =
-          _userData?['profile']?['birthdate'] ??
-          _userData?['profile']?['dateOfBirth'] ??
-          _userData?['birthdate'];
-
-      if (birthdate == null) return null;
-
-      DateTime birthDate;
-      if (birthdate is Timestamp) {
-        birthDate = birthdate.toDate();
-      } else if (birthdate is String) {
-        birthDate = DateTime.parse(birthdate);
-      } else {
-        return null;
-      }
-
-      final now = DateTime.now();
-      int age = now.year - birthDate.year;
-      if (now.month < birthDate.month ||
-          (now.month == birthDate.month && now.day < birthDate.day)) {
-        age--;
-      }
-      return age;
-    } catch (e) {
-      print('Error calculating age: $e');
-      return null;
-    }
-  }
-
-  /// ✅ Calculate BMI
-  double? _calculateBMI() {
-    final weight = _safeProfileNumber('weight');
-    final height = _safeProfileNumber('height');
-
-    if (weight < _minValidWeightKg ||
-        weight > _maxValidWeightKg ||
-        height < _minValidHeightCm ||
-        height > _maxValidHeightCm) {
-      return null;
-    }
-
-    final heightInMeters = height / 100;
-    final bmi = weight / (heightInMeters * heightInMeters);
-    if (bmi < _minDisplayBmi || bmi > _maxDisplayBmi) return null;
-    return double.parse(bmi.toStringAsFixed(1));
-  }
-
-  double _safeProfileNumber(String key) {
-    final dynamic nestedValue = _userData?['profile']?[key];
-    if (nestedValue is num) return nestedValue.toDouble();
-    if (nestedValue is String) return double.tryParse(nestedValue) ?? 0.0;
-
-    final dynamic dottedValue = _userData?['profile.$key'];
-    if (dottedValue is num) return dottedValue.toDouble();
-    if (dottedValue is String) return double.tryParse(dottedValue) ?? 0.0;
-    return 0.0;
-  }
-
-  String _formatProfileMetric(String key, String unit) {
-    final value = _safeProfileNumber(key);
-    final formatted = value == value.roundToDouble()
-        ? value.toStringAsFixed(0)
-        : value.toStringAsFixed(1);
-    return '$formatted $unit';
-  }
-
-  double _weightProgress() {
-    final weight = _safeProfileNumber('weight');
-    if (weight <= 0) return 0.0;
-    return (weight / 100).clamp(0.0, 1.0);
-  }
-
-  double _heightProgress() {
-    final height = _safeProfileNumber('height');
-    if (height <= 0) return 0.0;
-    return (height / 220).clamp(0.0, 1.0);
-  }
-
-  double _bmiProgress() {
-    final bmi = _calculateBMI() ?? 0.0;
-    if (bmi <= 0) return 0.0;
-    return (bmi / 40).clamp(0.0, 1.0);
-  }
-
-  /// ✅ Delete old avatar from Supabase
-  Future<void> _deleteOldAvatar(String oldImageUrl) async {
-    try {
-      final uri = Uri.parse(oldImageUrl);
-      final pathSegments = uri.path.split('/');
-      final bucketIndex = pathSegments.indexOf('profile-pictures');
-
-      if (bucketIndex == -1 || bucketIndex >= pathSegments.length - 1) {
-        return;
-      }
-
-      final filePath = pathSegments.sublist(bucketIndex + 1).join('/');
-      await _supabase.storage.from('profile-pictures').remove([filePath]);
-      print('✅ Old avatar deleted');
-    } catch (e) {
-      print('❌ Error deleting old avatar: $e');
-    }
-  }
-
-  /// ✅ FIXED: Use the SAME approach as signup_screen.dart - Uint8List upload
-  Future<String> _uploadAvatarToSupabase(
-    Uint8List imageBytes,
-    String userId,
-  ) async {
-    try {
-      final String fileExtension = 'jpg'; // Default to jpg
-      final String fileName =
-          'avatar_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
-      final String filePath = '$userId/$fileName';
-
-      print('📤 Uploading avatar bytes: $filePath');
-
-      // ✅ USE THE SAME METHOD AS YOUR WORKING SIGNUP SCREEN
-      // Try direct upload with bytes first
-      try {
-        await _supabase.storage
-            .from('profile-pictures')
-            .uploadBinary(filePath, imageBytes);
-
-        final String publicURL = _supabase.storage
-            .from('profile-pictures')
-            .getPublicUrl(filePath);
-
-        print('✅ Avatar uploaded successfully with bytes: $publicURL');
-        return publicURL;
-      } catch (e) {
-        print('❌ Binary upload failed, trying alternative: $e');
-
-        // Fallback: Convert to File and upload (for mobile)
-        try {
-          final tempDir = Directory.systemTemp;
-          final tempFile = File('${tempDir.path}/$fileName');
-          await tempFile.writeAsBytes(imageBytes);
-
-          await _supabase.storage
-              .from('profile-pictures')
-              .upload(filePath, tempFile);
-
-          final String publicURL = _supabase.storage
-              .from('profile-pictures')
-              .getPublicUrl(filePath);
-
-          // Clean up temp file
-          await tempFile.delete();
-
-          print('✅ Avatar uploaded successfully with file: $publicURL');
-          return publicURL;
-        } catch (e2) {
-          print('❌ All upload methods failed: $e2');
-          throw e;
-        }
-      }
-    } catch (e) {
-      print('❌ Error uploading avatar: $e');
-      throw e;
-    }
-  }
-
-  /// ✅ FIXED: Change profile picture - USE BYTES LIKE SIGNUP SCREEN
-  Future<void> _changeProfilePicture() async {
-    try {
-      final XFile? pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 500,
-        maxHeight: 500,
-        imageQuality: 80,
-      );
-
-      if (pickedFile != null && mounted) {
-        setState(() {
-          _isUpdatingProfile = true;
-        });
-
-        final user = _firebaseAuth.currentUser;
-        if (user == null) return;
-
-        // ✅ KEY FIX: Convert to bytes FIRST like your signup screen does
-        final Uint8List imageBytes = await pickedFile.readAsBytes();
-
-        print('📸 Image picked, bytes length: ${imageBytes.length}');
-
-        // Delete old avatar if exists and is from Supabase
-        final oldAvatarUrl = _profileImageUrl;
-        late final String newAvatarUrl;
-        try {
-          // ✅ USE BYTES UPLOAD LIKE YOUR WORKING SIGNUP SCREEN
-          newAvatarUrl = await _uploadAvatarToSupabase(imageBytes, user.uid);
-        } catch (uploadError) {
-          print('❌ Upload failed: $uploadError');
-          throw Exception('Profile picture upload failed: $uploadError');
-        }
-
-        // Update Firestore
-        await _firestore.collection('users').doc(user.uid).update({
-          'photoURL': newAvatarUrl,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-
-        if (oldAvatarUrl != null && oldAvatarUrl.contains('supabase')) {
-          await _deleteOldAvatar(oldAvatarUrl);
-        }
-
-        // Update local state
-        if (mounted) {
-          setState(() {
-            _profileImageUrl = newAvatarUrl;
-          });
-        }
-
-        if (mounted) {
-          PremiumSnackBar.show(
-            context,
-            message: 'Profile picture updated successfully!',
-            type: 'success',
-          );
-        }
-
-        // Sync new photo to all past posts and comments in background
-        _syncPostsWithProfile(
-          newUsername: _userData?['displayName']?.toString(),
-          newPhotoUrl: newAvatarUrl,
+    if (!mounted) return;
+    await context.read<ActiveProfileProvider>().updateActiveProfile(
+          avatarPath: savedPath,
         );
-      }
-    } catch (e) {
-      print('Error changing profile picture: $e');
-      if (mounted) {
-        PremiumSnackBar.show(
-          context,
-          message: 'Failed to update profile picture: ${e.toString()}',
-          type: 'error',
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isUpdatingProfile = false;
-        });
-      }
-    }
   }
 
-  /// ✅ Change display name
-  Future<void> _changeDisplayName() async {
-    final TextEditingController nameController = TextEditingController(
-      text: _userData?['displayName'] ?? '',
+  Future<void> _editProfileDetails(LocalProfile profile) async {
+    final nameCtrl = TextEditingController(text: profile.displayName);
+    final heightCtrl = TextEditingController(
+      text: profile.heightCm > 0 ? profile.heightCm.toStringAsFixed(0) : '',
     );
+    final weightCtrl = TextEditingController(
+      text: profile.weightKg > 0 ? profile.weightKg.toStringAsFixed(1) : '',
+    );
+    final calGoalCtrl =
+        TextEditingController(text: profile.dailyCaloriesGoal.toString());
+    final minGoalCtrl =
+        TextEditingController(text: profile.dailyMinutesGoal.toString());
+    final stepsGoalCtrl =
+        TextEditingController(text: profile.dailyStepsGoal.toString());
 
-    await showDialog(
+    final c = AppColors.of(context, listen: false);
+    final saved = await showTempoSheet<bool>(
       context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Change Display Name",
-          icon: Icons.edit_rounded,
-          iconColor: const Color(0xFF3EA6FF),
-          content: Column(
+      backgroundColor: c.card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          12,
+          20,
+          MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 8),
-              TextField(
-                controller: nameController,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
-                decoration: InputDecoration(
-                  hintText: "Enter your display name",
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(0.04),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white.withOpacity(0.12)),
-                    borderRadius: BorderRadius.circular(12),
+              Text(
+                'Edit Profile & Daily Goals',
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _dialogField('Display Name', nameCtrl, c, numeric: false),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(child: _dialogField('Height (cm)', heightCtrl, c)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _dialogField('Weight (kg)', weightCtrl, c)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(child: _dialogField('Calorie Goal', calGoalCtrl, c)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _dialogField('Minutes Goal', minGoalCtrl, c)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _dialogField('Daily Steps Goal', stepsGoalCtrl, c),
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 50,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: c.accent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: Color(0xFF3EA6FF), width: 1.5),
-                    borderRadius: BorderRadius.circular(12),
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text(
+                    'Save Changes',
+                    style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
               ),
             ],
           ),
-          actions: [
-            PremiumCancelButton(
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            PremiumConfirmButton(
-              label: "Save",
-              onPressed: () async {
-                final newName = nameController.text.trim();
-                if (newName.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Please enter a display name'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
-
-                Navigator.of(context).pop();
-                await _updateDisplayName(newName);
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  /// ✅ Update display name in Firestore
-  Future<void> _updateDisplayName(String newName) async {
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user == null) return;
-
-      if (mounted) {
-        setState(() {
-          _isUpdatingProfile = true;
-        });
-      }
-
-      await _firestore.collection('users').doc(user.uid).update({
-        'displayName': newName,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      await user.updateDisplayName(newName);
-
-      if (mounted) {
-        setState(() {
-          _userData = {...?_userData, 'displayName': newName};
-        });
-
-        PremiumSnackBar.show(
-          context,
-          message: 'Display name updated successfully!',
-          type: 'success',
-        );
-      }
-
-      // Sync new name to all past posts and comments in background
-      _syncPostsWithProfile(
-        newUsername: newName,
-        newPhotoUrl: _profileImageUrl,
-      );
-    } catch (e) {
-      print('Error updating display name: $e');
-      if (mounted) {
-        PremiumSnackBar.show(
-          context,
-          message: 'Failed to update display name: $e',
-          type: 'error',
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isUpdatingProfile = false;
-        });
-      }
-    }
-  }
-
-  /// ✅ Toggle Account Privacy
-  Future<void> _togglePrivacy(bool value) async {
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user == null) return;
-
-      setState(() {
-        _isPrivateAccount = value;
-      });
-
-      await _firestore.collection('users').doc(user.uid).update({
-        'isPrivateAccount': value,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      if (mounted) {
-        PremiumSnackBar.show(
-          context,
-          message: value ? 'Account is now private.' : 'Account is now public.',
-          type: 'success',
-        );
-      }
-    } catch (e) {
-      print('Error updating privacy settings: $e');
-      if (mounted) {
-        setState(() {
-          _isPrivateAccount = !value; // Revert on error
-        });
-        PremiumSnackBar.show(
-          context,
-          message: 'Failed to update privacy settings: $e',
-          type: 'error',
-        );
-      }
-    }
-  }
-
-  /// ✅ Sync updated name/photo to all past community posts and comments
-  Future<void> _syncPostsWithProfile({
-    String? newUsername,
-    String? newPhotoUrl,
-  }) async {
-    try {
-      final user = _firebaseAuth.currentUser;
-      if (user == null) return;
-
-      // Build the update map
-      final Map<String, dynamic> profileUpdate = {};
-      if (newUsername != null) profileUpdate['username'] = newUsername;
-      if (newPhotoUrl != null) profileUpdate['profileImage'] = newPhotoUrl;
-
-      if (profileUpdate.isEmpty) return;
-
-      // ── 1. Update all posts authored by this user ──────────────────────────
-      final postsSnapshot = await _firestore
-          .collection('community_posts')
-          .where('userId', isEqualTo: user.uid)
-          .get();
-
-      if (postsSnapshot.docs.isNotEmpty) {
-        const int batchLimit = 400;
-        final allPostDocs = postsSnapshot.docs;
-
-        for (int i = 0; i < allPostDocs.length; i += batchLimit) {
-          final chunk = allPostDocs.sublist(
-            i,
-            (i + batchLimit).clamp(0, allPostDocs.length),
-          );
-          final batch = _firestore.batch();
-          for (final postDoc in chunk) {
-            batch.update(postDoc.reference, profileUpdate);
-          }
-          await batch.commit();
-        }
-        print('✅ Synced ${allPostDocs.length} posts with new profile data');
-      }
-
-      // ── 2. Update ALL comments by this user across EVERY post ─────────────
-      // collectionGroup queries every 'comments' subcollection in Firestore,
-      // so it catches comments on other users' posts too.
-      final allCommentsSnapshot = await _firestore
-          .collectionGroup('comments')
-          .where('userId', isEqualTo: user.uid)
-          .get();
-
-      if (allCommentsSnapshot.docs.isNotEmpty) {
-        const int batchLimit = 400;
-        final allCommentDocs = allCommentsSnapshot.docs;
-
-        for (int i = 0; i < allCommentDocs.length; i += batchLimit) {
-          final chunk = allCommentDocs.sublist(
-            i,
-            (i + batchLimit).clamp(0, allCommentDocs.length),
-          );
-          final batch = _firestore.batch();
-          for (final commentDoc in chunk) {
-            batch.update(commentDoc.reference, profileUpdate);
-          }
-          await batch.commit();
-        }
-        print(
-          '✅ Synced ${allCommentDocs.length} comments with new profile data',
-        );
-      } else {
-        print('ℹ️ No comments found to sync');
-      }
-    } catch (e) {
-      print('⚠️ Error syncing posts/comments with profile: $e');
-      // Non-critical — don't surface to user
-    }
-  }
-
-  /// ✅ Logout user
-  Future<void> _logout() async {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return PremiumDialog(
-          title: "Logout",
-          icon: Icons.logout_rounded,
-          iconColor: const Color(0xFFE53935),
-          content: const Text(
-            "Are you sure you want to logout?",
-          ),
-          actions: [
-            PremiumCancelButton(
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            PremiumConfirmButton(
-              label: "Logout",
-              gradientColors: const [Color(0xFFE53935), Color(0xFFB71C1C)],
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _performLogout();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  /// ✅ Perform logout operations
-  Future<void> _performLogout() async {
-    try {
-      await _firebaseAuth.signOut();
-      if (!mounted) {
-        return;
-      }
-
-      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-        (route) => false,
-      );
-    } catch (e) {
-      print('Error during logout: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Logout failed: $e'),
-          backgroundColor: Colors.red,
         ),
-      );
-    }
-  }
-
-  /// ✅ Navigate to About This App screen
-  void _navigateToAboutApp() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const AboutThisAppScreen()),
-    );
-  }
-
-  Future<void> _submitFeedback() async {
-    final user = _firebaseAuth.currentUser;
-    final comment = _feedbackController.text.trim();
-
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please log in again to send feedback.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (_selectedFeedbackRating == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please choose a star rating first.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    if (comment.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please add a comment for your feedback.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _isSubmittingFeedback = true;
-      });
-    }
-
-    try {
-      final displayName =
-          (_userData?['displayName'] ?? user.displayName ?? 'User').toString();
-      final email = (_userData?['email'] ?? user.email ?? '').toString();
-
-      await _firestore.collection('user_feedback').add({
-        'userId': user.uid,
-        'displayName': displayName,
-        'email': email,
-        'photoURL': _profileImageUrl ?? '',
-        'rating': _selectedFeedbackRating,
-        'comment': comment,
-        'isReviewed': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      if (!mounted) return;
-
-      setState(() {
-        _feedbackController.clear();
-        _selectedFeedbackRating = 0;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Feedback sent successfully.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to send feedback: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmittingFeedback = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    return Scaffold(
-      backgroundColor: colors.scaffold,
-      body: Stack(
-        children: [
-          SafeArea(
-            bottom: false,
-            child: CustomScrollView(
-              slivers: [
-                SliverAppBar(
-                  backgroundColor: colors.scaffold,
-                  toolbarHeight: 80,
-                  pinned: true,
-                  floating: false,
-                  snap: false,
-                  automaticallyImplyLeading: false,
-                  title: Padding(
-                    padding: const EdgeInsets.only(top: 20),
-                    child: Text(
-                      "Profile",
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 34,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: _isLoading
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const SizedBox(height: 100),
-                                Container(
-                                  padding: const EdgeInsets.all(24),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.04),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.orange.withOpacity(0.3), width: 1.5),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.orange.withOpacity(0.15),
-                                        blurRadius: 30,
-                                        spreadRadius: 5,
-                                      ),
-                                    ],
-                                  ),
-                                  child: const SizedBox(
-                                    width: 40,
-                                    height: 40,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 3.5,
-                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 24),
-                                const Text(
-                                  "Loading Profile...",
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 1.2,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const SizedBox(height: 20),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(24),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Colors.white.withOpacity(0.05),
-                                      Colors.white.withOpacity(0.02),
-                                      Colors.black.withOpacity(0.4),
-                                    ],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
-                                  ),
-                                  borderRadius: BorderRadius.circular(28),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.5),
-                                      blurRadius: 25,
-                                      offset: const Offset(0, 12),
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  children: [
-                                    GestureDetector(
-                                      onTap: _changeProfilePicture,
-                                      child: Stack(
-                                        children: [
-                                          Container(
-                                            width: 104,
-                                            height: 104,
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              gradient: const LinearGradient(
-                                                colors: [Color(0xFFFF9A00), Color(0xFFFF5200)],
-                                                begin: Alignment.topLeft,
-                                                end: Alignment.bottomRight,
-                                              ),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: const Color(0xFFFF5200).withOpacity(0.25),
-                                                  blurRadius: 20,
-                                                  spreadRadius: 2,
-                                                ),
-                                              ],
-                                            ),
-                                            padding: const EdgeInsets.all(3),
-                                            child: Container(
-                                              decoration: const BoxDecoration(
-                                                shape: BoxShape.circle,
-                                                color: Colors.black,
-                                              ),
-                                              padding: const EdgeInsets.all(2),
-                                              child: ClipOval(
-                                                child: _buildProfileAvatar(100),
-                                              ),
-                                            ),
-                                          ),
-                                          Positioned(
-                                            bottom: 0,
-                                            right: 0,
-                                            child: Container(
-                                              padding: const EdgeInsets.all(8),
-                                              decoration: BoxDecoration(
-                                                gradient: const LinearGradient(
-                                                  colors: [Color(0xFFFF9A00), Color(0xFFFF5200)],
-                                                ),
-                                                shape: BoxShape.circle,
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: const Color(0xFFFF5200).withOpacity(0.4),
-                                                    blurRadius: 6,
-                                                    offset: const Offset(0, 3),
-                                                  ),
-                                                ],
-                                              ),
-                                              child: const Icon(
-                                                Icons.edit_rounded,
-                                                color: Colors.white,
-                                                size: 14,
-                                              ),
-                                            ),
-                                          ),
-                                          if (_isUpdatingProfile)
-                                            Positioned.fill(
-                                              child: Container(
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black.withOpacity(0.45),
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: const Center(
-                                                  child: SizedBox(
-                                                    width: 26,
-                                                    height: 26,
-                                                    child: CircularProgressIndicator(
-                                                      strokeWidth: 2.6,
-                                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(height: 20),
-                                    GestureDetector(
-                                      onTap: _changeDisplayName,
-                                      child: Column(
-                                        children: [
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Flexible(
-                                                child: Text(
-                                                  _userData?['displayName'] ?? 'User',
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 26,
-                                                    fontWeight: FontWeight.w900,
-                                                    letterSpacing: 0.5,
-                                                  ),
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Container(
-                                                padding: const EdgeInsets.all(5),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white.withOpacity(0.08),
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: const Icon(
-                                                  Icons.edit_rounded,
-                                                  color: Colors.orange,
-                                                  size: 12,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 12),
-                                          Wrap(
-                                            spacing: 8,
-                                            runSpacing: 8,
-                                            children: [
-                                              _buildProfileMetaChip(
-                                                icon: Icons.face_rounded,
-                                                label: _userData?['profile']?['gender'] ?? 'Not set',
-                                                accentColor: const Color(0xFF3EA6FF),
-                                              ),
-                                              _buildProfileMetaChip(
-                                                icon: Icons.cake_rounded,
-                                                label: "${_calculateAge()?.toString() ?? '?'} yrs",
-                                                accentColor: const Color(0xFFFF6B6B),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 4,
-                                    height: 20,
-                                    decoration: BoxDecoration(
-                                      gradient: const LinearGradient(
-                                        colors: [Color(0xFFFF9A00), Color(0xFFFF5200)],
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                      ),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  const Text(
-                                    "Health Stats",
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  _buildHealthCard(
-                                    value: _formatProfileMetric('weight', 'kg'),
-                                    label: "Weight",
-                                    icon: Icons.monitor_weight_rounded,
-                                    progressValue: _weightProgress(),
-                                    color: const Color(0xFF63D471),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  _buildHealthCard(
-                                    value: _formatProfileMetric('height', 'cm'),
-                                    label: "Height",
-                                    icon: Icons.height_rounded,
-                                    progressValue: _heightProgress(),
-                                    color: const Color(0xFF4FC3F7),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  _buildHealthCard(
-                                    value: _calculateBMI()?.toString() ?? '0',
-                                    label: "BMI",
-                                    icon: Icons.favorite_rounded,
-                                    progressValue: _bmiProgress(),
-                                    color: Colors.orange,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 24),
-                              // Progress Album card
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.03),
-                                  borderRadius: BorderRadius.circular(24),
-                                  border: Border.all(color: Colors.white.withOpacity(0.06)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.3),
-                                      blurRadius: 20,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                                ),
-                                padding: const EdgeInsets.all(18),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Expanded(
-                                          child: Row(
-                                            children: [
-                                              Container(
-                                                padding: const EdgeInsets.all(10),
-                                                decoration: BoxDecoration(
-                                                  color: const Color(0xFF3EA6FF).withOpacity(0.12),
-                                                  borderRadius: BorderRadius.circular(14),
-                                                  border: Border.all(
-                                                    color: const Color(0xFF3EA6FF).withOpacity(0.2),
-                                                    width: 1,
-                                                  ),
-                                                ),
-                                                child: const Icon(
-                                                  Icons.photo_library_rounded,
-                                                  color: Color(0xFF3EA6FF),
-                                                  size: 22,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 14),
-                                              const Flexible(
-                                                child: Text(
-                                                  "Progress Album",
-                                                  style: TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 18,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        GestureDetector(
-                                          onTap: _navigateToProgressAlbum,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 18,
-                                              vertical: 10,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              gradient: const LinearGradient(
-                                                colors: [
-                                                  Color(0xFF3EA6FF),
-                                                  Color(0xFF67C3FF),
-                                                ],
-                                              ),
-                                              borderRadius: BorderRadius.circular(22),
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: const Color(0xFF3EA6FF).withOpacity(0.3),
-                                                  blurRadius: 8,
-                                                  offset: const Offset(0, 4),
-                                                ),
-                                              ],
-                                            ),
-                                            child: const Text(
-                                              "View",
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 13,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      "Latest photo from your album",
-                                      style: TextStyle(
-                                        color: Colors.grey[400],
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 14),
-                                    Container(
-                                      width: double.infinity,
-                                      height: 340,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white.withOpacity(0.01),
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(
-                                          color: Colors.white.withOpacity(0.06),
-                                        ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.black.withOpacity(
-                                              0.2,
-                                            ),
-                                            blurRadius: 6,
-                                            offset: const Offset(0, 2),
-                                          ),
-                                        ],
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(18),
-                                        child: _recentProgressImage != null
-                                            ? Image.network(
-                                                _recentProgressImage!,
-                                                fit: BoxFit.cover,
-                                                loadingBuilder: (context, child, loadingProgress) {
-                                                  if (loadingProgress == null)
-                                                    return child;
-                                                  return Center(
-                                                    child: CircularProgressIndicator(
-                                                      value:
-                                                          loadingProgress
-                                                                  .expectedTotalBytes !=
-                                                              null
-                                                          ? loadingProgress
-                                                                    .cumulativeBytesLoaded /
-                                                                loadingProgress
-                                                                    .expectedTotalBytes!
-                                                          : null,
-                                                      valueColor:
-                                                          const AlwaysStoppedAnimation<
-                                                            Color
-                                                          >(Colors.blue),
-                                                    ),
-                                                  );
-                                                },
-                                                errorBuilder:
-                                                    (
-                                                      context,
-                                                      error,
-                                                      stackTrace,
-                                                    ) {
-                                                      return _buildFallbackImage();
-                                                    },
-                                              )
-                                            : _buildFallbackImage(),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-
-
-                              const SizedBox(height: 10),
-
-                              // Privacy Settings card
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.3),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      "Privacy Settings",
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Expanded(
-                                          child: Row(
-                                            children: [
-                                              Container(
-                                                padding: const EdgeInsets.all(10),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.deepPurple.withOpacity(0.14),
-                                                  borderRadius: BorderRadius.circular(12),
-                                                  border: Border.all(
-                                                    color: Colors.deepPurple.withOpacity(0.22),
-                                                  ),
-                                                ),
-                                                child: const Icon(
-                                                  Icons.lock_outline,
-                                                  color: Colors.deepPurpleAccent,
-                                                  size: 22,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                                  children: [
-                                                    const Text(
-                                                      "Private Account",
-                                                      style: TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 16,
-                                                        fontWeight: FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                    Text(
-                                                      "Hide your progress from the community",
-                                                      style: TextStyle(
-                                                        color: Colors.grey[400],
-                                                        fontSize: 13,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        Switch(
-                                          value: _isPrivateAccount,
-                                          onChanged: (val) => _togglePrivacy(val),
-                                          activeColor: Colors.white,
-                                          activeTrackColor: Colors.deepPurpleAccent,
-                                          inactiveThumbColor: Colors.grey[400],
-                                          inactiveTrackColor: Colors.white.withOpacity(0.1),
-                                          trackOutlineColor: MaterialStateProperty.all(Colors.transparent),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-
-                              // Settings card
-                              Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(color: Colors.white.withOpacity(0.08)),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.3),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      "App Information",
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    // Version
-                                    _buildSettingsItem(
-                                      icon: Icons.info,
-                                      title: "Version",
-                                      color: const Color.fromARGB(
-                                        255,
-                                        112,
-                                        90,
-                                        221,
-                                      ),
-                                      trailing: const Text(
-                                        "2.0.0",
-                                        style: TextStyle(
-                                          color: Colors.grey,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    // About this app
-                                    GestureDetector(
-                                      onTap: _navigateToAboutApp,
-                                      child: _buildSettingsItem(
-                                        icon: Icons.info_outline,
-                                        title: "About this app",
-                                        color: Colors.lightBlue,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    GestureDetector(
-                                      onTap: () {
-                                        setState(() {
-                                          _isFeedbackExpanded =
-                                              !_isFeedbackExpanded;
-                                        });
-                                      },
-                                      child: _buildSettingsItem(
-                                        icon: Icons.rate_review_outlined,
-                                        title: "User Feedback",
-                                        color: Colors.amber,
-                                        trailing: AnimatedRotation(
-                                          turns: _isFeedbackExpanded ? 0.5 : 0,
-                                          duration: const Duration(
-                                            milliseconds: 280,
-                                          ),
-                                          curve: Curves.easeInOut,
-                                          child: Icon(
-                                            Icons.keyboard_arrow_down,
-                                            color: Colors.grey[500],
-                                            size: 22,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    ClipRect(
-                                      child: AnimatedSize(
-                                        duration: const Duration(
-                                          milliseconds: 320,
-                                        ),
-                                        curve: Curves.easeInOutCubic,
-                                        alignment: Alignment.topCenter,
-                                        child: AnimatedSlide(
-                                          duration: const Duration(
-                                            milliseconds: 320,
-                                          ),
-                                          curve: Curves.easeInOutCubic,
-                                          offset: _isFeedbackExpanded
-                                              ? Offset.zero
-                                              : const Offset(0, -0.08),
-                                          child: _isFeedbackExpanded
-                                              ? Padding(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                        top: 12,
-                                                      ),
-                                                  child: _buildFeedbackCard(),
-                                                )
-                                              : const SizedBox.shrink(),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              // ✅ LOGOUT BUTTON - Always visible on Profile page
-                              const SizedBox(height: 14),
-                              Center(
-                                child: Container(
-                                  width: 220,
-                                  margin: const EdgeInsets.only(bottom: 20),
-                                  decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                      colors: [Color(0xFFE53935), Color(0xFFB71C1C)],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    borderRadius: BorderRadius.circular(28),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: const Color(0xFFE53935).withOpacity(0.25),
-                                        blurRadius: 10,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: ElevatedButton(
-                                    onPressed: _logout,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.transparent,
-                                      shadowColor: Colors.transparent,
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 18,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(28),
-                                      ),
-                                    ),
-                                    child: const Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(Icons.logout_rounded, size: 20, color: Colors.white),
-                                        SizedBox(width: 10),
-                                        Text(
-                                          "Logout",
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 0.5,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-
-                              const SizedBox(height: 120), // Added padding to clear the bottom navigation bar
-                            ],
-                          ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (widget.showChatbot) const ChatbotLauncher(title: 'Profile Chat'),
-        ],
       ),
     );
+
+    if (saved == true && mounted) {
+      await context.read<ActiveProfileProvider>().updateActiveProfile(
+            displayName: nameCtrl.text.trim().isNotEmpty
+                ? nameCtrl.text.trim()
+                : null,
+            heightCm: double.tryParse(heightCtrl.text.trim()),
+            weightKg: double.tryParse(weightCtrl.text.trim()),
+            dailyCaloriesGoal: int.tryParse(calGoalCtrl.text.trim()),
+            dailyMinutesGoal: int.tryParse(minGoalCtrl.text.trim()),
+            dailyStepsGoal: int.tryParse(stepsGoalCtrl.text.trim()),
+          );
+    }
+
+    nameCtrl.dispose();
+    heightCtrl.dispose();
+    weightCtrl.dispose();
+    calGoalCtrl.dispose();
+    minGoalCtrl.dispose();
+    stepsGoalCtrl.dispose();
   }
 
-  /// ✅ Build fallback image when no progress image is available
-  Widget _buildFallbackImage() {
-    return Stack(
+  Widget _dialogField(
+    String label,
+    TextEditingController ctrl,
+    AppColors c, {
+    bool numeric = true,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Image.asset(
-          'assets/album.jpg',
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-        ),
-        Container(
-          color: Colors.black.withOpacity(0.58),
-          child: Center(
-            child: Container(
-              margin: const EdgeInsets.all(20),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.34),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.photo_library_outlined,
-                    color: Colors.white70,
-                    size: 42,
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    "No progress photos yet",
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+        Text(
+          label,
+          style: TextStyle(
+            color: c.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
           ),
+        ),
+        const SizedBox(height: 5),
+        TextField(
+          controller: ctrl,
+          keyboardType: numeric
+              ? const TextInputType.numberWithOptions(decimal: true)
+              : TextInputType.text,
+          style: TextStyle(color: c.textPrimary),
         ),
       ],
     );
   }
 
-  Widget _buildFeedbackCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.amber.withOpacity(0.22)),
-                ),
-                child: const Icon(
-                  Icons.rate_review_outlined,
-                  color: Colors.amber,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Send Feedback',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Rate your experience and send comments directly to admin.',
-                      style: TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          const Text(
-            'Star Rating',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Center(
-            child: Wrap(
-              spacing: 4,
-              alignment: WrapAlignment.center,
-              children: List.generate(5, (index) {
-              final ratingValue = index + 1;
-              final isSelected = ratingValue <= _selectedFeedbackRating;
+  Future<void> _changePin(LocalProfile profile) async {
+    final provider = context.read<ActiveProfileProvider>();
 
-              return InkWell(
-                onTap: _isSubmittingFeedback
-                    ? null
-                    : () {
-                        setState(() {
-                          _selectedFeedbackRating = ratingValue;
-                        });
-                      },
-                borderRadius: BorderRadius.circular(20),
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Icon(
-                    isSelected ? Icons.star_rounded : Icons.star_outline_rounded,
-                    color: isSelected ? Colors.orange : Colors.white38,
-                    size: 26,
-                  ),
-                ),
-              );
-            }),
-          ),
-          ),
-          const SizedBox(height: 18),
-          TextField(
-            controller: _feedbackController,
-            enabled: !_isSubmittingFeedback,
-            maxLines: 4,
-            maxLength: 400,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: 'Share your experience, suggestions, or any issue.',
-              hintStyle: const TextStyle(color: Colors.white38),
-              filled: true,
-              fillColor: Colors.white.withOpacity(0.04),
-              counterStyle: const TextStyle(color: Colors.white38),
-              contentPadding: const EdgeInsets.all(14),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: Colors.orange),
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Center(
-            child: Container(
-              width: 160,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFF9A00), Color(0xFFFF5200)],
-                ),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFFFF5200).withOpacity(0.4),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: ElevatedButton(
-                onPressed: _isSubmittingFeedback ? null : _submitFeedback,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.transparent,
-                  shadowColor: Colors.transparent,
-                  foregroundColor: Colors.white,
-                  disabledForegroundColor: Colors.white70,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                ),
-                child: _isSubmittingFeedback
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
-                        ),
-                      )
-                    : const Text(
-                        'Submit',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-              ),
-            ),
-          ),
-        ],
-      ),
+    final currentPin = await showApplePinPadSheet(
+      context: context,
+      title: 'Current PIN',
+      subtitle: 'Verify your existing 4-digit PIN',
+      onVerify: (pin) => TempoRustDb.instance.verifyPin(profile.id, pin),
     );
+    if (currentPin == null || !mounted) return;
+
+    final newPin = await showApplePinPadSheet(
+      context: context,
+      title: 'New 4-Digit PIN',
+      subtitle: 'Choose a new 4-digit PIN',
+    );
+    if (newPin == null || !mounted) return;
+
+    final confirmed = await showApplePinPadSheet(
+      context: context,
+      title: 'Confirm New PIN',
+      subtitle: 'Re-enter your new 4-digit PIN',
+      onVerify: (p) async => p == newPin,
+    );
+    if (confirmed == null || !mounted) return;
+
+    try {
+      await provider.changePin(
+        profileId: profile.id,
+        currentPin: currentPin,
+        newPin: newPin,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('4-digit PIN updated successfully')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update PIN: $e')),
+        );
+      }
+    }
   }
 
-  Widget _buildProfileMetaChip({
-    required IconData icon,
-    required String label,
-    required Color accentColor,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: accentColor.withOpacity(0.06),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: accentColor.withOpacity(0.18)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: accentColor),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: accentColor.withOpacity(0.9),
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
+  Future<void> _confirmDeleteProfile(LocalProfile profile) async {
+    final pin = await showApplePinPadSheet(
+      context: context,
+      title: 'Delete ${profile.displayName}?',
+      subtitle: 'Enter 4-digit PIN to permanently delete local data',
+      onVerify: (entered) =>
+          TempoRustDb.instance.verifyPin(profile.id, entered),
     );
+    if (pin == null || !mounted) return;
+
+    await context.read<ActiveProfileProvider>().deleteProfile(profile.id);
   }
 
-  /// ✅ Build health stat card
-  Widget _buildHealthCard({
-    required String value,
-    required String label,
-    required IconData icon,
-    required double progressValue,
-    required Color color,
-  }) {
-    return Expanded(
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Colors.white.withOpacity(0.04),
-              Colors.white.withOpacity(0.01),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: Colors.white.withOpacity(0.06)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
-        child: Column(
-          children: [
-            Stack(
-              alignment: Alignment.center,
+  String _profileMetaLine(LocalProfile profile) {
+    final parts = <String>[];
+    if (profile.gender.trim().isNotEmpty &&
+        profile.gender.toLowerCase() != 'prefer not to say') {
+      parts.add(profile.gender.trim());
+    }
+    if (profile.heightCm > 0) {
+      parts.add('${profile.heightCm.toStringAsFixed(0)}cm');
+    }
+    if (profile.weightKg > 0) {
+      parts.add('${profile.weightKg.toStringAsFixed(1)}kg');
+    }
+    if (profile.age > 0) {
+      parts.add('${profile.age}');
+    } else if (profile.bmi > 0) {
+      parts.add('BMI ${profile.bmi.toStringAsFixed(1)}');
+    }
+    return parts.isEmpty ? 'Tap to complete profile details' : parts.join(' | ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final themeProvider = context.watch<ThemeProvider>();
+    final profileProvider = context.watch<ActiveProfileProvider>();
+    final profile = profileProvider.activeProfile;
+
+    if (profile == null) {
+      return Scaffold(
+        backgroundColor: c.scaffold,
+        body: Center(child: CupertinoActivityIndicator(color: c.accent)),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: c.scaffold,
+      body: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          const TempoSliverHeader(title: 'Profile'),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(18, 6, 18, 128),
+            sliver: SliverList.list(
               children: [
-                SizedBox(
-                  width: 80,
-                  height: 80,
-                  child: CircularProgressIndicator(
-                    value: progressValue,
-                    strokeWidth: 6.0,
-                    backgroundColor: Colors.white.withOpacity(0.06),
-                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                // --- Clean Identity Header (Avatar, Name, Inline Bio/Metrics, Edit) ---
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _editProfileDetails(profile),
+                  onDoubleTap: () {
+                    HapticFeedback.mediumImpact();
+                    widget.onOpenProfileSwitcher?.call();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 6,
+                    ),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () => _changeAvatar(profile),
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: c.cardBorder,
+                                width: 1.5,
+                              ),
+                            ),
+                            child: LocalProfileAvatar(
+                              name: profile.displayName,
+                              avatarPath: profile.avatarPath,
+                              size: 64,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                profile.displayName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: c.textPrimary,
+                                  fontSize: 23,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.4,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _profileMetaLine(profile),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: c.textSecondary,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w500,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () => _editProfileDetails(profile),
+                          child: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: c.card,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: c.cardBorder),
+                            ),
+                            child: Icon(
+                              CupertinoIcons.pencil,
+                              size: 16,
+                              color: c.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: color.withOpacity(0.1),
-                        blurRadius: 10,
+                const SizedBox(height: 22),
+
+                // --- Single Unified Settings Card (Mi Fitness / HyperOS 3 Reference) ---
+                AppleCard(
+                  borderRadius: 26,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: [
+                      // Dark Mode toggle row
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 11,
+                        ),
+                        child: Row(
+                          children: [
+                            _circleIcon(
+                              c.isDark
+                                  ? CupertinoIcons.moon_fill
+                                  : CupertinoIcons.sun_max_fill,
+                              const Color(0xFF7A6FF0),
+                            ),
+                            const SizedBox(width: 15),
+                            Expanded(
+                              child: Text(
+                                'Dark mode',
+                                style: TextStyle(
+                                  color: c.textPrimary,
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            CupertinoSwitch(
+                              activeTrackColor: c.accent,
+                              value: themeProvider.isDarkMode,
+                              onChanged: (v) {
+                                HapticFeedback.selectionClick();
+                                themeProvider.toggleTheme(v);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.person_2_fill,
+                        badgeColor: const Color(0xFF3D9CF6),
+                        title: 'Switch profile',
+                        c: c,
+                        onTap: () => widget.onOpenProfileSwitcher?.call(),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.person_badge_plus_fill,
+                        badgeColor: const Color(0xFF4AC9A5),
+                        title: 'Add profile',
+                        c: c,
+                        onTap: () => showCreateProfileModal(context),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.photo_fill,
+                        badgeColor: const Color(0xFF4B9EF7),
+                        title: 'Progress photos',
+                        c: c,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const ProgressAlbumScreen(),
+                          ),
+                        ),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.lock_rotation,
+                        badgeColor: const Color(0xFF4BD166),
+                        title: 'Change 4-digit PIN',
+                        c: c,
+                        onTap: () => _changePin(profile),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.lock_fill,
+                        badgeColor: const Color(0xFF4BD166),
+                        title: 'Lock profile',
+                        c: c,
+                        onTap: () => profileProvider.lockSession(),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.shield_fill,
+                        badgeColor: const Color(0xFFF4BD3E),
+                        title: 'Device permissions',
+                        c: c,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const PermissionsScreen(),
+                          ),
+                        ),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.doc_text_fill,
+                        badgeColor: const Color(0xFF7A6FF0),
+                        title: 'Privacy & terms',
+                        c: c,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const TermsAndConditionsScreen(),
+                          ),
+                        ),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.arrow_up_circle_fill,
+                        badgeColor: const Color(0xFF7A6FF0),
+                        title: 'App version',
+                        trailingText: 'V2.0.0',
+                        showChevron: false,
+                        c: c,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AboutAppScreen(),
+                          ),
+                        ),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.book_fill,
+                        badgeColor: const Color(0xFF4AC9A5),
+                        title: 'App guide',
+                        c: c,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => IntroWalkthroughScreen(
+                              isReplay: true,
+                              onComplete: () => Navigator.of(context).pop(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.info,
+                        badgeColor: const Color(0xFF3D9CF6),
+                        title: 'About Tempo',
+                        c: c,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AboutAppScreen(),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 4,
+                        ),
+                        child: Divider(height: 1, color: c.divider),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.trash_fill,
+                        badgeColor: const Color(0xFFEF5350),
+                        title: 'Delete local profile',
+                        titleColor: c.moveRed,
+                        c: c,
+                        onTap: () => _confirmDeleteProfile(profile),
                       ),
                     ],
                   ),
-                  child: Icon(icon, color: Colors.white, size: 24),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            Text(
-              value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label.toUpperCase(),
-              style: const TextStyle(
-                color: Colors.white38,
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  /// ✅ Build settings item
-  Widget _buildSettingsItem({
-    required IconData icon,
-    required String title,
-    required Color color,
-    Widget? trailing,
-  }) {
+  Widget _circleIcon(IconData icon, Color color) {
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+      width: 30,
+      height: 30,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Colors.white.withOpacity(0.04),
-            Colors.white.withOpacity(0.01),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-          ),
-        ],
+        color: color,
+        shape: BoxShape.circle,
       ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: color.withOpacity(0.2), width: 1),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(width: 16),
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const Spacer(),
-          trailing ??
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.arrow_forward_rounded,
-                  color: Colors.orange,
-                  size: 14,
+      child: Icon(icon, color: Colors.white, size: 16),
+    );
+  }
+
+  Widget _settingTile({
+    required IconData icon,
+    required Color badgeColor,
+    required String title,
+    required AppColors c,
+    required VoidCallback onTap,
+    Color? titleColor,
+    String? trailingText,
+    bool showChevron = true,
+  }) {
+    return InkWell(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        child: Row(
+          children: [
+            _circleIcon(icon, badgeColor),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: titleColor ?? c.textPrimary,
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-        ],
+            ),
+            if (trailingText != null)
+              Text(
+                trailingText,
+                style: TextStyle(
+                  color: c.textTertiary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            if (showChevron)
+              Icon(
+                CupertinoIcons.chevron_right,
+                color: c.textTertiary,
+                size: 15,
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -1,103 +1,80 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_colors.dart';
+
 class PremiumSnackBar {
   static void show(
     BuildContext context, {
     required String message,
-    required String type, // 'success', 'error', 'warning', 'info'
+    required String type,
     Duration duration = const Duration(seconds: 3),
   }) {
+    final c = AppColors.of(context, listen: false);
     Color accentColor;
     IconData icon;
-    
+
     switch (type) {
       case 'success':
-        accentColor = const Color(0xFF2ECC71);
+        accentColor = c.exerciseGreen;
         icon = Icons.check_circle_rounded;
         break;
       case 'error':
-        accentColor = const Color(0xFFFF4B4B);
+        accentColor = c.moveRed;
         icon = Icons.error_rounded;
         break;
       case 'warning':
-        accentColor = const Color(0xFFFF9800);
+        accentColor = c.energyOrange;
         icon = Icons.warning_rounded;
         break;
       case 'info':
       default:
-        accentColor = const Color(0xFF3EA6FF);
+        accentColor = c.accent;
         icon = Icons.info_rounded;
         break;
     }
 
-    final double screenHeight = MediaQuery.of(context).size.height;
-    final double topSafeArea = MediaQuery.of(context).padding.top;
-    // Elegant top placement below header
-    final double topOffset = topSafeArea + 150;
-
     ScaffoldMessenger.of(context).clearSnackBars();
-    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: duration,
         backgroundColor: Colors.transparent,
         elevation: 0,
         behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          bottom: screenHeight - topOffset - 64,
-          left: 16,
-          right: 16,
-        ),
         content: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E1E1E).withOpacity(0.92),
-            borderRadius: BorderRadius.circular(16),
+            color: c.card,
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: accentColor.withOpacity(0.3),
+              color: accentColor.withValues(alpha: 0.35),
               width: 1.2,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.4),
-                blurRadius: 12,
+                color: c.shadow,
+                blurRadius: 16,
                 offset: const Offset(0, 6),
-              ),
-              BoxShadow(
-                color: accentColor.withOpacity(0.06),
-                blurRadius: 10,
-                spreadRadius: 1,
               ),
             ],
           ),
           child: Row(
             children: [
-              // Icon Badge
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: accentColor.withOpacity(0.12),
+                  color: accentColor.withValues(alpha: 0.14),
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: accentColor.withOpacity(0.2),
-                  ),
                 ),
-                child: Icon(
-                  icon,
-                  color: accentColor,
-                  size: 20,
-                ),
+                child: Icon(icon, color: accentColor, size: 20),
               ),
-              const SizedBox(width: 14),
-              // Message
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   message,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: c.textPrimary,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: 0.2,
                   ),
                 ),
               ),

@@ -1,6 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 import '../data/fitness_journey_workouts.dart';
+import '../models/local_profile.dart';
+import 'tempo_rust_db.dart';
 import 'workout_goal_service.dart';
 
 class JourneyProgressSnapshot {
@@ -37,125 +37,73 @@ class JourneyProgressSnapshot {
 
 class JourneyProgressService {
   static String? _resolveJourneyWorkoutKey({
-    required Map<String, dynamic> data,
+    required LocalCompletedWorkout item,
     required Set<String> journeyWorkoutIds,
     required Map<String, String> workoutIdByTitle,
   }) {
-    final workoutId = data['workoutId'] as String?;
-    if (workoutId != null && journeyWorkoutIds.contains(workoutId)) {
-      return workoutId;
+    if (journeyWorkoutIds.contains(item.workoutId)) {
+      return item.workoutId;
     }
-
-    final title = data['title'] as String?;
-    if (title != null) {
-      return workoutIdByTitle[title];
-    }
-
-    return null;
+    return workoutIdByTitle[item.title];
   }
 
-  static Future<JourneyProgressSnapshot> syncJourneyProgressForUser({
-    required FirebaseFirestore firestore,
-    required String uid,
+  static Future<JourneyProgressSnapshot> syncJourneyProgressForProfile({
+    required String profileId,
     required String journeyId,
     required String journeyName,
     bool isSelected = true,
     bool markStarted = false,
     DateTime? startedAtOverride,
   }) async {
+    final db = TempoRustDb.instance;
     final journeyWorkouts = getJourneyWorkouts(journeyId);
-    final journeyWorkoutIds = journeyWorkouts
-        .map((workout) => workout.id)
-        .toSet();
+    final journeyWorkoutIds = journeyWorkouts.map((w) => w.id).toSet();
     final workoutIdByTitle = {
       for (final workout in journeyWorkouts) workout.title: workout.id,
     };
     final totalWorkoutsCount = journeyWorkouts.length;
 
-    final progressDocRef = firestore
-        .collection('users')
-        .doc(uid)
-        .collection('journey_progress')
-        .doc(journeyId);
-    final progressDoc = await progressDocRef.get();
-    final progressData = progressDoc.data();
+    final existingList =
+        await db.getJourneyProgress(profileId, journeyId: journeyId);
+    final existing = existingList.isNotEmpty ? existingList.first : null;
 
-    DateTime? storedStartedAt;
-    final startedAtValue = progressData?['startedAt'];
-    if (startedAtValue is Timestamp) {
-      storedStartedAt = startedAtValue.toDate();
-    }
-
-    DateTime? storedActiveCycleStartedAt;
-    final activeCycleStartedAtValue = progressData?['activeCycleStartedAt'];
-    if (activeCycleStartedAtValue is Timestamp) {
-      storedActiveCycleStartedAt = activeCycleStartedAtValue.toDate();
-    }
-
-    final previousStatus = (progressData?['status'] ?? 'not_started').toString();
+    final previousStatus = existing?.status ?? 'not_started';
     final restartingCompletedJourney =
         markStarted && previousStatus == 'completed';
 
-    int completionCount =
-        (progressData?['completionCount'] as num?)?.toInt() ??
-            (previousStatus == 'completed' ? 1 : 0);
+    int completionCount = existing?.completionCount ??
+        (previousStatus == 'completed' ? 1 : 0);
 
-    DateTime? activeCycleStartedAt = storedActiveCycleStartedAt ?? storedStartedAt;
+    DateTime? activeCycleStartedAt =
+        existing?.activeCycleStartedAt ?? existing?.startedAt;
     if (restartingCompletedJourney) {
       activeCycleStartedAt = DateTime.now();
     } else if (markStarted && activeCycleStartedAt == null) {
       activeCycleStartedAt = startedAtOverride ?? DateTime.now();
     }
 
-    final completedSnapshot = await firestore
-        .collection('users')
-        .doc(uid)
-        .collection('completed_workouts')
-        .get();
-    final doneInfosSnapshot = await firestore
-        .collection('users')
-        .doc(uid)
-        .collection('doneInfos')
-        .get();
-
+    final completedItems = await db.getCompletedWorkouts(profileId, limit: 500);
     final completedWorkoutKeys = <String>{};
     final cheatedWorkoutKeys = <String>{};
     final cleanWorkoutKeys = <String>{};
 
-    void recordCompletion(Map<String, dynamic> data) {
-      final completedAt = data['completedAt'];
-      if (completedAt is! Timestamp) {
-        return;
-      }
-
+    for (final item in completedItems) {
       if (activeCycleStartedAt != null &&
-          completedAt.toDate().isBefore(activeCycleStartedAt)) {
-        return;
+          item.completedAt.isBefore(activeCycleStartedAt)) {
+        continue;
       }
-
       final workoutKey = _resolveJourneyWorkoutKey(
-        data: data,
+        item: item,
         journeyWorkoutIds: journeyWorkoutIds,
         workoutIdByTitle: workoutIdByTitle,
       );
-      if (workoutKey == null) {
-        return;
-      }
-
+      if (workoutKey == null) continue;
       completedWorkoutKeys.add(workoutKey);
-
-      if (data['isCheated'] == true) {
+      if (item.isCheated) {
         cheatedWorkoutKeys.add(workoutKey);
       } else {
         cleanWorkoutKeys.add(workoutKey);
       }
-    }
-
-    for (final doc in completedSnapshot.docs) {
-      recordCompletion(doc.data());
-    }
-    for (final doc in doneInfosSnapshot.docs) {
-      recordCompletion(doc.data());
     }
 
     final completedWorkoutsCount = completedWorkoutKeys.length;
@@ -164,18 +112,21 @@ class JourneyProgressService {
 
     final hasStarted = markStarted ||
         completedWorkoutsCount > 0 ||
-        progressData?['status'] == 'in_progress' ||
-        progressData?['status'] == 'completed';
+        previousStatus == 'in_progress' ||
+        previousStatus == 'completed';
     final isCompleted =
         totalWorkoutsCount > 0 && completedWorkoutsCount >= totalWorkoutsCount;
-    if (isCompleted && (!restartingCompletedJourney && previousStatus != 'completed')) {
+
+    if (isCompleted &&
+        (!restartingCompletedJourney && previousStatus != 'completed')) {
       completionCount++;
     }
 
     final resolvedStartedAt = startedAtOverride ??
         activeCycleStartedAt ??
-        storedStartedAt ??
+        existing?.startedAt ??
         (hasStarted ? DateTime.now() : null);
+
     final progressRatio = totalWorkoutsCount == 0
         ? 0.0
         : (completedWorkoutsCount / totalWorkoutsCount).clamp(0.0, 1.0);
@@ -193,86 +144,34 @@ class JourneyProgressService {
       }
     }
 
-    final progressPayload = <String, dynamic>{
-      'journeyId': journeyId,
-      'journeyName': journeyName,
-      'isSelected': isSelected,
-      'isCompleted': isCompleted,
-      'completedWorkoutsCount': completedWorkoutsCount,
-      'cheatedWorkoutsCount': cheatedWorkoutsCount,
-      'cleanWorkoutsCount': cleanWorkoutsCount,
-      'totalWorkoutsCount': totalWorkoutsCount,
-      'completionCount': completionCount,
-      'repeatCompletionCount': completionCount > 0 ? completionCount - 1 : 0,
-      'progressPercent': progressPercent,
-      'status': status,
-      'lastUpdatedAt': FieldValue.serverTimestamp(),
-    };
-
-    if (resolvedStartedAt != null) {
-      progressPayload['startedAt'] = Timestamp.fromDate(resolvedStartedAt);
-      progressPayload['activeCycleStartedAt'] =
-          Timestamp.fromDate(resolvedStartedAt);
-    } else {
-      progressPayload['startedAt'] = FieldValue.delete();
-      progressPayload['activeCycleStartedAt'] = FieldValue.delete();
-    }
-    if (isCompleted) {
-      progressPayload['completedAt'] = FieldValue.serverTimestamp();
-    } else {
-      progressPayload['completedAt'] = FieldValue.delete();
-    }
-
-    await progressDocRef.set(progressPayload, SetOptions(merge: true));
+    await db.upsertJourneyProgress(
+      LocalJourneyProgress(
+        profileId: profileId,
+        journeyId: journeyId,
+        journeyName: journeyName,
+        isSelected: isSelected,
+        isCompleted: isCompleted,
+        completedWorkoutsCount: completedWorkoutsCount,
+        cheatedWorkoutsCount: cheatedWorkoutsCount,
+        cleanWorkoutsCount: cleanWorkoutsCount,
+        totalWorkoutsCount: totalWorkoutsCount,
+        completionCount: completionCount,
+        progressPercent: progressPercent,
+        status: status,
+        startedAt: resolvedStartedAt,
+        activeCycleStartedAt: resolvedStartedAt,
+        completedAt: isCompleted ? DateTime.now() : null,
+        nextWorkoutId: isCompleted ? null : nextWorkoutId,
+      ),
+    );
 
     if (isSelected) {
-      final otherJourneyDocs = await firestore
-          .collection('users')
-          .doc(uid)
-          .collection('journey_progress')
-          .get();
-
-      if (otherJourneyDocs.docs.isNotEmpty) {
-        final batch = firestore.batch();
-        for (final doc in otherJourneyDocs.docs) {
-          if (doc.id == journeyId) {
-            continue;
-          }
-          batch.set(
-            doc.reference,
-            {
-              'isSelected': false,
-              'lastUpdatedAt': FieldValue.serverTimestamp(),
-            },
-            SetOptions(merge: true),
-          );
-        }
-        await batch.commit();
-      }
-
-      final userPayload = <String, dynamic>{
-        'selectedJourney': journeyName,
-        'selectedJourneyId': journeyId,
-        'selectedJourneyName': journeyName,
-        'selectedGoalType': goalForJourneyId(journeyId),
-        'selectedGoalLabel': goalLabel(goalForJourneyId(journeyId)),
-        'journeyStatus': status,
-        'journeyProgressPercent': progressPercent,
-        'journeyCompletionCount': completionCount,
-        'nextWorkoutId': isCompleted ? null : nextWorkoutId,
-        'journeyUpdatedAt': FieldValue.serverTimestamp(),
-      };
-
-      if (resolvedStartedAt != null) {
-        userPayload['journeyStartedAt'] = Timestamp.fromDate(resolvedStartedAt);
-      } else {
-        userPayload['journeyStartedAt'] = FieldValue.delete();
-      }
-
-      await firestore
-          .collection('users')
-          .doc(uid)
-          .set(userPayload, SetOptions(merge: true));
+      await db.updateProfile(
+        id: profileId,
+        fitnessGoal: goalForJourneyId(journeyId),
+        selectedJourneyId: journeyId,
+        selectedJourneyName: journeyName,
+      );
     }
 
     return JourneyProgressSnapshot(
