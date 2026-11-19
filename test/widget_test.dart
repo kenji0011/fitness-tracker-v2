@@ -6,9 +6,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tempo_fitness/data/fitness_journey_workouts.dart';
 import 'package:tempo_fitness/screens/fitness_journey_detail_screen.dart';
 import 'package:tempo_fitness/screens/intro_walkthrough_screen.dart';
+import 'package:tempo_fitness/screens/manage_summary_features_screen.dart';
 import 'package:tempo_fitness/screens/my_profile.dart';
 import 'package:tempo_fitness/screens/profile_switcher_screen.dart';
 import 'package:tempo_fitness/screens/progress_tracking_screen.dart';
+import 'package:tempo_fitness/screens/weight_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_screen.dart';
 import 'package:tempo_fitness/services/active_profile_provider.dart';
@@ -617,6 +619,206 @@ void main() {
     expect(find.text('Welcome to Tempo'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 900));
     expect(completed, true);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('WeightDetailScreen renders cards, tabs, body composition, and add weight sheet', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 61.75,
+    );
+    await db.logBodyMetric(
+      profileId: profile.id,
+      metricType: 'weight',
+      value: 61.55,
+      recordedAt: DateTime.now().subtract(const Duration(days: 28)),
+    );
+    await db.logBodyMetric(
+      profileId: profile.id,
+      metricType: 'weight',
+      value: 61.75,
+      recordedAt: DateTime.now(),
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: WeightDetailScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Weight'), findsOneWidget);
+    expect(find.text('Latest'), findsOneWidget);
+    expect(find.text('Week'), findsOneWidget);
+    expect(find.text('Weight management'), findsOneWidget);
+    expect(find.text('61.75'), findsOneWidget);
+    expect(find.text('+0.20 kg'), findsOneWidget);
+    expect(find.text('Body composition'), findsOneWidget);
+    expect(find.text('Data source'), findsOneWidget);
+    expect(find.text('Add data'), findsOneWidget);
+
+    // Switch to M tab -> shows trend chart cleanly
+    await tester.tap(find.text('M'));
+    await tester.pumpAndSettle();
+
+    // Scroll down to reveal Add data card below expanded chart
+    await tester.drag(find.byType(ListView), const Offset(0, -260));
+    await tester.pumpAndSettle();
+
+    // Open Add data sheet -> save a new weight entry
+    await tester.tap(find.text('Add data'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add weight'), findsOneWidget);
+    await tester.tap(find.text('Save weight'));
+    await tester.pumpAndSettle();
+
+    // Tap the top date to open the History Calendar screen
+    await tester.tap(find.byIcon(Icons.arrow_drop_down_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('History'), findsOneWidget);
+    expect(find.text('Day'), findsOneWidget);
+    expect(find.text('Week'), findsOneWidget);
+    expect(find.text('Month'), findsOneWidget);
+    expect(find.text('Year'), findsOneWidget);
+
+    // Switch to Month view & pick current month to return
+    await tester.tap(find.text('Month'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Year'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('${DateTime.now().year}').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Weight'), findsOneWidget);
+
+    // Tap three-dots button -> iOS popover shows All data, Add data, Unit
+    await tester.tap(find.byIcon(CupertinoIcons.ellipsis_vertical));
+    await tester.pumpAndSettle();
+    expect(find.text('All data'), findsOneWidget);
+    expect(find.text('Add data'), findsWidgets);
+    expect(find.text('Unit'), findsOneWidget);
+
+    // Open Unit page -> switch from kg to lb
+    await tester.tap(find.text('Unit'));
+    await tester.pumpAndSettle();
+    expect(find.text('Unit'), findsOneWidget);
+    expect(find.text('kg'), findsOneWidget);
+    expect(find.text('lb'), findsOneWidget);
+    expect(
+      find.text(
+        'After switching units, slight discrepancies may result from the rounding of decimal places.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('lb'));
+    await tester.pumpAndSettle();
+
+    // Back on Weight screen with lb displayed
+    expect(find.text('Weight'), findsOneWidget);
+    expect(find.text('lb'), findsWidgets);
+    expect(find.text('136.14'), findsOneWidget);
+
+    // Tap Body composition card -> opens animated BMI popup with spectrum bar & trend graph
+    await tester.tap(find.text('Body composition'));
+    await tester.pumpAndSettle();
+    expect(find.text('Level'), findsOneWidget);
+    expect(find.text('Normal'), findsWidgets);
+    expect(find.text('18.5'), findsOneWidget);
+    expect(find.text('24'), findsOneWidget);
+    expect(find.text('28'), findsOneWidget);
+    expect(find.text('BMI trend'), findsOneWidget);
+    expect(find.text('Collapse'), findsOneWidget);
+
+    // Switch BMI trend graph timeframe
+    await tester.tap(find.text('30D'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('7D'));
+    await tester.pumpAndSettle();
+
+    // Dismiss via Collapse button
+    await tester.tap(find.text('Collapse'));
+    await tester.pumpAndSettle();
+    expect(find.text('Collapse'), findsNothing);
+
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('ManageSummaryFeaturesScreen toggles cards and saves selection', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final themeProvider = ThemeProvider();
+    List<String>? savedResult;
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Builder(
+            builder: (ctx) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () async {
+                    savedResult = await Navigator.push<List<String>>(
+                      ctx,
+                      MaterialPageRoute(
+                        builder: (_) => ManageSummaryFeaturesScreen(
+                          initialSelectedIds: kDefaultSummaryFeatureIds,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Manage'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open Manage'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Manage health features'), findsOneWidget);
+    expect(find.text('Frequently used'), findsOneWidget);
+    expect(find.text('More features'), findsOneWidget);
+    expect(find.text('Sleep'), findsOneWidget);
+    expect(find.text('Weight'), findsOneWidget);
+
+    // Toggle Sleep off -> moves from Frequently used to More features
+    await tester.tap(find.text('Sleep'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('off_sleep')), findsOneWidget);
+
+    // Toggle Dark Mode cleanly
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+
+    // Tap checkmark to save
+    await tester.tap(find.byIcon(CupertinoIcons.checkmark_alt));
+    await tester.pumpAndSettle();
+
+    expect(savedResult, isNotNull);
+    expect(savedResult!.contains('sleep'), isFalse);
+    expect(savedResult!.contains('weight'), isTrue);
     expect(tester.takeException(), isNull);
   });
 }

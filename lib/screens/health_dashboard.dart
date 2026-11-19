@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pedometer/pedometer.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -13,16 +15,19 @@ import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bmi_detail_popup.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/oval_activity_rings.dart';
 import '../widgets/tempo_sliver_header.dart';
 import 'add_data_screen.dart';
 import 'calories_info_screen.dart';
 import 'detail_screen.dart';
+import 'manage_summary_features_screen.dart';
 import 'moving_info_screen.dart';
 import 'sleep_info_screen.dart';
 import 'steps_info_screen.dart';
 import 'waist_measurement_info_screen.dart';
+import 'weight_detail_screen.dart';
 
 /// Shared model kept for compatibility with detail screens.
 class DailyActivity {
@@ -71,6 +76,8 @@ class _HealthDashboardState extends State<HealthDashboard> {
   final TempoRustDb _db = TempoRustDb.instance;
 
   LocalDashboardSummary? _summary;
+  String _weightUnit = 'kg';
+  List<String> _enabledSummaryFeatures = kDefaultSummaryFeatureIds;
   DateTime _lastUpdated = DateTime.now();
   bool _isLoading = true;
   bool _pedometerActive = false;
@@ -105,10 +112,19 @@ class _HealthDashboardState extends State<HealthDashboard> {
     if (profileId == null || profileId.isEmpty) return;
 
     try {
-      final summary = await _db.getDashboardSummary(profileId);
+      final results = await Future.wait([
+        _db.getDashboardSummary(profileId),
+        _db.getSetting('weight_unit_$profileId'),
+        _db.getSetting('summary_features_$profileId'),
+      ]);
       if (!mounted) return;
+      final summary = results[0] as LocalDashboardSummary;
+      final savedUnit = results[1] as String?;
+      final savedFeatures = results[2] as String?;
       setState(() {
         _summary = summary;
+        _weightUnit = savedUnit == 'lb' ? 'lb' : 'kg';
+        _enabledSummaryFeatures = parseSummaryFeatureIds(savedFeatures);
         _initialStoredSteps = summary.today.steps;
         _lastUpdated = DateTime.now();
         _isLoading = false;
@@ -174,6 +190,29 @@ class _HealthDashboardState extends State<HealthDashboard> {
     if (changed == true && mounted) {
       context.read<ActiveProfileProvider>().notifyDataChanged();
       _loadDashboard();
+    }
+  }
+
+  Future<void> _openManageFeatures() async {
+    HapticFeedback.selectionClick();
+    final profileId = context.read<ActiveProfileProvider>().activeProfileId;
+    final updated = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ManageSummaryFeaturesScreen(
+          initialSelectedIds: _enabledSummaryFeatures,
+        ),
+      ),
+    );
+    if (updated != null && mounted) {
+      if (profileId != null && profileId.isNotEmpty) {
+        await _db.setSetting(
+          'summary_features_$profileId',
+          jsonEncode(updated),
+        );
+      }
+      if (!mounted) return;
+      setState(() => _enabledSummaryFeatures = updated);
     }
   }
 
@@ -445,162 +484,222 @@ class _HealthDashboardState extends State<HealthDashboard> {
                     ),
                     const SizedBox(height: 14),
 
-                    // --- 2-Column Rich Health Metric Grid (matching Screenshots 1 & 2) ---
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 0.86,
-                      children: [
-                        // 1. Sleep Card
-                        _HealthGridTile(
-                          badgeIcon: CupertinoIcons.bed_double_fill,
-                          badgeColor: const Color(0xFF6B63F6),
-                          title: 'Sleep',
-                          trailingPill: 'Log',
-                          onTrailingPillTap: () =>
-                              _openAddData(initialMetric: 'sleep'),
-                          primaryValue: (profile?.sleepHours ?? 0) > 0
-                              ? '${profile!.sleepHours.toStringAsFixed(1)} hrs'
-                              : null,
-                          subtitle: (profile?.sleepHours ?? 0) > 0
-                              ? _latestTimeLabel(sleepPts)
-                              : 'Log nightly sleep to track recovery',
-                          chart: _VerticalTickVisualizer(
-                            values: sleepPts.map((e) => e.value).toList(),
-                            activeColor: const Color(0xFF6B63F6),
-                            leftLabel: '00:00',
-                            rightLabel: '24:00',
-                          ),
-                          onTap: () => _openMetricDetail(
+                    // --- 2-Column Rich Health Metric Grid (user-configurable via Manage health features) ---
+                    Builder(
+                      builder: (_) {
+                        final cardMap = <String, Widget>{
+                          'sleep': _HealthGridTile(
+                            badgeIcon: CupertinoIcons.bed_double_fill,
+                            badgeColor: const Color(0xFF6B63F6),
                             title: 'Sleep',
-                            metricType: 'sleep',
-                            unit: 'hrs',
-                            accentColor: const Color(0xFF6B63F6),
-                            infoScreen: const SleepInfoScreen(),
+                            trailingPill: 'Log',
+                            onTrailingPillTap: () =>
+                                _openAddData(initialMetric: 'sleep'),
+                            primaryValue: (profile?.sleepHours ?? 0) > 0
+                                ? '${profile!.sleepHours.toStringAsFixed(1)} hrs'
+                                : null,
+                            subtitle: (profile?.sleepHours ?? 0) > 0
+                                ? _latestTimeLabel(sleepPts)
+                                : 'Log nightly sleep to track recovery',
+                            chart: _VerticalTickVisualizer(
+                              values: sleepPts.map((e) => e.value).toList(),
+                              activeColor: const Color(0xFF6B63F6),
+                              leftLabel: '00:00',
+                              rightLabel: '24:00',
+                            ),
+                            onTap: () => _openMetricDetail(
+                              title: 'Sleep',
+                              metricType: 'sleep',
+                              unit: 'hrs',
+                              accentColor: const Color(0xFF6B63F6),
+                              infoScreen: const SleepInfoScreen(),
+                            ),
                           ),
-                        ),
-
-                        // 2. Weight Card (with green smooth trend line like Screenshot 2!)
-                        _HealthGridTile(
-                          badgeIcon: CupertinoIcons.gauge,
-                          badgeColor: const Color(0xFF4CD964),
-                          title: 'Weight',
-                          primaryValue: (profile?.weightKg ?? 0) > 0
-                              ? '${profile!.weightKg.toStringAsFixed(2)} kg'
-                              : null,
-                          subtitle: (profile?.weightKg ?? 0) > 0
-                              ? _latestTimeLabel(weightPts)
-                              : 'Tap to record your weight',
-                          chart: _SmoothAreaSparkline(
-                            points: weightPts,
-                            lineColor: const Color(0xFF4CD964),
-                          ),
-                          onTap: () => _openMetricDetail(
+                          'weight': _HealthGridTile(
+                            badgeIcon: CupertinoIcons.gauge,
+                            badgeColor: const Color(0xFF4CD964),
                             title: 'Weight',
-                            metricType: 'weight',
-                            unit: 'kg',
-                            accentColor: const Color(0xFF4CD964),
+                            primaryValue: (profile?.weightKg ?? 0) > 0
+                                ? '${(_weightUnit == 'lb' ? profile!.weightKg * 2.20462262 : profile!.weightKg).toStringAsFixed(2)} $_weightUnit'
+                                : null,
+                            subtitle: (profile?.weightKg ?? 0) > 0
+                                ? _latestTimeLabel(weightPts)
+                                : 'Tap to record your weight',
+                            chart: _SmoothAreaSparkline(
+                              points: weightPts,
+                              lineColor: const Color(0xFF4CD964),
+                            ),
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const WeightDetailScreen(),
+                                ),
+                              );
+                              if (mounted) _loadDashboard();
+                            },
                           ),
-                        ),
-
-                        // 3. BMI / Heart Health Card
-                        _HealthGridTile(
-                          badgeIcon: CupertinoIcons.heart_fill,
-                          badgeColor: const Color(0xFFE84A4A),
-                          title: 'BMI Index',
-                          primaryValue: (profile?.bmi ?? 0) > 0
-                              ? profile!.bmi.toStringAsFixed(1)
-                              : null,
-                          subtitle: (profile?.bmi ?? 0) > 0
-                              ? '${_bmiLabel(profile!.bmi)} • ${(profile.heightCm).toStringAsFixed(0)} cm'
-                              : 'Add height & weight to calculate',
-                          chart: _VerticalTickVisualizer(
-                            values: weightPts
-                                .where((_) => (profile?.heightCm ?? 0) > 0)
-                                .map((e) {
-                                  final hm = profile!.heightCm / 100.0;
-                                  return e.value / (hm * hm);
-                                })
-                                .toList(),
-                            activeColor: const Color(0xFFE84A4A),
-                            leftLabel: '18.5',
-                            rightLabel: '25.0',
+                          'bmi': _HealthGridTile(
+                            badgeIcon: CupertinoIcons.heart_fill,
+                            badgeColor: const Color(0xFFE84A4A),
+                            title: 'BMI Index',
+                            primaryValue: (profile?.bmi ?? 0) > 0
+                                ? profile!.bmi.toStringAsFixed(1)
+                                : null,
+                            subtitle: (profile?.bmi ?? 0) > 0
+                                ? '${_bmiLabel(profile!.bmi)} • ${(profile.heightCm).toStringAsFixed(0)} cm'
+                                : 'Add height & weight to calculate',
+                            chart: _VerticalTickVisualizer(
+                              values: weightPts
+                                  .where((_) => (profile?.heightCm ?? 0) > 0)
+                                  .map((e) {
+                                    final hm = profile!.heightCm / 100.0;
+                                    return e.value / (hm * hm);
+                                  })
+                                  .toList(),
+                              activeColor: const Color(0xFFE84A4A),
+                              leftLabel: '18.5',
+                              rightLabel: '25.0',
+                            ),
+                            onTap: () => showBmiDetailPopup(
+                              context: context,
+                              bmi: profile?.bmi ?? 0,
+                              heightCm: profile?.heightCm ?? 0,
+                              weightPoints: weightPts,
+                            ),
                           ),
-                          onTap: () => _openMetricDetail(
-                            title: 'BMI',
-                            metricType: 'weight',
-                            unit: 'kg/m²',
-                            accentColor: const Color(0xFFE84A4A),
-                          ),
-                        ),
-
-                        // 4. Waist Measurement Card
-                        _HealthGridTile(
-                          badgeIcon: CupertinoIcons.resize_h,
-                          badgeColor: const Color(0xFF3CC29E),
-                          title: 'Waist',
-                          primaryValue: (profile?.waistCm ?? 0) > 0
-                              ? '${profile!.waistCm.toStringAsFixed(1)} cm'
-                              : null,
-                          subtitle: (profile?.waistCm ?? 0) > 0
-                              ? _latestTimeLabel(waistPts)
-                              : 'Tap to track waist size',
-                          chart: _SmoothAreaSparkline(
-                            points: waistPts,
-                            lineColor: const Color(0xFF3CC29E),
-                          ),
-                          onTap: () => _openMetricDetail(
+                          'waist': _HealthGridTile(
+                            badgeIcon: CupertinoIcons.resize_h,
+                            badgeColor: const Color(0xFF3CC29E),
                             title: 'Waist',
-                            metricType: 'waist',
-                            unit: 'cm',
-                            accentColor: const Color(0xFF3CC29E),
-                            infoScreen: const WaistMeasurementInfoScreen(),
+                            primaryValue: (profile?.waistCm ?? 0) > 0
+                                ? '${profile!.waistCm.toStringAsFixed(1)} cm'
+                                : null,
+                            subtitle: (profile?.waistCm ?? 0) > 0
+                                ? _latestTimeLabel(waistPts)
+                                : 'Tap to track waist size',
+                            chart: _SmoothAreaSparkline(
+                              points: waistPts,
+                              lineColor: const Color(0xFF3CC29E),
+                            ),
+                            onTap: () => _openMetricDetail(
+                              title: 'Waist',
+                              metricType: 'waist',
+                              unit: 'cm',
+                              accentColor: const Color(0xFF3CC29E),
+                              infoScreen: const WaistMeasurementInfoScreen(),
+                            ),
                           ),
-                        ),
+                          'burn': _HealthGridTile(
+                            badgeIcon: CupertinoIcons.bolt_fill,
+                            badgeColor: const Color(0xFFF39C2E),
+                            title: '7-Day Burn',
+                            primaryValue:
+                                '${dailyHistory.take(7).fold<int>(0, (s, d) => s + d.calories)} kcal',
+                            subtitle: 'Last 7 days total',
+                            chart: _VerticalTickVisualizer(
+                              values: _last7DaysCalories(dailyHistory),
+                              activeColor: const Color(0xFFF39C2E),
+                              leftLabel: '7d ago',
+                              rightLabel: 'Today',
+                            ),
+                            onTap: () => _openMetricDetail(
+                              title: 'Daily Activity',
+                              metricType: 'activity',
+                              unit: 'kcal',
+                              accentColor: const Color(0xFFF39C2E),
+                            ),
+                          ),
+                          'workouts': _HealthGridTile(
+                            badgeIcon: CupertinoIcons.flame_fill,
+                            badgeColor: const Color(0xFFE8527A),
+                            title: 'Workouts',
+                            primaryValue:
+                                '${_summary?.totalWorkouts ?? 0} total',
+                            subtitle:
+                                (_summary?.recentWorkouts.isNotEmpty ?? false)
+                                    ? _summary!.recentWorkouts.first.title
+                                    : 'Tap to start training',
+                            chart: _VerticalTickVisualizer(
+                              values: _last7DaysWorkouts(dailyHistory),
+                              activeColor: const Color(0xFFE8527A),
+                              leftLabel: 'Mon',
+                              rightLabel: 'Sun',
+                            ),
+                            onTap: () => widget.onSwitchToWorkouts?.call(),
+                          ),
+                        };
 
-                        // 5. 7-Day Activity Energy Card
-                        _HealthGridTile(
-                          badgeIcon: CupertinoIcons.bolt_fill,
-                          badgeColor: const Color(0xFFF39C2E),
-                          title: '7-Day Burn',
-                          primaryValue:
-                              '${dailyHistory.take(7).fold<int>(0, (s, d) => s + d.calories)} kcal',
-                          subtitle: 'Last 7 days total',
-                          chart: _VerticalTickVisualizer(
-                            values: _last7DaysCalories(dailyHistory),
-                            activeColor: const Color(0xFFF39C2E),
-                            leftLabel: '7d ago',
-                            rightLabel: 'Today',
-                          ),
-                          onTap: () => _openMetricDetail(
-                            title: 'Daily Activity',
-                            metricType: 'activity',
-                            unit: 'kcal',
-                            accentColor: const Color(0xFFF39C2E),
-                          ),
-                        ),
+                        final visibleCards = _enabledSummaryFeatures
+                            .where(cardMap.containsKey)
+                            .map((id) => cardMap[id]!)
+                            .toList();
 
-                        // 6. Workouts Completed Card
-                        _HealthGridTile(
-                          badgeIcon: CupertinoIcons.flame_fill,
-                          badgeColor: const Color(0xFFE8527A),
-                          title: 'Workouts',
-                          primaryValue: '${_summary?.totalWorkouts ?? 0} total',
-                          subtitle: (_summary?.recentWorkouts.isNotEmpty ?? false)
-                              ? _summary!.recentWorkouts.first.title
-                              : 'Tap to start training',
-                          chart: _VerticalTickVisualizer(
-                            values: _last7DaysWorkouts(dailyHistory),
-                            activeColor: const Color(0xFFE8527A),
-                            leftLabel: 'Mon',
-                            rightLabel: 'Sun',
+                        if (visibleCards.isEmpty) {
+                          return AppleCard(
+                            borderRadius: 22,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 22,
+                            ),
+                            child: Text(
+                              'No summary cards selected. Tap Manage health features below to choose what appears here.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: c.textSecondary,
+                                fontSize: 13.5,
+                                height: 1.4,
+                              ),
+                            ),
+                          );
+                        }
+
+                        return GridView.count(
+                          crossAxisCount: 2,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 0.86,
+                          children: visibleCards,
+                        );
+                      },
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // Centered Manage health features button below the Summary cards
+                    Center(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _openManageFeatures,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 10,
                           ),
-                          onTap: () => widget.onSwitchToWorkouts?.call(),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Manage health features',
+                                style: TextStyle(
+                                  color: c.textSecondary,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500,
+                                  letterSpacing: -0.1,
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              Icon(
+                                CupertinoIcons.chevron_right,
+                                size: 15,
+                                color: c.textTertiary,
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
+                      ),
                     ),
                       ],
                     ),

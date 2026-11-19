@@ -282,16 +282,19 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
               child: IgnorePointer(
                 child: Opacity(
                   opacity: largeTitleOpacity,
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: c.textPrimary,
-                      fontSize: 34,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: -0.9,
-                      height: 1.15,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: -0.9,
+                        height: 1.15,
+                      ),
                     ),
                   ),
                 ),
