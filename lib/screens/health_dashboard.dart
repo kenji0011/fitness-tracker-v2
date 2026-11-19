@@ -288,18 +288,21 @@ class _HealthDashboardState extends State<HealthDashboard> {
                       children: [
                         // --- Hero Tilted Concentric Oval Activity Rings ---
                         Center(
-                          child: OvalActivityRings(
-                            size: 242,
-                            caloriesProgress: calProgress,
-                            stepsProgress: stepProgress,
-                            minutesProgress: minProgress,
-                            highlightedRing: _highlightedRing,
-                            onRingTap: (ringIdx) {
-                              setState(() {
-                                _highlightedRing =
-                                    _highlightedRing == ringIdx ? null : ringIdx;
-                              });
-                            },
+                          child: RepaintBoundary(
+                            child: OvalActivityRings(
+                              size: 242,
+                              caloriesProgress: calProgress,
+                              stepsProgress: stepProgress,
+                              minutesProgress: minProgress,
+                              highlightedRing: _highlightedRing,
+                              onRingTap: (ringIdx) {
+                                setState(() {
+                                  _highlightedRing = _highlightedRing == ringIdx
+                                      ? null
+                                      : ringIdx;
+                                });
+                              },
+                            ),
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -819,107 +822,109 @@ class _HealthGridTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return AppleCard(
-      borderRadius: 20,
-      padding: const EdgeInsets.all(13),
-      onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  color: badgeColor,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(badgeIcon, color: Colors.white, size: 14),
-              ),
-              const Spacer(),
-              if (trailingPill != null)
-                GestureDetector(
-                  onTap: onTrailingPillTap,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 3.5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: badgeColor.withValues(
-                        alpha: c.isDark ? 0.22 : 0.12,
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          trailingPill!,
-                          style: TextStyle(
-                            color: badgeColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(width: 2),
-                        Icon(
-                          CupertinoIcons.chevron_right,
-                          size: 10,
-                          color: badgeColor,
-                        ),
-                      ],
-                    ),
+    return RepaintBoundary(
+      child: AppleCard(
+        borderRadius: 20,
+        padding: const EdgeInsets.all(13),
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: badgeColor,
+                    shape: BoxShape.circle,
                   ),
-                )
-              else
-                Icon(
-                  CupertinoIcons.chevron_right,
-                  size: 14,
-                  color: c.textTertiary,
+                  child: Icon(badgeIcon, color: Colors.white, size: 14),
                 ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: c.textPrimary,
-              fontSize: 15.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.2,
+                const Spacer(),
+                if (trailingPill != null)
+                  GestureDetector(
+                    onTap: onTrailingPillTap,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 3.5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: badgeColor.withValues(
+                          alpha: c.isDark ? 0.22 : 0.12,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            trailingPill!,
+                            style: TextStyle(
+                              color: badgeColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Icon(
+                            CupertinoIcons.chevron_right,
+                            size: 10,
+                            color: badgeColor,
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Icon(
+                    CupertinoIcons.chevron_right,
+                    size: 14,
+                    color: c.textTertiary,
+                  ),
+              ],
             ),
-          ),
-          const SizedBox(height: 2),
-          if (primaryValue != null) ...[
+            const SizedBox(height: 8),
             Text(
-              primaryValue!,
+              title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: c.textPrimary,
-                fontSize: 17.5,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.4,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
               ),
             ),
-          ],
-          Text(
-            subtitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: c.textTertiary,
-              fontSize: 11.5,
-              height: 1.25,
+            const SizedBox(height: 2),
+            if (primaryValue != null) ...[
+              Text(
+                primaryValue!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 17.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.4,
+                ),
+              ),
+            ],
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.textTertiary,
+                fontSize: 11.5,
+                height: 1.25,
+              ),
             ),
-          ),
-          const Spacer(),
-          chart,
-        ],
+            const Spacer(),
+            chart,
+          ],
+        ),
       ),
     );
   }

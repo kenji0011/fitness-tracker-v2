@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -104,8 +103,10 @@ class _PhotoEditingScreenState extends State<PhotoEditingScreen> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final hasFile =
-        !kIsWeb && File(widget.sourceImagePath).existsSync();
+    final hasFile = LocalMediaService.fileExistsCached(widget.sourceImagePath);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final previewDecodePx =
+        (MediaQuery.sizeOf(context).width * dpr).round().clamp(480, 1440);
     final selectedIdx = _categories.indexOf(_category).clamp(0, _categories.length - 1);
     final bottomInset = MediaQuery.paddingOf(context).bottom;
 
@@ -156,6 +157,9 @@ class _PhotoEditingScreenState extends State<PhotoEditingScreen> {
                         if (hasFile)
                           Image.file(
                             File(widget.sourceImagePath),
+                            cacheWidth: previewDecodePx,
+                            gaplessPlayback: true,
+                            filterQuality: FilterQuality.medium,
                             fit: _fitContain ? BoxFit.contain : BoxFit.cover,
                           )
                         else

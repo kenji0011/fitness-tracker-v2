@@ -926,89 +926,96 @@ class _WorkoutLibraryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final thumbCachePx = (68 * dpr).round().clamp(96, 256);
 
-    return AppleCard(
-      borderRadius: 20,
-      onTap: onTap,
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.asset(
-              workout.thumbnailAsset,
-              width: 68,
-              height: 68,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
+    return RepaintBoundary(
+      child: AppleCard(
+        borderRadius: 20,
+        onTap: onTap,
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.asset(
+                workout.thumbnailAsset,
                 width: 68,
                 height: 68,
-                color: c.searchBg,
-                child: Icon(
-                  Icons.directions_run_rounded,
-                  color: c.textSecondary,
+                cacheWidth: thumbCachePx,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  width: 68,
+                  height: 68,
+                  color: c.searchBg,
+                  child: Icon(
+                    Icons.directions_run_rounded,
+                    color: c.textSecondary,
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        workout.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: c.textPrimary,
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.2,
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          workout.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: c.textPrimary,
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.2,
+                          ),
                         ),
                       ),
-                    ),
-                    if (isCompleted) ...[
-                      const SizedBox(width: 6),
-                      Icon(
-                        CupertinoIcons.checkmark_alt,
-                        color: c.textPrimary,
-                        size: 16,
-                      ),
+                      if (isCompleted) ...[
+                        const SizedBox(width: 6),
+                        Icon(
+                          CupertinoIcons.checkmark_alt,
+                          color: c.textPrimary,
+                          size: 16,
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${workout.level} · ${workout.bodyFocus}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: c.textSecondary,
-                    fontSize: 12.5,
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${workout.duration} · ${workout.exerciseList.length} exercises',
-                  style: TextStyle(
-                    color: c.textTertiary,
-                    fontSize: 12,
+                  const SizedBox(height: 4),
+                  Text(
+                    '${workout.level} · ${workout.bodyFocus}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 12.5,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 2),
+                  Text(
+                    '${workout.duration} · ${workout.exerciseList.length} exercises',
+                    style: TextStyle(
+                      color: c.textTertiary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 6),
-          Icon(
-            CupertinoIcons.chevron_right,
-            color: c.textTertiary,
-            size: 16,
-          ),
-        ],
+            const SizedBox(width: 6),
+            Icon(
+              CupertinoIcons.chevron_right,
+              color: c.textTertiary,
+              size: 16,
+            ),
+          ],
+        ),
       ),
     );
   }

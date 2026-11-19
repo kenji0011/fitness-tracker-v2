@@ -28,10 +28,15 @@ class ActiveProfileProvider extends ChangeNotifier {
     notifyListeners();
 
     await _db.init();
-    _profiles = await _db.listProfiles();
-    _hasSeenIntro = (await _db.getSetting(_hasSeenIntroKey)) == 'true';
+    final startup = await Future.wait([
+      _db.listProfiles(),
+      _db.getSetting(_hasSeenIntroKey),
+      _db.getSetting(_activeProfileKey),
+    ]);
+    _profiles = startup[0] as List<LocalProfile>;
+    _hasSeenIntro = (startup[1] as String?) == 'true';
 
-    final savedId = await _db.getSetting(_activeProfileKey);
+    final savedId = startup[2] as String?;
     if (savedId != null && savedId.isNotEmpty) {
       _activeProfile = _profiles
           .where((profile) => profile.id == savedId)

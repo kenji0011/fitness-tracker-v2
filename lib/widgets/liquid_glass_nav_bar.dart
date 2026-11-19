@@ -457,54 +457,62 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                               right: 0,
                               top: 9,
                               bottom: 9,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(34),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: isDark
-                                          ? Colors.black.withValues(alpha: 0.52)
-                                          : Colors.black.withValues(alpha: 0.09),
-                                      blurRadius: 28,
-                                      spreadRadius: -2,
-                                      offset: const Offset(0, 10),
-                                    ),
-                                  ],
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(34),
-                                  child: BackdropFilter(
-                                    filter: ui.ImageFilter.blur(
-                                      sigmaX: 28,
-                                      sigmaY: 28,
-                                    ),
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(34),
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topCenter,
-                                          end: Alignment.bottomCenter,
-                                          colors: isDark
-                                              ? [
-                                                  const Color(0xFF28282C)
-                                                      .withValues(alpha: 0.78),
-                                                  const Color(0xFF151518)
-                                                      .withValues(alpha: 0.84),
-                                                ]
-                                              : [
-                                                  Colors.white
-                                                      .withValues(alpha: 0.86),
-                                                  const Color(0xFFF7F7F8)
-                                                      .withValues(alpha: 0.80),
-                                                ],
-                                        ),
-                                        border: Border.all(
-                                          color: isDark
-                                              ? Colors.white
-                                                  .withValues(alpha: 0.14)
-                                              : Colors.black
-                                                  .withValues(alpha: 0.07),
-                                          width: 1,
+                              child: RepaintBoundary(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(34),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: isDark
+                                            ? Colors.black
+                                                .withValues(alpha: 0.52)
+                                            : Colors.black
+                                                .withValues(alpha: 0.09),
+                                        blurRadius: 28,
+                                        spreadRadius: -2,
+                                        offset: const Offset(0, 10),
+                                      ),
+                                    ],
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(34),
+                                    child: BackdropFilter(
+                                      filter: ui.ImageFilter.blur(
+                                        sigmaX: 28,
+                                        sigmaY: 28,
+                                      ),
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          borderRadius:
+                                              BorderRadius.circular(34),
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                            colors: isDark
+                                                ? [
+                                                    const Color(0xFF28282C)
+                                                        .withValues(
+                                                            alpha: 0.78),
+                                                    const Color(0xFF151518)
+                                                        .withValues(
+                                                            alpha: 0.84),
+                                                  ]
+                                                : [
+                                                    Colors.white.withValues(
+                                                        alpha: 0.86),
+                                                    const Color(0xFFF7F7F8)
+                                                        .withValues(
+                                                            alpha: 0.80),
+                                                  ],
+                                          ),
+                                          border: Border.all(
+                                            color: isDark
+                                                ? Colors.white
+                                                    .withValues(alpha: 0.14)
+                                                : Colors.black
+                                                    .withValues(alpha: 0.07),
+                                            width: 1,
+                                          ),
                                         ),
                                       ),
                                     ),

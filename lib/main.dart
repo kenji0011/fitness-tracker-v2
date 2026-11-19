@@ -15,13 +15,22 @@ import 'theme/theme_provider.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Keep decoded thumbnails and avatars warm in memory during smooth scrolling.
+  PaintingBinding.instance.imageCache
+    ..maximumSize = 200
+    ..maximumSizeBytes = 120 << 20;
+
   final activeProfileProvider = ActiveProfileProvider();
-  await activeProfileProvider.initialize();
+  final themeProvider = ThemeProvider(autoLoad: false);
+  await Future.wait([
+    activeProfileProvider.initialize(),
+    themeProvider.initialize(),
+  ]);
 
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider.value(value: themeProvider),
         ChangeNotifierProvider.value(value: activeProfileProvider),
       ],
       child: const TempoApp(),

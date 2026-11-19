@@ -5,22 +5,27 @@ class ThemeProvider with ChangeNotifier {
   static const String _prefKey = 'tempo_theme_mode_v1';
 
   ThemeMode _themeMode = ThemeMode.light;
+  bool _loaded = false;
 
-  ThemeProvider() {
-    _loadSavedTheme();
+  ThemeProvider({bool autoLoad = true}) {
+    if (autoLoad) {
+      initialize();
+    }
   }
 
   ThemeMode get themeMode => _themeMode;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
 
-  Future<void> _loadSavedTheme() async {
+  Future<void> initialize() async {
+    if (_loaded) return;
+    _loaded = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(_prefKey);
-      if (saved == 'dark') {
+      if (saved == 'dark' && _themeMode != ThemeMode.dark) {
         _themeMode = ThemeMode.dark;
         notifyListeners();
-      } else if (saved == 'light') {
+      } else if (saved == 'light' && _themeMode != ThemeMode.light) {
         _themeMode = ThemeMode.light;
         notifyListeners();
       }

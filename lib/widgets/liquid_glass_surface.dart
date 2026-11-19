@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../services/local_media_service.dart';
 import '../theme/app_colors.dart';
 
 /// Clean Apple Health-style grouped card compatible with Light & Dark Mode.
@@ -133,9 +133,9 @@ class LocalProfileAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final hasFile = !kIsWeb &&
-        avatarPath.trim().isNotEmpty &&
-        File(avatarPath).existsSync();
+    final hasFile = LocalMediaService.fileExistsCached(avatarPath);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final decodePx = (size * dpr).round().clamp(32, 512);
     final resolvedBorderColor = borderColor ??
         (c.isDark ? Colors.white.withValues(alpha: 0.22) : Colors.white);
 
@@ -178,6 +178,9 @@ class LocalProfileAvatar extends StatelessWidget {
                 File(avatarPath),
                 width: size,
                 height: size,
+                cacheWidth: decodePx,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
                 fit: BoxFit.cover,
               )
             : Center(

@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -409,102 +408,113 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
                   (ctx, i) {
                     final photo = _photos[i];
                     final exists =
-                        !kIsWeb && File(photo.filePath).existsSync();
-                    return GestureDetector(
-                      onTap: () => _openViewer(i),
-                      onLongPress: () => _confirmAndDeletePhoto(photo),
-                      child: Hero(
-                        tag: 'progress_photo_${photo.id}',
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              if (exists)
-                                Image.file(
-                                  File(photo.filePath),
-                                  fit: BoxFit.cover,
-                                )
-                              else
-                                Container(
-                                  color: c.cardAlt,
-                                  child: Icon(
-                                    CupertinoIcons.photo,
-                                    color: c.textTertiary,
-                                    size: 36,
+                        LocalMediaService.fileExistsCached(photo.filePath);
+                    final dpr = MediaQuery.devicePixelRatioOf(ctx);
+                    final tileDecodePx =
+                        (MediaQuery.sizeOf(ctx).width * 0.52 * dpr)
+                            .round()
+                            .clamp(240, 900);
+                    return RepaintBoundary(
+                      child: GestureDetector(
+                        onTap: () => _openViewer(i),
+                        onLongPress: () => _confirmAndDeletePhoto(photo),
+                        child: Hero(
+                          tag: 'progress_photo_${photo.id}',
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                if (exists)
+                                  Image.file(
+                                    File(photo.filePath),
+                                    cacheWidth: tileDecodePx,
+                                    gaplessPlayback: true,
+                                    filterQuality: FilterQuality.medium,
+                                    fit: BoxFit.cover,
+                                  )
+                                else
+                                  Container(
+                                    color: c.cardAlt,
+                                    child: Icon(
+                                      CupertinoIcons.photo,
+                                      color: c.textTertiary,
+                                      size: 36,
+                                    ),
                                   ),
-                                ),
-                              Positioned(
-                                top: 10,
-                                left: 10,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.48),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    photo.category,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
+                                Positioned(
+                                  top: 10,
+                                  left: 10,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 9,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.48),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      photo.category,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              Positioned(
-                                left: 0,
-                                right: 0,
-                                bottom: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    11,
-                                    22,
-                                    11,
-                                    10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        Colors.transparent,
-                                        Colors.black.withValues(alpha: 0.78),
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      11,
+                                      22,
+                                      11,
+                                      10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.transparent,
+                                          Colors.black.withValues(alpha: 0.78),
+                                        ],
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          DateFormat('MMM d, yyyy')
+                                              .format(photo.takenAt.toLocal()),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        if (photo.caption.isNotEmpty)
+                                          Text(
+                                            photo.caption,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 11.5,
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        DateFormat('MMM d, yyyy')
-                                            .format(photo.takenAt.toLocal()),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      if (photo.caption.isNotEmpty)
-                                        Text(
-                                          photo.caption,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 11.5,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -599,7 +609,7 @@ class _ProgressPhotoViewerScreenState
               },
               itemBuilder: (_, i) {
                 final item = _items[i];
-                final exists = !kIsWeb && File(item.filePath).existsSync();
+                final exists = LocalMediaService.fileExistsCached(item.filePath);
                 return Center(
                   child: Hero(
                     tag: 'progress_photo_${item.id}',

@@ -9,6 +9,23 @@ import 'package:uuid/uuid.dart';
 /// local application documents directory (replaces Supabase Storage buckets).
 class LocalMediaService {
   static const _uuid = Uuid();
+  static final Map<String, bool> _existsCache = {};
+
+  /// Fast cached check that avoids repeated synchronous filesystem stat() calls
+  /// during scroll & 120Hz animations.
+  static bool fileExistsCached(String filePath) {
+    final trimmed = filePath.trim();
+    if (kIsWeb || trimmed.isEmpty) return false;
+    return _existsCache.putIfAbsent(trimmed, () => File(trimmed).existsSync());
+  }
+
+  static void invalidateCache([String? filePath]) {
+    if (filePath == null) {
+      _existsCache.clear();
+    } else {
+      _existsCache.remove(filePath.trim());
+    }
+  }
 
   static Future<String> saveProfileAvatar({
     required String profileId,
@@ -19,6 +36,7 @@ class LocalMediaService {
     final ext = p.extension(sourcePath).isEmpty ? '.jpg' : p.extension(sourcePath);
     final destPath = p.join(dir.path, 'avatar_${DateTime.now().millisecondsSinceEpoch}$ext');
     await File(sourcePath).copy(destPath);
+    _existsCache[destPath] = true;
     return destPath;
   }
 
@@ -31,6 +49,7 @@ class LocalMediaService {
     final fileName = 'progress_${_uuid.v4()}$extension';
     final destPath = p.join(dir.path, fileName);
     await File(destPath).writeAsBytes(bytes, flush: true);
+    _existsCache[destPath] = true;
     return destPath;
   }
 
@@ -43,11 +62,13 @@ class LocalMediaService {
     final ext = p.extension(sourcePath).isEmpty ? '.jpg' : p.extension(sourcePath);
     final destPath = p.join(dir.path, 'progress_${_uuid.v4()}$ext');
     await File(sourcePath).copy(destPath);
+    _existsCache[destPath] = true;
     return destPath;
   }
 
   static Future<void> deleteLocalFile(String filePath) async {
     if (kIsWeb || filePath.trim().isEmpty) return;
+    _existsCache[filePath.trim()] = false;
     try {
       final f = File(filePath);
       if (await f.exists()) {
