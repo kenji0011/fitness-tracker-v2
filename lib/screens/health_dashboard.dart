@@ -24,7 +24,7 @@ import 'calories_info_screen.dart';
 import 'detail_screen.dart';
 import 'manage_summary_features_screen.dart';
 import 'moving_info_screen.dart';
-import 'sleep_info_screen.dart';
+import 'sleep_detail_screen.dart';
 import 'steps_info_screen.dart';
 import 'waist_measurement_info_screen.dart';
 import 'weight_detail_screen.dart';
@@ -78,7 +78,6 @@ class _HealthDashboardState extends State<HealthDashboard> {
   LocalDashboardSummary? _summary;
   String _weightUnit = 'kg';
   List<String> _enabledSummaryFeatures = kDefaultSummaryFeatureIds;
-  DateTime _lastUpdated = DateTime.now();
   bool _isLoading = true;
   bool _pedometerActive = false;
   int? _pedometerBaseline;
@@ -126,7 +125,6 @@ class _HealthDashboardState extends State<HealthDashboard> {
         _weightUnit = savedUnit == 'lb' ? 'lb' : 'kg';
         _enabledSummaryFeatures = parseSummaryFeatureIds(savedFeatures);
         _initialStoredSteps = summary.today.steps;
-        _lastUpdated = DateTime.now();
         _isLoading = false;
       });
     } catch (e) {
@@ -259,37 +257,6 @@ class _HealthDashboardState extends State<HealthDashboard> {
     final stepProgress = (today.steps / stepGoal).clamp(0.0, 1.0);
     final minProgress = (today.minutes / minGoal).clamp(0.0, 1.0);
 
-    // Compute health summary status pills dynamically from local data
-    int goalsNeedingAttention = 0;
-    int goalsGood = 0;
-    if (calProgress < 0.7) {
-      goalsNeedingAttention++;
-    } else {
-      goalsGood++;
-    }
-    if (stepProgress < 0.7) {
-      goalsNeedingAttention++;
-    } else {
-      goalsGood++;
-    }
-    if (minProgress < 0.7) {
-      goalsNeedingAttention++;
-    } else {
-      goalsGood++;
-    }
-    if ((profile?.sleepHours ?? 0) < 7.0) {
-      goalsNeedingAttention++;
-    } else {
-      goalsGood++;
-    }
-    if ((profile?.bmi ?? 0) >= 18.5 && (profile?.bmi ?? 0) <= 24.9) {
-      goalsGood++;
-    } else if ((profile?.bmi ?? 0) > 0) {
-      goalsNeedingAttention++;
-    }
-
-    final updatedStr = DateFormat('HH:mm').format(_lastUpdated);
-
     return Scaffold(
       backgroundColor: c.scaffold,
       body: _isLoading && _summary == null
@@ -316,13 +283,13 @@ class _HealthDashboardState extends State<HealthDashboard> {
                     ],
                   ),
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(18, 6, 18, 124),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 112),
                     sliver: SliverList.list(
                       children: [
                         // --- Hero Tilted Concentric Oval Activity Rings ---
                         Center(
                           child: OvalActivityRings(
-                            size: 256,
+                            size: 242,
                             caloriesProgress: calProgress,
                             stepsProgress: stepProgress,
                             minutesProgress: minProgress,
@@ -335,12 +302,12 @@ class _HealthDashboardState extends State<HealthDashboard> {
                             },
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
 
                     // --- Minimal Tempo Daily Activity Snapshot Card ---
                     AppleCard(
                       borderRadius: 24,
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
                       child: Column(
                         children: [
                           Row(
@@ -366,7 +333,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
                               ),
                               Container(
                                 width: 1,
-                                height: 54,
+                                height: 50,
                                 margin:
                                     const EdgeInsets.symmetric(horizontal: 6),
                                 color: c.divider,
@@ -394,7 +361,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
                               ),
                               Container(
                                 width: 1,
-                                height: 54,
+                                height: 50,
                                 margin:
                                     const EdgeInsets.symmetric(horizontal: 6),
                                 color: c.divider,
@@ -418,53 +385,31 @@ class _HealthDashboardState extends State<HealthDashboard> {
                             ],
                           ),
                           Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
                             child: Divider(height: 1, color: c.divider),
                           ),
-                          // Clean minimal daily insight footer (replaces Mi Fitness chips card)
+                          // Clean Streak-only footer
                           GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onTap: widget.onSwitchToProgress,
                             child: Row(
                               children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '${_summary?.currentStreak ?? 0}d streak · ${today.workoutsCount} ${today.workoutsCount == 1 ? 'workout' : 'workouts'} today',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: c.textPrimary,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          letterSpacing: -0.1,
-                                          fontFeatures: const [
-                                            FontFeature.tabularFigures(),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        goalsNeedingAttention == 0
-                                            ? 'All daily targets on track'
-                                            : '$goalsGood of ${goalsGood + goalsNeedingAttention} daily goals on track',
-                                        style: TextStyle(
-                                          color: c.textTertiary,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
+                                Text(
+                                  'Streak',
+                                  style: TextStyle(
+                                    color: c.textSecondary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w500,
                                   ),
                                 ),
+                                const Spacer(),
                                 Text(
-                                  updatedStr,
+                                  '${_summary?.currentStreak ?? 0} ${(_summary?.currentStreak ?? 0) == 1 ? 'day' : 'days'}',
                                   style: TextStyle(
-                                    color: c.textTertiary,
-                                    fontSize: 12,
+                                    color: c.textPrimary,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: -0.1,
                                     fontFeatures: const [
                                       FontFeature.tabularFigures(),
                                     ],
@@ -482,7 +427,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 10),
 
                     // --- 2-Column Rich Health Metric Grid (user-configurable via Manage health features) ---
                     Builder(
@@ -507,13 +452,15 @@ class _HealthDashboardState extends State<HealthDashboard> {
                               leftLabel: '00:00',
                               rightLabel: '24:00',
                             ),
-                            onTap: () => _openMetricDetail(
-                              title: 'Sleep',
-                              metricType: 'sleep',
-                              unit: 'hrs',
-                              accentColor: const Color(0xFF6B63F6),
-                              infoScreen: const SleepInfoScreen(),
-                            ),
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const SleepDetailScreen(),
+                                ),
+                              );
+                              if (mounted) _loadDashboard();
+                            },
                           ),
                           'weight': _HealthGridTile(
                             badgeIcon: CupertinoIcons.gauge,
@@ -549,17 +496,10 @@ class _HealthDashboardState extends State<HealthDashboard> {
                             subtitle: (profile?.bmi ?? 0) > 0
                                 ? '${_bmiLabel(profile!.bmi)} • ${(profile.heightCm).toStringAsFixed(0)} cm'
                                 : 'Add height & weight to calculate',
-                            chart: _VerticalTickVisualizer(
-                              values: weightPts
-                                  .where((_) => (profile?.heightCm ?? 0) > 0)
-                                  .map((e) {
-                                    final hm = profile!.heightCm / 100.0;
-                                    return e.value / (hm * hm);
-                                  })
-                                  .toList(),
-                              activeColor: const Color(0xFFE84A4A),
-                              leftLabel: '18.5',
-                              rightLabel: '25.0',
+                            chart: _MiniBmiTrendChart(
+                              weightPoints: weightPts,
+                              heightCm: profile?.heightCm ?? 0,
+                              currentBmi: profile?.bmi ?? 0,
                             ),
                             onTap: () => showBmiDetailPopup(
                               context: context,
@@ -655,18 +595,19 @@ class _HealthDashboardState extends State<HealthDashboard> {
                         }
 
                         return GridView.count(
+                          padding: EdgeInsets.zero,
                           crossAxisCount: 2,
                           shrinkWrap: true,
                           physics: const NeverScrollableScrollPhysics(),
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 0.86,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 0.94,
                           children: visibleCards,
                         );
                       },
                     ),
 
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 12),
 
                     // Centered Manage health features button below the Summary cards
                     Center(
@@ -879,8 +820,8 @@ class _HealthGridTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return AppleCard(
-      borderRadius: 22,
-      padding: const EdgeInsets.all(15),
+      borderRadius: 20,
+      padding: const EdgeInsets.all(13),
       onTap: onTap,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -888,13 +829,13 @@ class _HealthGridTile extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 28,
-                height: 28,
+                width: 26,
+                height: 26,
                 decoration: BoxDecoration(
                   color: badgeColor,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(badgeIcon, color: Colors.white, size: 15),
+                child: Icon(badgeIcon, color: Colors.white, size: 14),
               ),
               const Spacer(),
               if (trailingPill != null)
@@ -903,7 +844,7 @@ class _HealthGridTile extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 9,
-                      vertical: 4,
+                      vertical: 3.5,
                     ),
                     decoration: BoxDecoration(
                       color: badgeColor.withValues(
@@ -940,19 +881,19 @@ class _HealthGridTile extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Text(
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: c.textPrimary,
-              fontSize: 16,
+              fontSize: 15.5,
               fontWeight: FontWeight.w600,
               letterSpacing: -0.2,
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           if (primaryValue != null) ...[
             Text(
               primaryValue!,
@@ -960,20 +901,19 @@ class _HealthGridTile extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: c.textPrimary,
-                fontSize: 18,
+                fontSize: 17.5,
                 fontWeight: FontWeight.w800,
                 letterSpacing: -0.4,
               ),
             ),
-            const SizedBox(height: 1),
           ],
           Text(
             subtitle,
-            maxLines: 2,
+            maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: c.textTertiary,
-              fontSize: 12,
+              fontSize: 11.5,
               height: 1.25,
             ),
           ),
@@ -1142,6 +1082,151 @@ class _SmoothAreaSparkline extends StatelessWidget {
             ),
             Text(
               endLabel,
+              style: TextStyle(color: c.textTertiary, fontSize: 10),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Compact mini version of the expanded BMI popup trend graph (with shaded normal range band).
+class _MiniBmiTrendChart extends StatelessWidget {
+  final List<BodyMetricPoint> weightPoints;
+  final double heightCm;
+  final double currentBmi;
+
+  const _MiniBmiTrendChart({
+    required this.weightPoints,
+    required this.heightCm,
+    required this.currentBmi,
+  });
+
+  static const Color _lowBlue = Color(0xFF67B7F7);
+  static const Color _normalGreen = Color(0xFF5AD16C);
+  static const Color _highYellow = Color(0xFFF7C648);
+  static const Color _veryHighOrange = Color(0xFFF49342);
+
+  Color _bmiColor(double bmi) {
+    if (bmi <= 0) return _normalGreen;
+    if (bmi < 18.5) return _lowBlue;
+    if (bmi < 24.0) return _normalGreen;
+    if (bmi < 28.0) return _highYellow;
+    return _veryHighOrange;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final sorted = [...weightPoints]
+      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+
+    final List<({DateTime date, double bmi})> pts = [];
+    if (heightCm > 0) {
+      final hM = heightCm / 100.0;
+      final hSq = hM * hM;
+      for (final p in sorted) {
+        if (p.value > 0) {
+          pts.add((date: p.recordedAt.toLocal(), bmi: p.value / hSq));
+        }
+      }
+    }
+
+    final hasData = pts.isNotEmpty || currentBmi > 0;
+    final latestBmi = pts.isNotEmpty ? pts.last.bmi : currentBmi;
+    final accent = _bmiColor(latestBmi);
+
+    final spots = pts.length >= 2
+        ? List.generate(pts.length, (i) => FlSpot(i.toDouble(), pts[i].bmi))
+        : hasData
+            ? [FlSpot(0, latestBmi), FlSpot(1, latestBmi)]
+            : const [FlSpot(0, 21.2), FlSpot(1, 21.2)];
+
+    final vals = spots.map((s) => s.y).toList();
+    final minRaw = vals.reduce((a, b) => a < b ? a : b);
+    final maxRaw = vals.reduce((a, b) => a > b ? a : b);
+    final minY = (minRaw < 18.0 ? minRaw - 1.5 : 17.0).clamp(12.0, 45.0);
+    final maxY = (maxRaw > 25.0 ? maxRaw + 1.5 : 26.0).clamp(minY + 4.0, 50.0);
+
+    final leftLabel = pts.length >= 2
+        ? DateFormat('M/d').format(pts.first.date)
+        : '18.5';
+    final rightLabel = pts.length >= 2
+        ? DateFormat('M/d').format(pts.last.date)
+        : '24.0';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 38,
+          child: LineChart(
+            LineChartData(
+              minY: minY,
+              maxY: maxY,
+              rangeAnnotations: RangeAnnotations(
+                horizontalRangeAnnotations: [
+                  HorizontalRangeAnnotation(
+                    y1: 18.5,
+                    y2: 24.0,
+                    color: _normalGreen.withValues(
+                      alpha: c.isDark ? 0.14 : 0.12,
+                    ),
+                  ),
+                ],
+              ),
+              gridData: const FlGridData(show: false),
+              titlesData: const FlTitlesData(show: false),
+              borderData: FlBorderData(show: false),
+              lineTouchData: const LineTouchData(enabled: false),
+              lineBarsData: [
+                LineChartBarData(
+                  isCurved: pts.length > 2,
+                  color: hasData
+                      ? accent
+                      : (c.isDark
+                          ? Colors.white.withValues(alpha: 0.14)
+                          : Colors.black.withValues(alpha: 0.10)),
+                  barWidth: 2.2,
+                  dotData: FlDotData(
+                    show: hasData && pts.length <= 10,
+                    getDotPainter: (_, __, ___, idx) => FlDotCirclePainter(
+                      radius: (pts.length <= 1 && idx == 1) ? 0 : 2.3,
+                      color: accent,
+                      strokeWidth: 1.0,
+                      strokeColor: c.card,
+                    ),
+                  ),
+                  belowBarData: BarAreaData(
+                    show: true,
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        (hasData ? accent : c.textTertiary)
+                            .withValues(alpha: 0.24),
+                        (hasData ? accent : c.textTertiary)
+                            .withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                  spots: spots,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              leftLabel,
+              style: TextStyle(color: c.textTertiary, fontSize: 10),
+            ),
+            Text(
+              rightLabel,
               style: TextStyle(color: c.textTertiary, fontSize: 10),
             ),
           ],

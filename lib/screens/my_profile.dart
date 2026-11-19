@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../config/app_version.dart';
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
 import '../services/local_media_service.dart';
@@ -17,7 +18,6 @@ import '../widgets/tempo_sliver_header.dart';
 import 'about_app_screen.dart';
 import 'intro_walkthrough_screen.dart';
 import 'permissions_screen.dart';
-import 'profile_switcher_screen.dart';
 import 'progress_album_screen.dart';
 import 'terms_and_conditions_screen.dart';
 
@@ -313,20 +313,12 @@ class _MyProfileState extends State<MyProfile> {
                       children: [
                         GestureDetector(
                           onTap: () => _changeAvatar(profile),
-                          child: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: c.cardBorder,
-                                width: 1.5,
-                              ),
-                            ),
-                            child: LocalProfileAvatar(
-                              name: profile.displayName,
-                              avatarPath: profile.avatarPath,
-                              size: 64,
-                            ),
+                          child: LocalProfileAvatar(
+                            name: profile.displayName,
+                            avatarPath: profile.avatarPath,
+                            size: 64,
+                            showBorder: false,
+                            showShadow: false,
                           ),
                         ),
                         const SizedBox(width: 16),
@@ -429,20 +421,6 @@ class _MyProfileState extends State<MyProfile> {
                         ),
                       ),
                       _settingTile(
-                        icon: CupertinoIcons.person_2_fill,
-                        badgeColor: const Color(0xFF3D9CF6),
-                        title: 'Switch profile',
-                        c: c,
-                        onTap: () => widget.onOpenProfileSwitcher?.call(),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.person_badge_plus_fill,
-                        badgeColor: const Color(0xFF4AC9A5),
-                        title: 'Add profile',
-                        c: c,
-                        onTap: () => showCreateProfileModal(context),
-                      ),
-                      _settingTile(
                         icon: CupertinoIcons.photo_fill,
                         badgeColor: const Color(0xFF4B9EF7),
                         title: 'Progress photos',
@@ -496,15 +474,9 @@ class _MyProfileState extends State<MyProfile> {
                         icon: CupertinoIcons.arrow_up_circle_fill,
                         badgeColor: const Color(0xFF7A6FF0),
                         title: 'App version',
-                        trailingText: 'V2.0.0',
+                        trailingText: kTempoDisplayVersion,
                         showChevron: false,
                         c: c,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AboutAppScreen(),
-                          ),
-                        ),
                       ),
                       _settingTile(
                         icon: CupertinoIcons.book_fill,
@@ -576,50 +548,54 @@ class _MyProfileState extends State<MyProfile> {
     required Color badgeColor,
     required String title,
     required AppColors c,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
     Color? titleColor,
     String? trailingText,
     bool showChevron = true,
   }) {
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      child: Row(
+        children: [
+          _circleIcon(icon, badgeColor),
+          const SizedBox(width: 15),
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                color: titleColor ?? c.textPrimary,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          if (trailingText != null)
+            Text(
+              trailingText,
+              style: TextStyle(
+                color: c.textTertiary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          if (showChevron && onTap != null)
+            Icon(
+              CupertinoIcons.chevron_right,
+              color: c.textTertiary,
+              size: 15,
+            ),
+        ],
+      ),
+    );
+
+    if (onTap == null) return content;
+
     return InkWell(
       onTap: () {
         HapticFeedback.selectionClick();
         onTap();
       },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-        child: Row(
-          children: [
-            _circleIcon(icon, badgeColor),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: titleColor ?? c.textPrimary,
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            if (trailingText != null)
-              Text(
-                trailingText,
-                style: TextStyle(
-                  color: c.textTertiary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            if (showChevron)
-              Icon(
-                CupertinoIcons.chevron_right,
-                color: c.textTertiary,
-                size: 15,
-              ),
-          ],
-        ),
-      ),
+      child: content,
     );
   }
 }

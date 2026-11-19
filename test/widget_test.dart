@@ -3,13 +3,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tempo_fitness/config/app_version.dart';
 import 'package:tempo_fitness/data/fitness_journey_workouts.dart';
+import 'package:tempo_fitness/screens/about_app_screen.dart';
+import 'package:tempo_fitness/screens/add_data_screen.dart';
 import 'package:tempo_fitness/screens/fitness_journey_detail_screen.dart';
 import 'package:tempo_fitness/screens/intro_walkthrough_screen.dart';
 import 'package:tempo_fitness/screens/manage_summary_features_screen.dart';
 import 'package:tempo_fitness/screens/my_profile.dart';
+import 'package:tempo_fitness/screens/photo_editing_screen.dart';
 import 'package:tempo_fitness/screens/profile_switcher_screen.dart';
+import 'package:tempo_fitness/screens/progress_album_screen.dart';
 import 'package:tempo_fitness/screens/progress_tracking_screen.dart';
+import 'package:tempo_fitness/screens/sleep_detail_screen.dart';
+import 'package:tempo_fitness/screens/terms_and_conditions_screen.dart';
 import 'package:tempo_fitness/screens/weight_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_screen.dart';
@@ -497,9 +504,39 @@ void main() {
     expect(find.text('Ken ji'), findsOneWidget);
     expect(find.text('Male | 173cm | 61.0kg | 21'), findsOneWidget);
     expect(find.text('Dark mode'), findsOneWidget);
-    expect(find.text('Switch profile'), findsOneWidget);
+    expect(find.text('Switch profile'), findsNothing);
+    expect(find.text('Add profile'), findsNothing);
     expect(find.text('Competition'), findsNothing);
     expect(find.byIcon(CupertinoIcons.add), findsNothing);
+
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -240));
+    await tester.pumpAndSettle();
+    expect(find.text(kTempoDisplayVersion), findsOneWidget);
+    expect(kTempoDisplayVersion.endsWith(' - R'), isTrue);
+
+    // App version row is non-clickable (does not navigate to About Tempo)
+    await tester.tap(find.text('App version'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AboutAppScreen), findsNothing);
+
+    // Privacy & Terms has no bullet points or 100% text
+    await tester.tap(find.text('Privacy & terms'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TermsAndConditionsScreen), findsOneWidget);
+    expect(find.text('On-Device Privacy'), findsOneWidget);
+    expect(find.textContaining('100%'), findsNothing);
+    expect(find.textContaining('•'), findsNothing);
+    await tester.tap(find.byType(TempoBackChevron));
+    await tester.pumpAndSettle();
+
+    // About Tempo has no Rust Native text
+    await tester.tap(find.text('About Tempo'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AboutAppScreen), findsOneWidget);
+    expect(find.textContaining('Rust Native'), findsNothing);
+    expect(find.textContaining(kTempoDisplayVersion), findsOneWidget);
+    await tester.tap(find.byType(TempoBackChevron));
+    await tester.pumpAndSettle();
 
     await themeProvider.toggleTheme(true);
     await tester.pumpAndSettle();
@@ -820,5 +857,226 @@ void main() {
     expect(savedResult!.contains('sleep'), isFalse);
     expect(savedResult!.contains('weight'), isTrue);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('SleepDetailScreen mirrors Weight layout with calendar and popover', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 61.75,
+    );
+    await db.logBodyMetric(
+      profileId: profile.id,
+      metricType: 'sleep',
+      value: 7.0,
+      recordedAt: DateTime.now().subtract(const Duration(days: 2)),
+    );
+    await db.logBodyMetric(
+      profileId: profile.id,
+      metricType: 'sleep',
+      value: 7.5,
+      recordedAt: DateTime.now(),
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: SleepDetailScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sleep'), findsOneWidget);
+    expect(find.text('Sleep duration'), findsOneWidget);
+    expect(find.text('7.5'), findsOneWidget);
+    expect(find.text('Sleep quality'), findsOneWidget);
+    expect(find.text('Optimal'), findsOneWidget);
+    expect(find.text('Data source'), findsOneWidget);
+    expect(find.text('Add data'), findsOneWidget);
+
+    // Open History Calendar via top date tap
+    await tester.tap(find.byIcon(Icons.arrow_drop_down_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('History'), findsOneWidget);
+    await tester.tap(find.byType(TempoBackChevron));
+    await tester.pumpAndSettle();
+
+    // Open iOS popover menu on three dots
+    await tester.tap(find.byIcon(CupertinoIcons.ellipsis_vertical));
+    await tester.pumpAndSettle();
+    expect(find.text('All data'), findsOneWidget);
+    expect(find.text('Sleep goal'), findsOneWidget);
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('AddDataScreen renders redesigned metric picker, steppers, and presets', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 61.75,
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: AddDataScreen(initialMetric: 'sleep'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Log Health Data'), findsOneWidget);
+    expect(find.text('Save sleep'), findsOneWidget);
+    expect(find.text('Date'), findsOneWidget);
+
+    // Switch metric to Steps -> hides Date and updates save CTA
+    await tester.tap(find.text('Steps'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save steps'), findsOneWidget);
+    expect(find.text('Date'), findsNothing);
+
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('ProgressAlbumScreen uses Android bottom sheet, full-screen viewer, and upgraded Save Photo UI', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 61.75,
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    // 1. Empty state + Android bottom sheet on Add First Photo and + button
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: ProgressAlbumScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Progress Album'), findsOneWidget);
+    expect(find.text('Add First Photo'), findsOneWidget);
+
+    await tester.tap(find.text('Add First Photo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add progress photo'), findsOneWidget);
+    expect(find.text('Take photo'), findsOneWidget);
+    expect(find.text('Choose from gallery'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // Top-right + button opens the same Android bottom sheet
+    await tester.tap(find.byIcon(CupertinoIcons.add));
+    await tester.pumpAndSettle();
+    expect(find.text('Add progress photo'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // 2. PhotoEditingScreen (Save Photo) redesigned preview & buttons
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: PhotoEditingScreen(sourceImagePath: ''),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Save Photo'), findsOneWidget);
+    expect(find.text('Fit'), findsOneWidget);
+    expect(find.text('Front'), findsWidgets);
+    expect(find.text('Side'), findsOneWidget);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -350));
+    await tester.pumpAndSettle();
+    expect(find.text('Discard'), findsOneWidget);
+    expect(find.text('Save photo'), findsOneWidget);
+
+    // 3. With a saved photo, tapping opens the full-screen viewer
+    await db.addProgressPhoto(
+      profileId: profile.id,
+      filePath: '',
+      caption: 'Week 4 check-in',
+      category: 'Front',
+      weightKg: 61.75,
+    );
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: ProgressAlbumScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Week 4 check-in'));
+    await tester.pumpAndSettle();
+    expect(find.text('61.8 kg'), findsOneWidget);
+    expect(find.byIcon(CupertinoIcons.trash), findsOneWidget);
+
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
   });
 }

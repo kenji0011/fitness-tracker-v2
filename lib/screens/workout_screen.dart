@@ -53,9 +53,14 @@ class WorkoutScreen extends StatefulWidget {
   State<WorkoutScreen> createState() => _WorkoutScreenState();
 }
 
-class _WorkoutScreenState extends State<WorkoutScreen> {
+class _WorkoutScreenState extends State<WorkoutScreen>
+    with SingleTickerProviderStateMixin {
   final TempoRustDb _db = TempoRustDb.instance;
   final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  late final AnimationController _searchAnimCtrl;
+  late final Animation<double> _searchSizeAnim;
+  late final Animation<double> _searchFadeAnim;
 
   String _selectedCategory = 'All';
   String _searchQuery = '';
@@ -126,6 +131,21 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   @override
   void initState() {
     super.initState();
+    _searchAnimCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+      reverseDuration: const Duration(milliseconds: 220),
+    );
+    _searchSizeAnim = CurvedAnimation(
+      parent: _searchAnimCtrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    _searchFadeAnim = CurvedAnimation(
+      parent: _searchAnimCtrl,
+      curve: const Interval(0.12, 1.0, curve: Curves.easeOutCubic),
+      reverseCurve: const Interval(0.0, 0.78, curve: Curves.easeIn),
+    );
     _loadProgress();
   }
 
@@ -139,8 +159,30 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
   @override
   void dispose() {
+    _searchAnimCtrl.dispose();
+    _searchFocus.dispose();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _toggleSearch() {
+    HapticFeedback.selectionClick();
+    final opening = !_showSearch;
+    setState(() {
+      _showSearch = opening;
+      if (!opening) {
+        _searchFocus.unfocus();
+        _searchCtrl.clear();
+        _searchQuery = '';
+      }
+    });
+    if (opening) {
+      _searchAnimCtrl.forward().then((_) {
+        if (mounted && _showSearch) _searchFocus.requestFocus();
+      });
+    } else {
+      _searchAnimCtrl.reverse();
+    }
   }
 
   Future<void> _loadProgress() async {
@@ -475,67 +517,126 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
                         ),
                         const Spacer(),
                         GestureDetector(
-                          onTap: () {
-                            HapticFeedback.selectionClick();
-                            setState(() {
-                              _showSearch = !_showSearch;
-                              if (!_showSearch) {
-                                _searchCtrl.clear();
-                                _searchQuery = '';
-                              }
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(6),
-                            child: Icon(
-                              _showSearch
-                                  ? CupertinoIcons.xmark
-                                  : CupertinoIcons.search,
-                              size: 19,
-                              color: c.textSecondary,
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _toggleSearch,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOutCubic,
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _showSearch
+                                  ? c.accent.withValues(
+                                      alpha: c.isDark ? 0.22 : 0.12,
+                                    )
+                                  : Colors.transparent,
+                            ),
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOutBack,
+                              switchOutCurve: Curves.easeIn,
+                              transitionBuilder: (child, anim) =>
+                                  RotationTransition(
+                                turns: Tween<double>(begin: 0.78, end: 1.0)
+                                    .animate(anim),
+                                child: ScaleTransition(
+                                  scale: anim,
+                                  child: FadeTransition(
+                                    opacity: anim,
+                                    child: child,
+                                  ),
+                                ),
+                              ),
+                              child: Icon(
+                                _showSearch
+                                    ? CupertinoIcons.xmark
+                                    : CupertinoIcons.search,
+                                key: ValueKey(_showSearch),
+                                size: _showSearch ? 16 : 19,
+                                color: _showSearch
+                                    ? c.accent
+                                    : c.textSecondary,
+                              ),
                             ),
                           ),
                         ),
                       ],
                     ),
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      child: _showSearch
-                          ? Padding(
+                    ClipRect(
+                      child: SizeTransition(
+                        sizeFactor: _searchSizeAnim,
+                        axisAlignment: -1.0,
+                        child: FadeTransition(
+                          opacity: _searchFadeAnim,
+                          child: ScaleTransition(
+                            scale: Tween<double>(begin: 0.94, end: 1.0)
+                                .animate(_searchSizeAnim),
+                            alignment: Alignment.topRight,
+                            child: Padding(
                               padding: const EdgeInsets.only(top: 10),
                               child: Container(
+                                height: 44,
                                 decoration: BoxDecoration(
                                   color: c.searchBg,
-                                  borderRadius: BorderRadius.circular(14),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: c.isDark
+                                        ? Colors.white.withValues(alpha: 0.08)
+                                        : Colors.black.withValues(alpha: 0.06),
+                                  ),
                                 ),
                                 child: TextField(
                                   controller: _searchCtrl,
+                                  focusNode: _searchFocus,
                                   onChanged: (v) =>
                                       setState(() => _searchQuery = v),
+                                  textAlignVertical: TextAlignVertical.center,
                                   style: TextStyle(
                                     color: c.textPrimary,
                                     fontSize: 15,
                                   ),
                                   decoration: InputDecoration(
+                                    isDense: true,
                                     filled: false,
                                     border: InputBorder.none,
                                     focusedBorder: InputBorder.none,
                                     prefixIcon: Icon(
                                       CupertinoIcons.search,
                                       color: c.textTertiary,
-                                      size: 18,
+                                      size: 17,
                                     ),
+                                    suffixIcon: _searchQuery.isNotEmpty
+                                        ? GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: () {
+                                              HapticFeedback.selectionClick();
+                                              _searchCtrl.clear();
+                                              setState(() => _searchQuery = '');
+                                            },
+                                            child: Icon(
+                                              CupertinoIcons.xmark_circle_fill,
+                                              color: c.textTertiary,
+                                              size: 17,
+                                            ),
+                                          )
+                                        : null,
                                     hintText: 'Search workouts or muscles...',
-                                    hintStyle: TextStyle(color: c.textTertiary),
+                                    hintStyle: TextStyle(
+                                      color: c.textTertiary,
+                                      fontSize: 14.5,
+                                    ),
                                     contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
                                       vertical: 11,
                                     ),
                                   ),
                                 ),
                               ),
-                            )
-                          : const SizedBox.shrink(),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(

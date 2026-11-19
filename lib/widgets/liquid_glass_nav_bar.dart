@@ -494,7 +494,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                               : [
                                                   Colors.white
                                                       .withValues(alpha: 0.86),
-                                                  const Color(0xFFF5F5FA)
+                                                  const Color(0xFFF7F7F8)
                                                       .withValues(alpha: 0.80),
                                                 ],
                                         ),
@@ -547,8 +547,11 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                 children: List.generate(widget.items.length, (i) {
                                   final item = widget.items[i];
                                   final isActive = i == activeVisualIndex;
+                                  final navOrange = isDark
+                                      ? const Color(0xFFFF7A33)
+                                      : const Color(0xFFFF6A24);
                                   final activeTint =
-                                      isActive ? c.accent : c.navInactive;
+                                      isActive ? navOrange : c.navInactive;
                                   final isProfileTab =
                                       i == widget.items.length - 1;
                                   final hasProfileAvatar = isProfileTab &&
@@ -588,28 +591,24 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                             child: Transform.scale(
                                               scale: bounceScale,
                                               child: hasProfileAvatar
-                                                  ? Container(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                              1.5),
-                                                      decoration: BoxDecoration(
-                                                        shape: BoxShape.circle,
-                                                        border: Border.all(
-                                                          color: isActive
-                                                              ? c.accent
-                                                              : Colors
-                                                                  .transparent,
-                                                          width: 1.8,
-                                                        ),
-                                                      ),
-                                                      child: LocalProfileAvatar(
-                                                        name:
-                                                            widget.profileName!,
-                                                        avatarPath: widget
-                                                                .profileAvatarPath ??
-                                                            '',
-                                                        size: 24,
-                                                      ),
+                                                  ? LocalProfileAvatar(
+                                                      name:
+                                                          widget.profileName!,
+                                                      avatarPath: widget
+                                                              .profileAvatarPath ??
+                                                          '',
+                                                      size: 25,
+                                                      showBorder: true,
+                                                      borderWidth: 1.8,
+                                                      borderColor: isActive
+                                                          ? navOrange
+                                                          : (isDark
+                                                              ? Colors.white
+                                                                  .withValues(
+                                                                      alpha:
+                                                                          0.35)
+                                                              : Colors.white),
+                                                      showShadow: false,
                                                     )
                                                   : _buildNavIcon(
                                                       index: i,
@@ -657,7 +656,6 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                     isDark: isDark,
                                     dpr: dpr,
                                     pressIntensity: _isDragging ? 0.85 : 0.30,
-                                    accent: c.accent,
                                   ),
                                 ),
                               ),
@@ -829,7 +827,6 @@ class _OpticalLiquidGlassDroplet extends StatelessWidget {
   final bool isDark;
   final double dpr;
   final double pressIntensity;
-  final Color accent;
 
   const _OpticalLiquidGlassDroplet({
     required this.program,
@@ -838,7 +835,6 @@ class _OpticalLiquidGlassDroplet extends StatelessWidget {
     required this.isDark,
     required this.dpr,
     required this.pressIntensity,
-    required this.accent,
   });
 
   @override
@@ -905,13 +901,9 @@ class _OpticalLiquidGlassDroplet extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: Colors.black
-                .withValues(alpha: (isDark ? 0.42 : 0.14) * expansion),
-            blurRadius: 18 * expansion,
-            offset: Offset(0, 6 * expansion),
-          ),
-          BoxShadow(
-            color: accent.withValues(alpha: (isDark ? 0.14 : 0.07) * expansion),
-            blurRadius: 14 * expansion,
+                .withValues(alpha: (isDark ? 0.36 : 0.11) * expansion),
+            blurRadius: 16 * expansion,
+            offset: Offset(0, 5 * expansion),
           ),
         ],
       ),

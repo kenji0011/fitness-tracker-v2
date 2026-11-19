@@ -108,10 +108,10 @@ void main() {
     float amount = 1.0 + (satFactor - 1.0) * mix(0.3, 1.0, room * hl);
     col = clamp(mix(vec3(lum), col, amount), 0.0, 1.0);
 
-    // Clear liquid glass surface sheen (more subtle in center, richer on curved bevel)
-    float bodyTintAlpha = (u_isDark > 0.5 ? 0.12 : 0.14) * u_expansion;
-    vec3 bodyTintColor = (u_isDark > 0.5) ? vec3(0.90, 0.94, 1.0) : vec3(1.0);
-    col = mix(col, bodyTintColor, bodyTintAlpha * (0.25 + 0.75 * slope));
+    // Pure crystal-clear transparent glass center; subtle neutral highlight only on curved bevel
+    float bodyTintAlpha = (u_isDark > 0.5 ? 0.05 : 0.06) * u_expansion;
+    vec3 bodyTintColor = vec3(1.0);
+    col = mix(col, bodyTintColor, bodyTintAlpha * slope);
 
     // Two-lobe angle-dependent specular rim reflection (GlassLensRenderer.kt)
     vec2 lightDir = normalize(vec2(0.62, 0.78));

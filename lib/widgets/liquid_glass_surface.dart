@@ -107,12 +107,20 @@ class LocalProfileAvatar extends StatelessWidget {
   final String name;
   final String avatarPath;
   final double size;
+  final bool showBorder;
+  final Color? borderColor;
+  final double borderWidth;
+  final bool showShadow;
 
   const LocalProfileAvatar({
     super.key,
     required this.name,
     required this.avatarPath,
     this.size = 44,
+    this.showBorder = true,
+    this.borderColor,
+    this.borderWidth = 2,
+    this.showShadow = true,
   });
 
   String get _initials {
@@ -128,33 +136,41 @@ class LocalProfileAvatar extends StatelessWidget {
     final hasFile = !kIsWeb &&
         avatarPath.trim().isNotEmpty &&
         File(avatarPath).existsSync();
+    final resolvedBorderColor = borderColor ??
+        (c.isDark ? Colors.white.withValues(alpha: 0.22) : Colors.white);
 
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
       width: size,
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            c.accent,
-            c.bodyCyan,
-          ],
-        ),
-        border: Border.all(
-          color: c.isDark
-              ? Colors.white.withValues(alpha: 0.22)
-              : Colors.white,
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: c.accent.withValues(alpha: 0.22),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        gradient: hasFile
+            ? null
+            : LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  c.accent,
+                  c.bodyCyan,
+                ],
+              ),
+        border: showBorder
+            ? Border.all(
+                color: resolvedBorderColor,
+                width: borderWidth,
+              )
+            : null,
+        boxShadow: showShadow
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: c.isDark ? 0.26 : 0.10),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
       ),
       child: ClipOval(
         child: hasFile

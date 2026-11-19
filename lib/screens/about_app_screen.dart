@@ -1,7 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-import '../services/tempo_rust_db.dart';
+import '../config/app_version.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
@@ -12,7 +12,6 @@ class AboutAppScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final isRust = TempoRustDb.instance.isUsingRustNative;
 
     return Scaffold(
       backgroundColor: c.scaffold,
@@ -59,32 +58,11 @@ class AboutAppScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Version 2.0 • Local-First Fitness Tracker',
+                        '$kTempoDisplayVersion • Local-First Fitness Tracker',
                         style: TextStyle(
                           color: c.textSecondary,
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: c.exerciseGreen.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: Text(
-                          isRust
-                              ? 'Rust Native SQLite Engine (rusqlite) Active'
-                              : 'Offline Local Storage Active',
-                          style: TextStyle(
-                            color: c.exerciseGreen,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
                         ),
                       ),
                     ],
@@ -105,7 +83,7 @@ class AboutAppScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Tempo stores all workouts, health metrics, progress photos, and multi-user local profiles directly on your phone using an embedded Rust SQLite database. No cloud accounts, no tracking, and instant offline performance.',
+                        'Tempo stores all workouts, health metrics, progress photos, and local profiles directly on your phone in a private local database. No cloud accounts, no tracking, and instant offline performance.',
                         style: TextStyle(
                           color: c.textSecondary,
                           fontSize: 14,
