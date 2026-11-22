@@ -10,10 +10,12 @@ import '../models/workout_model.dart';
 import '../services/active_profile_provider.dart';
 import '../services/tempo_rust_db.dart';
 import '../services/video_mapping_service.dart';
+import '../services/weight_unit_helper.dart';
 import '../services/workout_goal_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_toast.dart';
 
 class ExerciseDetailScreen extends StatefulWidget {
   final Exercise exercise;
@@ -38,6 +40,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
   ChewieController? _chewieController;
   bool _videoError = false;
   bool _saving = false;
+  String _weightUnit = 'kg';
   List<LocalExerciseRecord> _history = [];
 
   @override
@@ -88,15 +91,26 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
   Future<void> _loadHistory() async {
     final pid = context.read<ActiveProfileProvider>().activeProfileId;
     if (pid == null) return;
-    final list = await TempoRustDb.instance.getExerciseRecords(
-      pid,
-      exerciseName: widget.exercise.name,
-    );
+    final results = await Future.wait([
+      TempoRustDb.instance.getExerciseRecords(
+        pid,
+        exerciseName: widget.exercise.name,
+      ),
+      WeightUnitHelper.loadUnit(pid),
+    ]);
+    final list = results[0] as List<LocalExerciseRecord>;
+    final unit = results[1] as String;
     if (mounted) {
       setState(() {
+        _weightUnit = unit;
         _history = list;
-        if (list.isNotEmpty && _weightCtrl.text.isEmpty && list.first.weightUsed > 0) {
-          _weightCtrl.text = list.first.weightUsed.toStringAsFixed(1);
+        if (list.isNotEmpty &&
+            _weightCtrl.text.isEmpty &&
+            list.first.weightUsed > 0) {
+          _weightCtrl.text = WeightUnitHelper.toDisplay(
+            list.first.weightUsed,
+            unit,
+          ).toStringAsFixed(1);
         }
       });
     }
@@ -107,7 +121,8 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     final pid = profileProvider.activeProfileId;
     if (pid == null) return;
 
-    final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
+    final rawWeight = double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
+    final weightKg = WeightUnitHelper.fromDisplay(rawWeight, _weightUnit);
     final reps = int.tryParse(_repsCtrl.text.trim()) ?? 10;
     final sets = int.tryParse(_setsCtrl.text.trim()) ?? 3;
 
@@ -117,7 +132,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
         profileId: pid,
         exerciseName: widget.exercise.name,
         workoutId: widget.workout.id,
-        weightUsed: widget.exercise.requiresWeightInput ? weight : 0.0,
+        weightUsed: widget.exercise.requiresWeightInput ? weightKg : 0.0,
         repsPerformed: reps,
         setsPerformed: sets,
         bodyFocus: widget.workout.bodyFocus,
@@ -129,17 +144,13 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
       );
       profileProvider.notifyDataChanged();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Exercise set logged locally!')),
-        );
+        showTempoToast(context, 'Exercise set logged');
         Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not log exercise: $e')),
-        );
+        showTempoToast(context, 'Could not log exercise: $e', isError: true);
       }
     }
   }
@@ -273,7 +284,12 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                   children: [
                     if (widget.exercise.requiresWeightInput) ...[
                       Expanded(
-                        child: _field('Weight (kg)', _weightCtrl, '20', c),
+                        child: _field(
+                          'Weight ($_weightUnit)',
+                          _weightCtrl,
+                          _weightUnit == 'lb' ? '45' : '20',
+                          c,
+                        ),
                       ),
                       const SizedBox(width: 10),
                     ],
@@ -358,7 +374,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                               ),
                               Text(
                                 rec.weightUsed > 0
-                                    ? '${rec.weightUsed.toStringAsFixed(1)} kg · ${rec.setsPerformed}×${rec.repsPerformed}'
+                                    ? '${WeightUnitHelper.format(rec.weightUsed, _weightUnit)} · ${rec.setsPerformed}×${rec.repsPerformed}'
                                     : '${rec.setsPerformed} sets × ${rec.repsPerformed} reps',
                                 style: TextStyle(
                                   color: c.textPrimary,

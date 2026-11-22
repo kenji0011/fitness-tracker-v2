@@ -13,10 +13,13 @@ import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
 import '../services/progress_tracking_service.dart';
 import '../services/tempo_rust_db.dart';
+import '../services/weight_unit_helper.dart';
 import '../services/workout_history_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/streak_heatmap_card.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_spotlight_tour.dart';
 import 'progress_album_screen.dart';
 
 class ProgressTrackingScreen extends StatefulWidget {
@@ -46,6 +49,7 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
   int _longestStreak = 0;
   int _photoCount = 0;
   String? _latestPhotoPath;
+  String _weightUnit = 'kg';
   ExerciseRecord? _highestWeight;
   List<ExerciseRecord> _records = [];
   List<WorkoutHistory> _workoutHistory = [];
@@ -53,6 +57,9 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
   Set<String> _workoutDayKeys = {};
 
   late final AnimationController _entranceController;
+  bool _wasTickerEnabled = false;
+  final GlobalKey _albumHintKey = GlobalKey();
+  final GlobalKey _trendCardHintKey = GlobalKey();
 
   static const _categories = [
     'All',
@@ -75,6 +82,43 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
       duration: const Duration(milliseconds: 780),
     );
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.of(context);
+    if (enabled && !_wasTickerEnabled && !_loading) {
+      _maybeShowSpotlight();
+    }
+    _wasTickerEnabled = enabled;
+  }
+
+  void _maybeShowSpotlight() {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    if (pid == null || pid.isEmpty) return;
+    TempoSpotlightTour.showIfNeeded(
+      context: context,
+      profileId: pid,
+      screenId: 'progress',
+      steps: [
+        TempoSpotlightStep(
+          targetKey: _albumHintKey,
+          title: 'Progress photos & compare',
+          description:
+              'Save private check-in photos and compare Before & After with an interactive slider.',
+          borderRadius: 999,
+          padding: const EdgeInsets.all(6),
+        ),
+        TempoSpotlightStep(
+          targetKey: _trendCardHintKey,
+          title: 'Trends & streak heatmap',
+          description:
+              'Switch 7D, 14D, or 30D to inspect calories, your 12-week activity heatmap, and exercise PRs.',
+          borderRadius: 24,
+        ),
+      ],
+    );
   }
 
   @override
@@ -106,18 +150,21 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
       progressService.getExerciseRecordsByCategory(_selectedCategory),
       historyService.getWorkoutHistory(),
       db.listProgressPhotos(pid),
-      db.getDailyActivityHistory(pid, limit: 30),
+      db.getDailyActivityHistory(pid, limit: 90),
+      WeightUnitHelper.loadUnit(pid),
     ]);
 
     if (!mounted) return;
     final photos = results[5] as List<LocalProgressPhoto>;
     final workouts = results[4] as List<WorkoutHistory>;
+    final unit = results[7] as String;
     final dayKeys = workouts
         .where((w) => !w.isCheated)
         .map((w) => DateFormat('yyyy-MM-dd').format(w.completedAt.toLocal()))
         .toSet();
 
     setState(() {
+      _weightUnit = unit;
       _currentStreak = results[0] as int;
       _longestStreak = results[1] as int;
       _highestWeight = results[2] as ExerciseRecord?;
@@ -130,6 +177,9 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
       _loading = false;
     });
     _entranceController.forward(from: 0);
+    if (mounted && TickerMode.of(context)) {
+      _maybeShowSpotlight();
+    }
   }
 
   List<_ChartDay> _buildRangeSeries() {
@@ -196,6 +246,7 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                         tooltip: 'Progress Album',
                         icon: Icon(
                           CupertinoIcons.photo_on_rectangle,
+                          key: _albumHintKey,
                           size: 20,
                           color: c.textPrimary,
                         ),
@@ -237,26 +288,41 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                         // 2. Interactive Animated Activity Trend Card (7D / 14D / 30D)
                         _stagger(
                           1,
-                          _ActivityTrendCard(
-                            series: series,
-                            rangeIndex: _rangeIndex,
-                            rangeLabels: _rangeLabels,
-                            totalKcal: totalRangeKcal,
-                            totalMins: totalRangeMins,
-                            touchedIndex: _touchedBarIndex,
-                            onRangeChanged: (idx) {
-                              HapticFeedback.selectionClick();
-                              setState(() {
-                                _rangeIndex = idx;
-                                _touchedBarIndex = null;
-                              });
-                            },
-                            onTouchBar: (idx) {
-                              if (idx != _touchedBarIndex && idx != null) {
+                          SizedBox(
+                            key: _trendCardHintKey,
+                            child: _ActivityTrendCard(
+                              series: series,
+                              rangeIndex: _rangeIndex,
+                              rangeLabels: _rangeLabels,
+                              totalKcal: totalRangeKcal,
+                              totalMins: totalRangeMins,
+                              touchedIndex: _touchedBarIndex,
+                              onRangeChanged: (idx) {
                                 HapticFeedback.selectionClick();
-                              }
-                              setState(() => _touchedBarIndex = idx);
-                            },
+                                setState(() {
+                                  _rangeIndex = idx;
+                                  _touchedBarIndex = null;
+                                });
+                              },
+                              onTouchBar: (idx) {
+                                if (idx != _touchedBarIndex && idx != null) {
+                                  HapticFeedback.selectionClick();
+                                }
+                                setState(() => _touchedBarIndex = idx);
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+
+                        // 2B. 12-Week Activity & Streak Heatmap Calendar
+                        _stagger(
+                          1,
+                          StreakHeatmapCard(
+                            dailyHistory: _dailyHistory,
+                            workoutDayKeys: _workoutDayKeys,
+                            currentStreak: _currentStreak,
+                            longestStreak: _longestStreak,
                           ),
                         ),
                         const SizedBox(height: 14),
@@ -269,6 +335,7 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                               Expanded(
                                 child: _TopLiftBentoCard(
                                   highestWeight: _highestWeight,
+                                  weightUnit: _weightUnit,
                                   onTap: () {
                                     HapticFeedback.selectionClick();
                                     setState(() => _selectedSegment = 0);
@@ -406,6 +473,7 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
               child: _ExpandableExerciseCard(
                 record: r,
                 maxWeight: maxWeight,
+                weightUnit: _weightUnit,
                 isTopPr: isTopPr,
                 isExpanded: isExpanded,
                 onTap: () {
@@ -1003,17 +1071,20 @@ class _TactileScaleCardState extends State<_TactileScaleCard> {
 
 class _TopLiftBentoCard extends StatelessWidget {
   final ExerciseRecord? highestWeight;
+  final String weightUnit;
   final VoidCallback onTap;
 
   const _TopLiftBentoCard({
     required this.highestWeight,
+    required this.weightUnit,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final weight = highestWeight?.weightUsed ?? 0.0;
+    final weightKg = highestWeight?.weightUsed ?? 0.0;
+    final displayWeight = WeightUnitHelper.toDisplay(weightKg, weightUnit);
 
     return _TactileScaleCard(
       onTap: onTap,
@@ -1055,11 +1126,13 @@ class _TopLiftBentoCard extends StatelessWidget {
               ),
               const Spacer(),
               TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0, end: weight),
+                tween: Tween<double>(begin: 0, end: displayWeight),
                 duration: const Duration(milliseconds: 650),
                 curve: Curves.easeOutCubic,
                 builder: (_, val, __) => Text(
-                  weight > 0 ? '${val.toStringAsFixed(1)} kg' : '-- kg',
+                  weightKg > 0
+                      ? '${val.toStringAsFixed(1)} $weightUnit'
+                      : '-- $weightUnit',
                   style: TextStyle(
                     color: c.textPrimary,
                     fontSize: 24,
@@ -1071,7 +1144,7 @@ class _TopLiftBentoCard extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                highestWeight != null && weight > 0
+                highestWeight != null && weightKg > 0
                     ? highestWeight!.exerciseName
                     : 'Log weighted sets',
                 maxLines: 1,
@@ -1370,6 +1443,7 @@ class _AnimatedFilterChip extends StatelessWidget {
 class _ExpandableExerciseCard extends StatelessWidget {
   final ExerciseRecord record;
   final double maxWeight;
+  final String weightUnit;
   final bool isTopPr;
   final bool isExpanded;
   final VoidCallback onTap;
@@ -1377,6 +1451,7 @@ class _ExpandableExerciseCard extends StatelessWidget {
   const _ExpandableExerciseCard({
     required this.record,
     required this.maxWeight,
+    required this.weightUnit,
     required this.isTopPr,
     required this.isExpanded,
     required this.onTap,
@@ -1388,8 +1463,10 @@ class _ExpandableExerciseCard extends StatelessWidget {
     final ratio = record.weightUsed > 0
         ? (record.weightUsed / maxWeight).clamp(0.12, 1.0)
         : 0.35;
-    final estVolume =
+    final estVolumeKg =
         record.weightUsed * record.setsPerformed * record.repsPerformed;
+    final estVolumeDisplay =
+        WeightUnitHelper.toDisplay(estVolumeKg, weightUnit);
 
     return AppleCard(
       borderRadius: 20,
@@ -1462,7 +1539,7 @@ class _ExpandableExerciseCard extends StatelessWidget {
                 const SizedBox(width: 10),
                 Text(
                   record.weightUsed > 0
-                      ? '${record.weightUsed.toStringAsFixed(1)} kg'
+                      ? WeightUnitHelper.format(record.weightUsed, weightUnit)
                       : 'Bodyweight',
                   style: TextStyle(
                     color: c.textPrimary,
@@ -1517,8 +1594,8 @@ class _ExpandableExerciseCard extends StatelessWidget {
                   ),
                   _detailPair(
                     'Volume',
-                    estVolume > 0
-                        ? '${estVolume.toStringAsFixed(0)} kg'
+                    estVolumeKg > 0
+                        ? '${estVolumeDisplay.toStringAsFixed(0)} $weightUnit'
                         : '${record.setsPerformed * record.repsPerformed} reps',
                     c,
                   ),

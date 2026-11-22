@@ -14,6 +14,9 @@ import '../theme/app_colors.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_spotlight_tour.dart';
+import '../widgets/tempo_toast.dart';
+import 'custom_workout_builder_screen.dart';
 import 'fitness_journey_detail_screen.dart';
 import 'workout_detail_screen.dart';
 
@@ -69,6 +72,11 @@ class _WorkoutScreenState extends State<WorkoutScreen>
   Map<String, LocalJourneyProgress> _journeyProgress = {};
   List<LocalCompletedWorkout> _completedWorkouts = [];
   Set<String> _completedWorkoutIds = {};
+  List<Workout> _customWorkouts = [];
+  bool _wasTickerEnabled = false;
+
+  final GlobalKey _journeysHintKey = GlobalKey();
+  final GlobalKey _customWorkoutHintKey = GlobalKey();
 
   static const List<_QuickWorkoutMeta> _quickWorkouts = [
     _QuickWorkoutMeta(
@@ -120,6 +128,7 @@ class _WorkoutScreenState extends State<WorkoutScreen>
 
   static const List<String> _categories = [
     'All',
+    'Custom',
     'Chest',
     'Back',
     'Shoulders',
@@ -147,6 +156,43 @@ class _WorkoutScreenState extends State<WorkoutScreen>
       reverseCurve: const Interval(0.0, 0.78, curve: Curves.easeIn),
     );
     _loadProgress();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.of(context);
+    if (enabled && !_wasTickerEnabled) {
+      _maybeShowSpotlight();
+    }
+    _wasTickerEnabled = enabled;
+  }
+
+  void _maybeShowSpotlight() {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    if (pid == null || pid.isEmpty) return;
+    TempoSpotlightTour.showIfNeeded(
+      context: context,
+      profileId: pid,
+      screenId: 'workout',
+      steps: [
+        TempoSpotlightStep(
+          targetKey: _journeysHintKey,
+          title: 'Guided training journeys',
+          description:
+              'Pick a structured program like HIIT Burn, Strength, or Cardio with offline video demos.',
+          borderRadius: 20,
+        ),
+        TempoSpotlightStep(
+          targetKey: _customWorkoutHintKey,
+          title: 'Build custom routines',
+          description:
+              'Tap + Custom to combine your favorite exercises from Tempo’s offline library.',
+          borderRadius: 999,
+          padding: const EdgeInsets.all(6),
+        ),
+      ],
+    );
   }
 
   @override
@@ -191,22 +237,124 @@ class _WorkoutScreenState extends State<WorkoutScreen>
     final results = await Future.wait([
       _db.getJourneyProgress(pid),
       _db.getCompletedWorkouts(pid, limit: 200),
+      CustomWorkoutsStore.load(pid),
     ]);
     if (!mounted) return;
     final jList = results[0] as List<LocalJourneyProgress>;
     final completed = (results[1] as List<LocalCompletedWorkout>)
         .where((c) => !c.isCheated)
         .toList();
+    final custom = results[2] as List<Workout>;
 
     setState(() {
       _journeyProgress = {for (final j in jList) j.journeyId: j};
       _completedWorkouts = completed;
       _completedWorkoutIds = completed.map((c) => c.workoutId).toSet();
+      _customWorkouts = custom;
     });
+  }
+
+  Future<void> _openCustomBuilder({Workout? existing}) async {
+    HapticFeedback.selectionClick();
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CustomWorkoutBuilderScreen(existing: existing),
+      ),
+    );
+    if (saved == true && mounted) {
+      _loadProgress();
+    }
+  }
+
+  Future<void> _showCustomWorkoutActions(Workout workout) async {
+    HapticFeedback.selectionClick();
+    final c = AppColors.of(context, listen: false);
+    final action = await showTempoSheet<String>(
+      context: context,
+      backgroundColor: c.card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 26),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              workout.title,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${workout.duration} · ${workout.exerciseList.length} exercises',
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 48,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: c.accent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: () => Navigator.of(ctx).pop('edit'),
+                child: const Text(
+                  'Edit routine',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 48,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: c.moveRed,
+                  side: BorderSide(color: c.moveRed.withValues(alpha: 0.35)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: () => Navigator.of(ctx).pop('delete'),
+                child: const Text(
+                  'Delete routine',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+    if (action == 'edit') {
+      await _openCustomBuilder(existing: workout);
+    } else if (action == 'delete') {
+      final pid = context.read<ActiveProfileProvider>().activeProfileId;
+      if (pid == null) return;
+      final remaining = _customWorkouts
+          .where((item) => item.id != workout.id)
+          .toList();
+      await CustomWorkoutsStore.save(pid, remaining);
+      if (mounted) {
+        setState(() => _customWorkouts = remaining);
+        showTempoToast(context, 'Deleted "${workout.title}"');
+      }
+    }
   }
 
   bool _matchesCategory(Workout w, String cat) {
     if (cat == 'All') return true;
+    if (cat == 'Custom') return w.journeyName == 'Custom';
     final focus = w.bodyFocus.toLowerCase();
     final c = cat.toLowerCase();
     if (c == 'arms') {
@@ -230,7 +378,8 @@ class _WorkoutScreenState extends State<WorkoutScreen>
 
   List<Workout> get _filteredWorkouts {
     final q = _searchQuery.trim().toLowerCase();
-    return exerciseWorkouts.where((w) {
+    final combined = [..._customWorkouts, ...exerciseWorkouts];
+    return combined.where((w) {
       if (!_matchesCategory(w, _selectedCategory)) return false;
       if (q.isEmpty) return true;
       return w.title.toLowerCase().contains(q) ||
@@ -360,6 +509,7 @@ class _WorkoutScreenState extends State<WorkoutScreen>
             // 1. Quick-Start Activity Squircles (Mi Fitness / HyperOS 3 top row)
             SliverToBoxAdapter(
               child: Padding(
+                key: _journeysHintKey,
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -516,6 +666,35 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                           ),
                         ),
                         const Spacer(),
+                        TempoLiquidButton(
+                          key: _customWorkoutHintKey,
+                          primary: false,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          onPressed: () => _openCustomBuilder(),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                CupertinoIcons.add,
+                                size: 13.5,
+                                color: c.accent,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Custom',
+                                style: TextStyle(
+                                  color: c.accent,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
                         GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: _toggleSearch,
@@ -697,10 +876,35 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                         borderRadius: 22,
                         child: Center(
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Text(
-                              'No workouts match your filter.',
-                              style: TextStyle(color: c.textSecondary),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _selectedCategory == 'Custom'
+                                      ? 'No custom routines yet.'
+                                      : 'No workouts match your filter.',
+                                  style: TextStyle(color: c.textSecondary),
+                                ),
+                                if (_selectedCategory == 'Custom') ...[
+                                  const SizedBox(height: 10),
+                                  FilledButton.icon(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: c.accent,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(999),
+                                      ),
+                                    ),
+                                    onPressed: () => _openCustomBuilder(),
+                                    icon: const Icon(CupertinoIcons.add, size: 16),
+                                    label: const Text(
+                                      'Create custom workout',
+                                      style: TextStyle(fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                         ),
@@ -712,9 +916,14 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                       itemBuilder: (ctx, i) {
                         final w = workouts[i];
                         final isDone = _completedWorkoutIds.contains(w.id);
+                        final isCustom = w.journeyName == 'Custom';
                         return _WorkoutLibraryCard(
                           workout: w,
                           isCompleted: isDone,
+                          isCustom: isCustom,
+                          onManageCustom: isCustom
+                              ? () => _showCustomWorkoutActions(w)
+                              : null,
                           onTap: () async {
                             HapticFeedback.selectionClick();
                             await Navigator.push(
@@ -915,11 +1124,15 @@ class _HistoryRowContent extends StatelessWidget {
 class _WorkoutLibraryCard extends StatelessWidget {
   final Workout workout;
   final bool isCompleted;
+  final bool isCustom;
+  final VoidCallback? onManageCustom;
   final VoidCallback onTap;
 
   const _WorkoutLibraryCard({
     required this.workout,
     required this.isCompleted,
+    this.isCustom = false,
+    this.onManageCustom,
     required this.onTap,
   });
 
@@ -938,24 +1151,37 @@ class _WorkoutLibraryCard extends StatelessWidget {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
-              child: Image.asset(
-                workout.thumbnailAsset,
-                width: 68,
-                height: 68,
-                cacheWidth: thumbCachePx,
-                gaplessPlayback: true,
-                filterQuality: FilterQuality.medium,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  width: 68,
-                  height: 68,
-                  color: c.searchBg,
-                  child: Icon(
-                    Icons.directions_run_rounded,
-                    color: c.textSecondary,
-                  ),
-                ),
-              ),
+              child: isCustom
+                  ? Container(
+                      width: 68,
+                      height: 68,
+                      color: c.accent.withValues(
+                        alpha: c.isDark ? 0.22 : 0.14,
+                      ),
+                      child: Icon(
+                        CupertinoIcons.flame_fill,
+                        color: c.accent,
+                        size: 28,
+                      ),
+                    )
+                  : Image.asset(
+                      workout.thumbnailAsset,
+                      width: 68,
+                      height: 68,
+                      cacheWidth: thumbCachePx,
+                      gaplessPlayback: true,
+                      filterQuality: FilterQuality.medium,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 68,
+                        height: 68,
+                        color: c.searchBg,
+                        child: Icon(
+                          Icons.directions_run_rounded,
+                          color: c.textSecondary,
+                        ),
+                      ),
+                    ),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -977,6 +1203,29 @@ class _WorkoutLibraryCard extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (isCustom) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: c.accent.withValues(
+                              alpha: c.isDark ? 0.20 : 0.12,
+                            ),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: Text(
+                            'Custom',
+                            style: TextStyle(
+                              color: c.accent,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
                       if (isCompleted) ...[
                         const SizedBox(width: 6),
                         Icon(
@@ -1009,11 +1258,25 @@ class _WorkoutLibraryCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
-            Icon(
-              CupertinoIcons.chevron_right,
-              color: c.textTertiary,
-              size: 16,
-            ),
+            if (isCustom && onManageCustom != null)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onManageCustom,
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Icon(
+                    CupertinoIcons.ellipsis_vertical,
+                    color: c.textSecondary,
+                    size: 17,
+                  ),
+                ),
+              )
+            else
+              Icon(
+                CupertinoIcons.chevron_right,
+                color: c.textTertiary,
+                size: 16,
+              ),
           ],
         ),
       ),

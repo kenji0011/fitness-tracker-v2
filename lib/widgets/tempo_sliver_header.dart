@@ -72,9 +72,9 @@ class TempoHeaderAction {
   });
 }
 
-/// Circular icon button whose frosted Liquid Glass circle fades in smoothly as
-/// [glassOpacity] progresses from 0.0 (expanded) to 1.0 (scrolled/collapsed).
-class TempoGlassCircleButton extends StatelessWidget {
+/// Circular Liquid Glass icon button with specular glass rim and BitChord-style
+/// droplet squish-and-spring press animation.
+class TempoGlassCircleButton extends StatefulWidget {
   final Widget icon;
   final VoidCallback onPressed;
   final double glassOpacity;
@@ -91,77 +91,109 @@ class TempoGlassCircleButton extends StatelessWidget {
   });
 
   @override
+  State<TempoGlassCircleButton> createState() => _TempoGlassCircleButtonState();
+}
+
+class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final isDark = c.isDark;
-    final g = glassOpacity.clamp(0.0, 1.0);
+    // Always maintain a subtle translucent liquid glass pill (min 0.42),
+    // deepening smoothly to 1.0 as content scrolls behind the header or on press.
+    final g = (_pressed ? 1.0 : (0.42 + 0.58 * widget.glassOpacity.clamp(0.0, 1.0)))
+        .clamp(0.0, 1.0);
 
     Widget btn = GestureDetector(
       behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
       onTap: () {
         HapticFeedback.selectionClick();
-        onPressed();
+        widget.onPressed();
       },
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: g <= 0.02
-            ? Center(child: icon)
-            : Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: (isDark ? 0.38 : 0.08) * g,
-                      ),
-                      blurRadius: 14 * g,
-                      offset: Offset(0, 4 * g),
-                    ),
-                  ],
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 0.0, end: _pressed ? 1.0 : 0.0),
+        duration: Duration(milliseconds: _pressed ? 105 : 290),
+        curve: _pressed ? Curves.easeOutCubic : Curves.easeOutBack,
+        builder: (context, p, child) {
+          // Liquid droplet squish on press, spring rebound on release
+          final sx = 1.0 + 0.09 * p;
+          final sy = 1.0 - 0.08 * p;
+          return Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.diagonal3Values(sx, sy, 1.0),
+            child: child,
+          );
+        },
+        child: SizedBox(
+          width: widget.size,
+          height: widget.size,
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(
+                    alpha: (isDark ? 0.36 : 0.075) * g,
+                  ),
+                  blurRadius: 14 * g,
+                  offset: Offset(0, 4 * g),
                 ),
-                child: ClipOval(
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(
-                      sigmaX: 20 * g,
-                      sigmaY: 20 * g,
+              ],
+            ),
+            child: ClipOval(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(
+                  sigmaX: 18 * g,
+                  sigmaY: 18 * g,
+                ),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: isDark
+                          ? [
+                              const Color(0xFF383940)
+                                  .withValues(alpha: (_pressed ? 0.88 : 0.74) * g),
+                              const Color(0xFF1A1B1F)
+                                  .withValues(alpha: (_pressed ? 0.82 : 0.66) * g),
+                            ]
+                          : [
+                              Colors.white
+                                  .withValues(alpha: (_pressed ? 0.94 : 0.84) * g),
+                              const Color(0xFFF1F2F7)
+                                  .withValues(alpha: (_pressed ? 0.86 : 0.72) * g),
+                            ],
                     ),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: isDark
-                              ? [
-                                  const Color(0xFF2E2E32)
-                                      .withValues(alpha: 0.80 * g),
-                                  const Color(0xFF1A1A1D)
-                                      .withValues(alpha: 0.72 * g),
-                                ]
-                              : [
-                                  Colors.white.withValues(alpha: 0.86 * g),
-                                  const Color(0xFFF3F3F8)
-                                      .withValues(alpha: 0.76 * g),
-                                ],
-                        ),
-                        border: Border.all(
-                          color: isDark
-                              ? Colors.white.withValues(alpha: 0.22 * g)
-                              : Colors.black.withValues(alpha: 0.09 * g),
-                          width: 1.0,
-                        ),
-                      ),
-                      child: Center(child: icon),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(
+                              alpha: (_pressed ? 0.32 : 0.18) * g,
+                            )
+                          : Colors.black.withValues(
+                              alpha: (_pressed ? 0.12 : 0.075) * g,
+                            ),
+                      width: 1.0,
                     ),
                   ),
+                  child: Center(child: widget.icon),
                 ),
               ),
+            ),
+          ),
+        ),
       ),
     );
 
-    if (tooltip != null) {
-      btn = Tooltip(message: tooltip!, child: btn);
+    if (widget.tooltip != null) {
+      btn = Tooltip(message: widget.tooltip!, child: btn);
     }
     return btn;
   }

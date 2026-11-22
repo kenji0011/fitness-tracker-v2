@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class AppTheme {
-  static const Color appleBlueLight = Color(0xFF007AFF);
-  static const Color appleBlueDark = Color(0xFF0A84FF);
+  static const Color tempoOrangeLight = Color(0xFFFF6A24);
+  static const Color tempoOrangeDark = Color(0xFFFF7A33);
 
   static final ThemeData lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
     scaffoldBackgroundColor: const Color(0xFFF2F2F7),
-    primaryColor: appleBlueLight,
+    primaryColor: tempoOrangeLight,
     splashFactory: InkSparkle.splashFactory,
     appBarTheme: const AppBarTheme(
       backgroundColor: Color(0xFFF2F2F7),
@@ -27,9 +27,9 @@ class AppTheme {
       systemOverlayStyle: SystemUiOverlayStyle.dark,
     ),
     colorScheme: const ColorScheme.light(
-      primary: appleBlueLight,
+      primary: tempoOrangeLight,
       onPrimary: Colors.white,
-      secondary: appleBlueLight,
+      secondary: tempoOrangeLight,
       onSecondary: Colors.white,
       secondaryContainer: Color(0xFFE9E9EE),
       onSecondaryContainer: Color(0xFF1C1C1E),
@@ -39,7 +39,7 @@ class AppTheme {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: appleBlueLight,
+        backgroundColor: tempoOrangeLight,
         foregroundColor: Colors.white,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
@@ -87,7 +87,7 @@ class AppTheme {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: appleBlueLight, width: 1.5),
+        borderSide: const BorderSide(color: tempoOrangeLight, width: 1.5),
       ),
     ),
   );
@@ -96,7 +96,7 @@ class AppTheme {
     useMaterial3: true,
     brightness: Brightness.dark,
     scaffoldBackgroundColor: const Color(0xFF000000),
-    primaryColor: appleBlueDark,
+    primaryColor: tempoOrangeDark,
     splashFactory: InkSparkle.splashFactory,
     appBarTheme: const AppBarTheme(
       backgroundColor: Color(0xFF000000),
@@ -114,9 +114,9 @@ class AppTheme {
       systemOverlayStyle: SystemUiOverlayStyle.light,
     ),
     colorScheme: const ColorScheme.dark(
-      primary: appleBlueDark,
+      primary: tempoOrangeDark,
       onPrimary: Colors.white,
-      secondary: appleBlueDark,
+      secondary: tempoOrangeDark,
       onSecondary: Colors.white,
       secondaryContainer: Color(0xFF2C2C2E),
       onSecondaryContainer: Colors.white,
@@ -126,7 +126,7 @@ class AppTheme {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: appleBlueDark,
+        backgroundColor: tempoOrangeDark,
         foregroundColor: Colors.white,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
@@ -174,7 +174,7 @@ class AppTheme {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: appleBlueDark, width: 1.5),
+        borderSide: const BorderSide(color: tempoOrangeDark, width: 1.5),
       ),
     ),
   );

@@ -18,15 +18,15 @@ import '../theme/app_colors.dart';
 import '../widgets/bmi_detail_popup.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/oval_activity_rings.dart';
+import '../widgets/reorderable_summary_grid.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_spotlight_tour.dart';
+import '../widgets/tempo_toast.dart';
 import 'add_data_screen.dart';
-import 'calories_info_screen.dart';
-import 'detail_screen.dart';
 import 'manage_summary_features_screen.dart';
-import 'moving_info_screen.dart';
+import 'metric_detail_screen.dart';
 import 'sleep_detail_screen.dart';
-import 'steps_info_screen.dart';
-import 'waist_measurement_info_screen.dart';
+import 'water_detail_screen.dart';
 import 'weight_detail_screen.dart';
 
 /// Shared model kept for compatibility with detail screens.
@@ -78,18 +78,69 @@ class _HealthDashboardState extends State<HealthDashboard> {
   LocalDashboardSummary? _summary;
   String _weightUnit = 'kg';
   List<String> _enabledSummaryFeatures = kDefaultSummaryFeatureIds;
+  List<BodyMetricPoint> _waterPoints = const [];
+  int _waterGoalMl = 2500;
   bool _isLoading = true;
   bool _pedometerActive = false;
   int? _pedometerBaseline;
   int _initialStoredSteps = 0;
   int? _highlightedRing;
   StreamSubscription<StepCount>? _stepSub;
+  bool _wasTickerEnabled = false;
+
+  final GlobalKey _addDataHintKey = GlobalKey();
+  final GlobalKey _ringsCardHintKey = GlobalKey();
+  final GlobalKey _summaryGridHintKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _loadDashboard();
     _initPedometer();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.of(context);
+    if (enabled && !_wasTickerEnabled && !_isLoading) {
+      _maybeShowSpotlight();
+    }
+    _wasTickerEnabled = enabled;
+  }
+
+  void _maybeShowSpotlight() {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    if (pid == null || pid.isEmpty) return;
+    TempoSpotlightTour.showIfNeeded(
+      context: context,
+      profileId: pid,
+      screenId: 'summary',
+      steps: [
+        TempoSpotlightStep(
+          targetKey: _addDataHintKey,
+          title: 'Log health data',
+          description:
+              'Tap + anytime to quickly log your weight, sleep, waist, water, or daily steps.',
+          borderRadius: 999,
+          padding: const EdgeInsets.all(6),
+        ),
+        TempoSpotlightStep(
+          targetKey: _ringsCardHintKey,
+          title: 'Interactive rings & goals',
+          description:
+              'Tap Calories, Steps, or Activity to open detailed trends, calendars, and edit daily goals.',
+          borderRadius: 24,
+        ),
+        TempoSpotlightStep(
+          targetKey: _summaryGridHintKey,
+          title: 'Hold & drag to reorder',
+          description:
+              'Press and hold any health card like Sleep, Weight, or Water to drag it into your favorite order.',
+          borderRadius: 22,
+        ),
+      ],
+    );
   }
 
   @override
@@ -115,18 +166,28 @@ class _HealthDashboardState extends State<HealthDashboard> {
         _db.getDashboardSummary(profileId),
         _db.getSetting('weight_unit_$profileId'),
         _db.getSetting('summary_features_$profileId'),
+        _db.getBodyMetricHistory(profileId, 'water', limit: 60),
+        _db.getSetting('water_goal_ml_$profileId'),
       ]);
       if (!mounted) return;
       final summary = results[0] as LocalDashboardSummary;
       final savedUnit = results[1] as String?;
       final savedFeatures = results[2] as String?;
+      final waterPts = results[3] as List<BodyMetricPoint>;
+      final savedWaterGoal = int.tryParse((results[4] as String?) ?? '');
       setState(() {
         _summary = summary;
         _weightUnit = savedUnit == 'lb' ? 'lb' : 'kg';
         _enabledSummaryFeatures = parseSummaryFeatureIds(savedFeatures);
+        _waterPoints = waterPts;
+        _waterGoalMl =
+            (savedWaterGoal != null && savedWaterGoal >= 500) ? savedWaterGoal : 2500;
         _initialStoredSteps = summary.today.steps;
         _isLoading = false;
       });
+      if (mounted && TickerMode.of(context)) {
+        _maybeShowSpotlight();
+      }
     } catch (e) {
       debugPrint('Failed to load dashboard from Rust DB: $e');
       if (mounted) setState(() => _isLoading = false);
@@ -170,9 +231,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
     if (res.isGranted) {
       await _initPedometer();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Live step counter enabled')),
-        );
+        showTempoToast(context, 'Live step counter enabled');
       }
     } else if (mounted) {
       _openAddData(initialMetric: 'steps');
@@ -214,26 +273,39 @@ class _HealthDashboardState extends State<HealthDashboard> {
     }
   }
 
-  Future<void> _openMetricDetail({
-    required String title,
-    required String metricType,
-    required String unit,
-    required Color accentColor,
-    Widget? infoScreen,
-  }) async {
+  Future<void> _persistSummaryOrder(List<String> newOrder) async {
+    final profileId = context.read<ActiveProfileProvider>().activeProfileId;
+    setState(() => _enabledSummaryFeatures = newOrder);
+    if (profileId != null && profileId.isNotEmpty) {
+      await _db.setSetting(
+        'summary_features_$profileId',
+        jsonEncode(newOrder),
+      );
+    }
+  }
+
+  Future<void> _openUnifiedMetric(TempoMetricKind kind) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => DetailScreen(
-          title: title,
-          metricType: metricType,
-          unit: unit,
-          accentColor: accentColor,
-          infoScreen: infoScreen,
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => MetricDetailScreen(kind: kind)),
     );
     if (mounted) _loadDashboard();
+  }
+
+  Future<void> _quickAddWater250() async {
+    final provider = context.read<ActiveProfileProvider>();
+    final pid = provider.activeProfileId;
+    if (pid == null) return;
+    HapticFeedback.lightImpact();
+    await _db.logBodyMetric(
+      profileId: pid,
+      metricType: 'water',
+      value: 250,
+      recordedAt: DateTime.now(),
+    );
+    provider.notifyDataChanged();
+    await _loadDashboard();
+    if (mounted) showTempoToast(context, '+250 ml water logged');
   }
 
   @override
@@ -276,6 +348,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
                         onPressed: () => _openAddData(),
                         icon: Icon(
                           CupertinoIcons.add,
+                          key: _addDataHintKey,
                           size: 22,
                           color: c.textPrimary,
                         ),
@@ -309,6 +382,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
 
                     // --- Minimal Tempo Daily Activity Snapshot Card ---
                     AppleCard(
+                      key: _ringsCardHintKey,
                       borderRadius: 24,
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
                       child: Column(
@@ -325,12 +399,8 @@ class _HealthDashboardState extends State<HealthDashboard> {
                                       '${NumberFormat('#,###').format(calGoal)} kcal',
                                   progress: calProgress,
                                   isHighlighted: _highlightedRing == 0,
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const CaloriesInfoScreen(),
-                                    ),
+                                  onTap: () => _openUnifiedMetric(
+                                    TempoMetricKind.calories,
                                   ),
                                 ),
                               ),
@@ -352,13 +422,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
                                   progress: stepProgress,
                                   isHighlighted: _highlightedRing == 1,
                                   onTap: () => _pedometerActive
-                                      ? Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                const StepsInfoScreen(),
-                                          ),
-                                        )
+                                      ? _openUnifiedMetric(TempoMetricKind.steps)
                                       : _enableStepsTracking(),
                                 ),
                               ),
@@ -377,11 +441,8 @@ class _HealthDashboardState extends State<HealthDashboard> {
                                   goalText: '$minGoal min',
                                   progress: minProgress,
                                   isHighlighted: _highlightedRing == 2,
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => const MovingInfoScreen(),
-                                    ),
+                                  onTap: () => _openUnifiedMetric(
+                                    TempoMetricKind.minutes,
                                   ),
                                 ),
                               ),
@@ -525,12 +586,8 @@ class _HealthDashboardState extends State<HealthDashboard> {
                               points: waistPts,
                               lineColor: const Color(0xFF3CC29E),
                             ),
-                            onTap: () => _openMetricDetail(
-                              title: 'Waist',
-                              metricType: 'waist',
-                              unit: 'cm',
-                              accentColor: const Color(0xFF3CC29E),
-                              infoScreen: const WaistMeasurementInfoScreen(),
+                            onTap: () => _openUnifiedMetric(
+                              TempoMetricKind.waist,
                             ),
                           ),
                           'burn': _HealthGridTile(
@@ -546,11 +603,8 @@ class _HealthDashboardState extends State<HealthDashboard> {
                               leftLabel: '7d ago',
                               rightLabel: 'Today',
                             ),
-                            onTap: () => _openMetricDetail(
-                              title: 'Daily Activity',
-                              metricType: 'activity',
-                              unit: 'kcal',
-                              accentColor: const Color(0xFFF39C2E),
+                            onTap: () => _openUnifiedMetric(
+                              TempoMetricKind.burn,
                             ),
                           ),
                           'workouts': _HealthGridTile(
@@ -571,14 +625,50 @@ class _HealthDashboardState extends State<HealthDashboard> {
                             ),
                             onTap: () => widget.onSwitchToWorkouts?.call(),
                           ),
+                          'water': _HealthGridTile(
+                            badgeIcon: CupertinoIcons.drop_fill,
+                            badgeColor: const Color(0xFF38BDF8),
+                            title: 'Water',
+                            trailingPill: '+250',
+                            onTrailingPillTap: _quickAddWater250,
+                            primaryValue: () {
+                              final todayKey = TempoRustDb.todayKey();
+                              final ml = _waterPoints
+                                  .where((p) =>
+                                      DateFormat('yyyy-MM-dd')
+                                          .format(p.recordedAt.toLocal()) ==
+                                      todayKey)
+                                  .fold<double>(0, (s, p) => s + p.value)
+                                  .round();
+                              return ml > 0
+                                  ? '${NumberFormat('#,###').format(ml)} ml'
+                                  : '0 ml';
+                            }(),
+                            subtitle:
+                                'Goal ${NumberFormat('#,###').format(_waterGoalMl)} ml',
+                            chart: _VerticalTickVisualizer(
+                              values: _last7DaysWater(_waterPoints),
+                              activeColor: const Color(0xFF38BDF8),
+                              leftLabel: '7d ago',
+                              rightLabel: 'Today',
+                            ),
+                            onTap: () async {
+                              await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const WaterDetailScreen(),
+                                ),
+                              );
+                              if (mounted) _loadDashboard();
+                            },
+                          ),
                         };
 
-                        final visibleCards = _enabledSummaryFeatures
+                        final visibleIds = _enabledSummaryFeatures
                             .where(cardMap.containsKey)
-                            .map((id) => cardMap[id]!)
                             .toList();
 
-                        if (visibleCards.isEmpty) {
+                        if (visibleIds.isEmpty) {
                           return AppleCard(
                             borderRadius: 22,
                             padding: const EdgeInsets.symmetric(
@@ -597,51 +687,47 @@ class _HealthDashboardState extends State<HealthDashboard> {
                           );
                         }
 
-                        return GridView.count(
-                          padding: EdgeInsets.zero,
-                          crossAxisCount: 2,
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          mainAxisSpacing: 10,
-                          crossAxisSpacing: 10,
+                        return ReorderableSummaryGrid(
+                          key: _summaryGridHintKey,
+                          itemIds: visibleIds,
+                          spacing: 10,
                           childAspectRatio: 0.94,
-                          children: visibleCards,
+                          itemBuilder: (_, id, __) => cardMap[id]!,
+                          onReorder: _persistSummaryOrder,
                         );
                       },
                     ),
 
                     const SizedBox(height: 12),
 
-                    // Centered Manage health features button below the Summary cards
+                    // Centered Manage health features Liquid Glass pill below the Summary cards
                     Center(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _openManageFeatures,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 10,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Manage health features',
-                                style: TextStyle(
-                                  color: c.textSecondary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w500,
-                                  letterSpacing: -0.1,
-                                ),
+                      child: TempoLiquidButton(
+                        primary: false,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 10,
+                        ),
+                        onPressed: _openManageFeatures,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Manage health features',
+                              style: TextStyle(
+                                color: c.textSecondary,
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: -0.1,
                               ),
-                              const SizedBox(width: 5),
-                              Icon(
-                                CupertinoIcons.chevron_right,
-                                size: 15,
-                                color: c.textTertiary,
-                              ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: 5),
+                            Icon(
+                              CupertinoIcons.chevron_right,
+                              size: 14,
+                              color: c.textTertiary,
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -671,6 +757,19 @@ class _HealthDashboardState extends State<HealthDashboard> {
     return List.generate(7, (i) {
       final d = now.subtract(Duration(days: 6 - i));
       return map[DateFormat('yyyy-MM-dd').format(d)] ?? 0.0;
+    });
+  }
+
+  List<double> _last7DaysWater(List<BodyMetricPoint> pts) {
+    final now = DateTime.now();
+    final sums = <String, double>{};
+    for (final p in pts) {
+      final key = DateFormat('yyyy-MM-dd').format(p.recordedAt.toLocal());
+      sums[key] = (sums[key] ?? 0) + p.value;
+    }
+    return List.generate(7, (i) {
+      final d = now.subtract(Duration(days: 6 - i));
+      return sums[DateFormat('yyyy-MM-dd').format(d)] ?? 0.0;
     });
   }
 

@@ -10,34 +10,22 @@ import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_toast.dart';
+import '../widgets/tempo_wheel_picker.dart';
 
-class _MetricSpec {
+class _MetricMeta {
   final String key;
   final String label;
-  final String unit;
-  final String hint;
   final IconData icon;
   final Color color;
-  final double step;
-  final double minVal;
-  final double maxVal;
-  final bool isInteger;
   final bool supportsDate;
-  final List<double> presets;
 
-  const _MetricSpec({
+  const _MetricMeta({
     required this.key,
     required this.label,
-    required this.unit,
-    required this.hint,
     required this.icon,
     required this.color,
-    required this.step,
-    required this.minVal,
-    required this.maxVal,
-    this.isInteger = false,
     this.supportsDate = true,
-    this.presets = const [],
   });
 }
 
@@ -53,114 +41,113 @@ class AddDataScreen extends StatefulWidget {
 class _AddDataScreenState extends State<AddDataScreen> {
   static const double _kgToLb = 2.20462262;
 
-  final _valueCtrl = TextEditingController();
+  static const List<_MetricMeta> _metrics = [
+    _MetricMeta(
+      key: 'weight',
+      label: 'Weight',
+      icon: CupertinoIcons.gauge,
+      color: Color(0xFF4CD964),
+    ),
+    _MetricMeta(
+      key: 'sleep',
+      label: 'Sleep',
+      icon: CupertinoIcons.bed_double_fill,
+      color: Color(0xFF6B63F6),
+    ),
+    _MetricMeta(
+      key: 'steps',
+      label: 'Steps',
+      icon: CupertinoIcons.hare_fill,
+      color: Color(0xFF93DC2A),
+      supportsDate: false,
+    ),
+    _MetricMeta(
+      key: 'calories',
+      label: 'Calories',
+      icon: CupertinoIcons.flame_fill,
+      color: Color(0xFFF36432),
+      supportsDate: false,
+    ),
+    _MetricMeta(
+      key: 'minutes',
+      label: 'Activity',
+      icon: CupertinoIcons.clock_fill,
+      color: Color(0xFF56B7FF),
+      supportsDate: false,
+    ),
+    _MetricMeta(
+      key: 'waist',
+      label: 'Waist',
+      icon: CupertinoIcons.resize_h,
+      color: Color(0xFF3CC29E),
+    ),
+    _MetricMeta(
+      key: 'water',
+      label: 'Water',
+      icon: CupertinoIcons.drop_fill,
+      color: Color(0xFF38BDF8),
+    ),
+    _MetricMeta(
+      key: 'height',
+      label: 'Height',
+      icon: CupertinoIcons.arrow_up_down,
+      color: Color(0xFF0A84FF),
+    ),
+  ];
+
+  // Wheel option lists
+  static final List<String> _hours24 =
+      List.generate(24, (i) => i.toString().padLeft(2, '0'));
+  static final List<String> _hours10 =
+      List.generate(10, (i) => i.toString().padLeft(2, '0'));
+  static final List<String> _mins60 =
+      List.generate(60, (i) => i.toString().padLeft(2, '0'));
+  static final List<String> _tenths = List.generate(10, (i) => '$i');
+  static final List<String> _kgWhole =
+      List.generate(231, (i) => '${20 + i}'); // 20..250 kg
+  static final List<String> _lbWhole =
+      List.generate(507, (i) => '${44 + i}'); // 44..550 lb
+  static final List<String> _waistWhole =
+      List.generate(161, (i) => '${40 + i}'); // 40..200 cm
+  static final List<String> _heightCm =
+      List.generate(161, (i) => '${80 + i}'); // 80..240 cm
+  static final List<String> _stepThousands =
+      List.generate(51, (i) => '$i'); // 0..50k
+  static final List<String> _stepHundreds =
+      List.generate(10, (i) => (i * 100).toString().padLeft(3, '0')); // 000..900
+  static final List<String> _calorieSteps =
+      List.generate(160, (i) => '${(i + 1) * 25}'); // 25..4000 kcal
+  static final List<String> _waterMlSteps =
+      List.generate(80, (i) => '${(i + 1) * 50}'); // 50..4000 ml
+
   late String _selectedMetric;
   DateTime _selectedDate = DateTime.now();
   String _weightUnit = 'kg';
   bool _saving = false;
 
-  static const List<_MetricSpec> _baseMetrics = [
-    _MetricSpec(
-      key: 'weight',
-      label: 'Weight',
-      unit: 'kg',
-      hint: '65.0',
-      icon: CupertinoIcons.gauge,
-      color: Color(0xFF4CD964),
-      step: 0.1,
-      minVal: 20,
-      maxVal: 350,
-      presets: [55, 60, 65, 70, 75],
-    ),
-    _MetricSpec(
-      key: 'sleep',
-      label: 'Sleep',
-      unit: 'hrs',
-      hint: '7.5',
-      icon: CupertinoIcons.bed_double_fill,
-      color: Color(0xFF6B63F6),
-      step: 0.5,
-      minVal: 0.5,
-      maxVal: 16,
-      presets: [6.0, 7.0, 7.5, 8.0, 9.0],
-    ),
-    _MetricSpec(
-      key: 'steps',
-      label: 'Steps',
-      unit: 'steps',
-      hint: '5000',
-      icon: CupertinoIcons.hare_fill,
-      color: Color(0xFF93DC2A),
-      step: 500,
-      minVal: 1,
-      maxVal: 100000,
-      isInteger: true,
-      supportsDate: false,
-      presets: [1000, 2500, 5000, 7500, 10000],
-    ),
-    _MetricSpec(
-      key: 'calories',
-      label: 'Calories',
-      unit: 'kcal',
-      hint: '300',
-      icon: CupertinoIcons.flame_fill,
-      color: Color(0xFFF36432),
-      step: 50,
-      minVal: 1,
-      maxVal: 10000,
-      isInteger: true,
-      supportsDate: false,
-      presets: [150, 300, 450, 600, 800],
-    ),
-    _MetricSpec(
-      key: 'minutes',
-      label: 'Activity',
-      unit: 'min',
-      hint: '30',
-      icon: CupertinoIcons.clock_fill,
-      color: Color(0xFF56B7FF),
-      step: 5,
-      minVal: 1,
-      maxVal: 600,
-      isInteger: true,
-      supportsDate: false,
-      presets: [15, 30, 45, 60, 90],
-    ),
-    _MetricSpec(
-      key: 'waist',
-      label: 'Waist',
-      unit: 'cm',
-      hint: '78.0',
-      icon: CupertinoIcons.resize_h,
-      color: Color(0xFF3CC29E),
-      step: 0.5,
-      minVal: 40,
-      maxVal: 200,
-      presets: [70, 75, 80, 85, 90],
-    ),
-    _MetricSpec(
-      key: 'height',
-      label: 'Height',
-      unit: 'cm',
-      hint: '173',
-      icon: CupertinoIcons.arrow_up_down,
-      color: Color(0xFF0A84FF),
-      step: 1,
-      minVal: 80,
-      maxVal: 240,
-      isInteger: true,
-      presets: [160, 165, 170, 175, 180],
-    ),
-  ];
+  // Per-metric wheel state
+  int _weightWholeIdx = 45; // 65 kg default
+  int _weightDecIdx = 0;
+  int _sleepHrsIdx = 7;
+  int _sleepMinsIdx = 30;
+  int _actHrsIdx = 0;
+  int _actMinsIdx = 30;
+  int _stepsKIdx = 5; // 5,000
+  int _stepsHIdx = 0;
+  int _calIdx = 11; // 300 kcal
+  int _waistWholeIdx = 38; // 78 cm
+  int _waistDecIdx = 0;
+  int _waterIdx = 4; // 250 ml
+  int _heightIdx = 93; // 173 cm
 
   @override
   void initState() {
     super.initState();
     _selectedMetric = widget.initialMetric ?? 'weight';
-    _loadPrefsAndPrefill();
+    _loadPrefsAndSyncWheels();
   }
 
-  Future<void> _loadPrefsAndPrefill() async {
+  Future<void> _loadPrefsAndSyncWheels() async {
     final pid = context.read<ActiveProfileProvider>().activeProfileId;
     if (pid != null) {
       final savedUnit = await TempoRustDb.instance.getSetting('weight_unit_$pid');
@@ -169,93 +156,102 @@ class _AddDataScreenState extends State<AddDataScreen> {
       }
     }
     if (!mounted) return;
-    setState(() {
-      _prefillCurrentValue();
-    });
+    setState(_syncWheelsFromProfile);
   }
 
-  void _prefillCurrentValue() {
+  void _syncWheelsFromProfile() {
     final profile = context.read<ActiveProfileProvider>().activeProfile;
-    final val = _currentProfileValue(profile);
-    if (val != null && val > 0) {
-      _valueCtrl.text = _formatForInput(val);
-    } else {
-      _valueCtrl.clear();
+    if (profile == null) return;
+
+    if (profile.weightKg > 0) {
+      final displayW =
+          _weightUnit == 'lb' ? profile.weightKg * _kgToLb : profile.weightKg;
+      final minW = _weightUnit == 'lb' ? 44 : 20;
+      final maxW = _weightUnit == 'lb' ? 550 : 250;
+      final whole = displayW.floor().clamp(minW, maxW);
+      final dec = ((displayW - whole) * 10).round().clamp(0, 9);
+      _weightWholeIdx = whole - minW;
+      _weightDecIdx = dec;
+    } else if (_weightUnit == 'lb') {
+      _weightWholeIdx = 143 - 44;
+      _weightDecIdx = 0;
+    }
+
+    if (profile.sleepHours > 0) {
+      final totalMins = (profile.sleepHours * 60).round().clamp(15, 23 * 60 + 59);
+      _sleepHrsIdx = totalMins ~/ 60;
+      _sleepMinsIdx = totalMins % 60;
+    }
+
+    if (profile.waistCm > 0) {
+      final whole = profile.waistCm.floor().clamp(40, 200);
+      final dec = ((profile.waistCm - whole) * 10).round().clamp(0, 9);
+      _waistWholeIdx = whole - 40;
+      _waistDecIdx = dec;
+    }
+
+    if (profile.heightCm > 0) {
+      _heightIdx = profile.heightCm.round().clamp(80, 240) - 80;
     }
   }
 
-  @override
-  void dispose() {
-    _valueCtrl.dispose();
-    super.dispose();
-  }
-
-  _MetricSpec get _spec {
-    final base = _baseMetrics.firstWhere(
-      (m) => m.key == _selectedMetric,
-      orElse: () => _baseMetrics.first,
-    );
-    if (base.key == 'weight' && _weightUnit == 'lb') {
-      return const _MetricSpec(
-        key: 'weight',
-        label: 'Weight',
-        unit: 'lb',
-        hint: '143.0',
-        icon: CupertinoIcons.gauge,
-        color: Color(0xFF4CD964),
-        step: 0.2,
-        minVal: 44,
-        maxVal: 770,
-        presets: [120, 135, 150, 165, 180],
+  _MetricMeta get _meta => _metrics.firstWhere(
+        (m) => m.key == _selectedMetric,
+        orElse: () => _metrics.first,
       );
+
+  String _currentReadout() {
+    switch (_selectedMetric) {
+      case 'weight':
+        final base = _weightUnit == 'lb' ? 44 : 20;
+        final val = (base + _weightWholeIdx) + _weightDecIdx / 10.0;
+        return '${val.toStringAsFixed(1)} $_weightUnit';
+      case 'sleep':
+        return '${_sleepHrsIdx}h ${_sleepMinsIdx.toString().padLeft(2, '0')}m';
+      case 'minutes':
+        final total = _actHrsIdx * 60 + _actMinsIdx;
+        return _actHrsIdx > 0
+            ? '${_actHrsIdx}h ${_actMinsIdx.toString().padLeft(2, '0')}m ($total min)'
+            : '$total min';
+      case 'steps':
+        final total = _stepsKIdx * 1000 + _stepsHIdx * 100;
+        return '${NumberFormat('#,###').format(total)} steps';
+      case 'calories':
+        return '${NumberFormat('#,###').format((_calIdx + 1) * 25)} kcal';
+      case 'waist':
+        final val = (40 + _waistWholeIdx) + _waistDecIdx / 10.0;
+        return '${val.toStringAsFixed(1)} cm';
+      case 'water':
+        return '${NumberFormat('#,###').format((_waterIdx + 1) * 50)} ml';
+      case 'height':
+        return '${80 + _heightIdx} cm';
+      default:
+        return '';
     }
-    return base;
   }
 
-  double? _currentProfileValue(LocalProfile? profile) {
+  String? _currentProfileSummary(LocalProfile? profile) {
     if (profile == null) return null;
     switch (_selectedMetric) {
       case 'weight':
         if (profile.weightKg <= 0) return null;
-        return _weightUnit == 'lb'
+        final w = _weightUnit == 'lb'
             ? profile.weightKg * _kgToLb
             : profile.weightKg;
+        return 'Current: ${w.toStringAsFixed(1)} $_weightUnit';
       case 'sleep':
-        return profile.sleepHours > 0 ? profile.sleepHours : null;
+        if (profile.sleepHours <= 0) return null;
+        final totalMins = (profile.sleepHours * 60).round();
+        return 'Current: ${totalMins ~/ 60}h ${(totalMins % 60).toString().padLeft(2, '0')}m';
       case 'waist':
-        return profile.waistCm > 0 ? profile.waistCm : null;
+        if (profile.waistCm <= 0) return null;
+        return 'Current: ${profile.waistCm.toStringAsFixed(1)} cm';
       case 'height':
-        return profile.heightCm > 0 ? profile.heightCm : null;
+        if (profile.heightCm <= 0) return null;
+        return 'Current: ${profile.heightCm.round()} cm';
       default:
         return null;
     }
-  }
-
-  String _formatForInput(double val) {
-    final s = _spec;
-    if (s.isInteger) return val.round().toString();
-    if (s.key == 'weight') return val.toStringAsFixed(2);
-    return val.toStringAsFixed(1);
-  }
-
-  String _formatPreset(double val) {
-    final s = _spec;
-    if (s.key == 'steps') {
-      return val >= 1000 ? '${(val / 1000).toStringAsFixed(val % 1000 == 0 ? 0 : 1)}k' : '${val.round()}';
-    }
-    if (val == val.roundToDouble()) return '${val.round()}';
-    return val.toStringAsFixed(1);
-  }
-
-  void _stepBy(double delta) {
-    HapticFeedback.selectionClick();
-    final s = _spec;
-    final fallback = double.tryParse(s.hint) ?? s.minVal;
-    final cur = double.tryParse(_valueCtrl.text.trim()) ?? fallback;
-    final next = (cur + delta).clamp(s.minVal, s.maxVal);
-    setState(() {
-      _valueCtrl.text = _formatForInput(next);
-    });
   }
 
   Future<void> _pickDate() async {
@@ -277,67 +273,327 @@ class _AddDataScreenState extends State<AddDataScreen> {
     final profileId = profileProvider.activeProfileId;
     if (profileId == null) return;
 
-    final s = _spec;
-    final raw = double.tryParse(_valueCtrl.text.trim());
-    if (raw == null || raw < s.minVal || raw > s.maxVal) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Enter a value between ${s.minVal.toStringAsFixed(s.isInteger ? 0 : 1)} and ${s.maxVal.toStringAsFixed(s.isInteger ? 0 : 1)} ${s.unit}',
-          ),
-        ),
-      );
-      return;
-    }
-
     HapticFeedback.lightImpact();
     setState(() => _saving = true);
+
     try {
       final db = TempoRustDb.instance;
-      if (_selectedMetric == 'steps') {
-        await db.upsertDailyActivity(
-          profileId: profileId,
-          steps: raw.round(),
-        );
-      } else if (_selectedMetric == 'calories') {
-        await db.upsertDailyActivity(
-          profileId: profileId,
-          calories: raw.round(),
-        );
-      } else if (_selectedMetric == 'minutes') {
-        await db.upsertDailyActivity(
-          profileId: profileId,
-          minutes: raw.round(),
-        );
-      } else {
-        final valueToStore =
-            (_selectedMetric == 'weight' && _weightUnit == 'lb')
-                ? raw / _kgToLb
-                : raw;
-        final now = DateTime.now();
-        final recordedAt = DateTime(
-          _selectedDate.year,
-          _selectedDate.month,
-          _selectedDate.day,
-          now.hour,
-          now.minute,
-        );
-        await db.logBodyMetric(
-          profileId: profileId,
-          metricType: _selectedMetric,
-          value: valueToStore,
-          recordedAt: recordedAt,
-        );
+      final now = DateTime.now();
+      final recordedAt = DateTime(
+        _selectedDate.year,
+        _selectedDate.month,
+        _selectedDate.day,
+        now.hour,
+        now.minute,
+      );
+
+      switch (_selectedMetric) {
+        case 'steps':
+          final steps = _stepsKIdx * 1000 + _stepsHIdx * 100;
+          if (steps <= 0) {
+            setState(() => _saving = false);
+            showTempoToast(context, 'Scroll to select steps above 0', isError: true);
+            return;
+          }
+          await db.upsertDailyActivity(profileId: profileId, steps: steps);
+          break;
+        case 'calories':
+          final kcal = (_calIdx + 1) * 25;
+          await db.upsertDailyActivity(profileId: profileId, calories: kcal);
+          break;
+        case 'minutes':
+          final totalMin = _actHrsIdx * 60 + _actMinsIdx;
+          if (totalMin <= 0) {
+            setState(() => _saving = false);
+            showTempoToast(
+              context,
+              'Scroll to select activity duration above 0 min',
+              isError: true,
+            );
+            return;
+          }
+          await db.upsertDailyActivity(profileId: profileId, minutes: totalMin);
+          break;
+        case 'sleep':
+          final totalMin = _sleepHrsIdx * 60 + _sleepMinsIdx;
+          if (totalMin < 15) {
+            setState(() => _saving = false);
+            showTempoToast(
+              context,
+              'Select at least 15 minutes of sleep',
+              isError: true,
+            );
+            return;
+          }
+          await db.logBodyMetric(
+            profileId: profileId,
+            metricType: 'sleep',
+            value: totalMin / 60.0,
+            recordedAt: recordedAt,
+          );
+          break;
+        case 'weight':
+          final base = _weightUnit == 'lb' ? 44 : 20;
+          final displayW = (base + _weightWholeIdx) + _weightDecIdx / 10.0;
+          final kgVal = _weightUnit == 'lb' ? displayW / _kgToLb : displayW;
+          await db.logBodyMetric(
+            profileId: profileId,
+            metricType: 'weight',
+            value: kgVal,
+            recordedAt: recordedAt,
+          );
+          break;
+        case 'waist':
+          final cmVal = (40 + _waistWholeIdx) + _waistDecIdx / 10.0;
+          await db.logBodyMetric(
+            profileId: profileId,
+            metricType: 'waist',
+            value: cmVal,
+            recordedAt: recordedAt,
+          );
+          break;
+        case 'water':
+          final mlVal = ((_waterIdx + 1) * 50).toDouble();
+          await db.logBodyMetric(
+            profileId: profileId,
+            metricType: 'water',
+            value: mlVal,
+            recordedAt: recordedAt,
+          );
+          break;
+        case 'height':
+          final hVal = (80 + _heightIdx).toDouble();
+          await db.logBodyMetric(
+            profileId: profileId,
+            metricType: 'height',
+            value: hVal,
+            recordedAt: recordedAt,
+          );
+          break;
       }
+
       await profileProvider.refreshProfiles();
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving data: $e')),
-        );
+        showTempoToast(context, 'Error saving data: $e', isError: true);
       }
+    }
+  }
+
+  Widget _separatorSymbol(String symbol, AppColors c) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 22, left: 4, right: 4),
+      child: Text(
+        symbol,
+        style: TextStyle(
+          color: c.textPrimary,
+          fontSize: 32,
+          fontWeight: FontWeight.w600,
+          height: 1.0,
+        ),
+      ),
+    );
+  }
+
+  Widget _inlineUnit(String unit, AppColors c) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24, left: 8),
+      child: Text(
+        unit,
+        style: TextStyle(
+          color: c.textSecondary,
+          fontSize: 17,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWheelForSelectedMetric(AppColors c) {
+    switch (_selectedMetric) {
+      case 'sleep':
+        return TempoWheelStage(
+          key: const ValueKey('wheel_sleep'),
+          children: [
+            TempoWheelColumn(
+              key: const ValueKey('sleep_hrs_col'),
+              headerLabel: 'hrs',
+              items: _hours24,
+              initialIndex: _sleepHrsIdx,
+              looping: true,
+              width: 96,
+              onSelectedIndexChanged: (i) => setState(() => _sleepHrsIdx = i),
+            ),
+            _separatorSymbol(':', c),
+            TempoWheelColumn(
+              key: const ValueKey('sleep_min_col'),
+              headerLabel: 'min',
+              items: _mins60,
+              initialIndex: _sleepMinsIdx,
+              looping: true,
+              width: 96,
+              onSelectedIndexChanged: (i) => setState(() => _sleepMinsIdx = i),
+            ),
+          ],
+        );
+
+      case 'minutes':
+        return TempoWheelStage(
+          key: const ValueKey('wheel_minutes'),
+          children: [
+            TempoWheelColumn(
+              key: const ValueKey('act_hrs_col'),
+              headerLabel: 'hrs',
+              items: _hours10,
+              initialIndex: _actHrsIdx,
+              looping: false,
+              width: 96,
+              onSelectedIndexChanged: (i) => setState(() => _actHrsIdx = i),
+            ),
+            _separatorSymbol(':', c),
+            TempoWheelColumn(
+              key: const ValueKey('act_min_col'),
+              headerLabel: 'min',
+              items: _mins60,
+              initialIndex: _actMinsIdx,
+              looping: true,
+              width: 96,
+              onSelectedIndexChanged: (i) => setState(() => _actMinsIdx = i),
+            ),
+          ],
+        );
+
+      case 'weight':
+        final wholeList = _weightUnit == 'lb' ? _lbWhole : _kgWhole;
+        return TempoWheelStage(
+          key: ValueKey('wheel_weight_$_weightUnit'),
+          children: [
+            TempoWheelColumn(
+              key: ValueKey('weight_whole_$_weightUnit'),
+              headerLabel: _weightUnit,
+              items: wholeList,
+              initialIndex: _weightWholeIdx.clamp(0, wholeList.length - 1),
+              width: 100,
+              onSelectedIndexChanged: (i) =>
+                  setState(() => _weightWholeIdx = i),
+            ),
+            _separatorSymbol('.', c),
+            TempoWheelColumn(
+              key: const ValueKey('weight_dec'),
+              headerLabel: '.0',
+              items: _tenths,
+              initialIndex: _weightDecIdx,
+              looping: true,
+              width: 68,
+              onSelectedIndexChanged: (i) => setState(() => _weightDecIdx = i),
+            ),
+            _inlineUnit(_weightUnit, c),
+          ],
+        );
+
+      case 'waist':
+        return TempoWheelStage(
+          key: const ValueKey('wheel_waist'),
+          children: [
+            TempoWheelColumn(
+              key: const ValueKey('waist_whole'),
+              headerLabel: 'cm',
+              items: _waistWhole,
+              initialIndex: _waistWholeIdx,
+              width: 98,
+              onSelectedIndexChanged: (i) =>
+                  setState(() => _waistWholeIdx = i),
+            ),
+            _separatorSymbol('.', c),
+            TempoWheelColumn(
+              key: const ValueKey('waist_dec'),
+              headerLabel: '.0',
+              items: _tenths,
+              initialIndex: _waistDecIdx,
+              looping: true,
+              width: 68,
+              onSelectedIndexChanged: (i) => setState(() => _waistDecIdx = i),
+            ),
+            _inlineUnit('cm', c),
+          ],
+        );
+
+      case 'steps':
+        return TempoWheelStage(
+          key: const ValueKey('wheel_steps'),
+          children: [
+            TempoWheelColumn(
+              key: const ValueKey('steps_k'),
+              headerLabel: 'thousands',
+              items: _stepThousands,
+              initialIndex: _stepsKIdx,
+              width: 82,
+              onSelectedIndexChanged: (i) => setState(() => _stepsKIdx = i),
+            ),
+            _separatorSymbol(',', c),
+            TempoWheelColumn(
+              key: const ValueKey('steps_h'),
+              headerLabel: 'hundreds',
+              items: _stepHundreds,
+              initialIndex: _stepsHIdx,
+              looping: true,
+              width: 102,
+              onSelectedIndexChanged: (i) => setState(() => _stepsHIdx = i),
+            ),
+            _inlineUnit('steps', c),
+          ],
+        );
+
+      case 'calories':
+        return TempoWheelStage(
+          key: const ValueKey('wheel_calories'),
+          children: [
+            TempoWheelColumn(
+              key: const ValueKey('cal_col'),
+              headerLabel: 'energy',
+              items: _calorieSteps,
+              initialIndex: _calIdx,
+              width: 132,
+              onSelectedIndexChanged: (i) => setState(() => _calIdx = i),
+            ),
+            _inlineUnit('kcal', c),
+          ],
+        );
+
+      case 'water':
+        return TempoWheelStage(
+          key: const ValueKey('wheel_water'),
+          children: [
+            TempoWheelColumn(
+              key: const ValueKey('water_col'),
+              headerLabel: 'volume',
+              items: _waterMlSteps,
+              initialIndex: _waterIdx,
+              width: 132,
+              onSelectedIndexChanged: (i) => setState(() => _waterIdx = i),
+            ),
+            _inlineUnit('ml', c),
+          ],
+        );
+
+      case 'height':
+      default:
+        return TempoWheelStage(
+          key: const ValueKey('wheel_height'),
+          children: [
+            TempoWheelColumn(
+              key: const ValueKey('height_col'),
+              headerLabel: 'height',
+              items: _heightCm,
+              initialIndex: _heightIdx,
+              width: 120,
+              onSelectedIndexChanged: (i) => setState(() => _heightIdx = i),
+            ),
+            _inlineUnit('cm', c),
+          ],
+        );
     }
   }
 
@@ -345,12 +601,39 @@ class _AddDataScreenState extends State<AddDataScreen> {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final profile = context.watch<ActiveProfileProvider>().activeProfile;
-    final spec = _spec;
-    final currentVal = _currentProfileValue(profile);
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final meta = _meta;
+    final currentSummary = _currentProfileSummary(profile);
 
     return Scaffold(
       backgroundColor: c.scaffold,
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
+          child: TempoLiquidButton(
+            height: 54,
+            borderRadius: 20,
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Text(
+                    'Save ${meta.label.toLowerCase()}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+          ),
+        ),
+      ),
       body: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
@@ -362,10 +645,10 @@ class _AddDataScreenState extends State<AddDataScreen> {
             onBack: () => Navigator.of(context).pop(false),
           ),
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(18, 8, 18, bottomInset + 36),
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
             sliver: SliverList.list(
               children: [
-                // Compact metric selector cards
+                // Compact metric selector chips
                 Padding(
                   padding: const EdgeInsets.only(left: 4, bottom: 10),
                   child: Text(
@@ -380,16 +663,13 @@ class _AddDataScreenState extends State<AddDataScreen> {
                 Wrap(
                   spacing: 9,
                   runSpacing: 9,
-                  children: _baseMetrics.map((m) {
+                  children: _metrics.map((m) {
                     final selected = m.key == _selectedMetric;
                     return GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTap: () {
                         HapticFeedback.selectionClick();
-                        setState(() {
-                          _selectedMetric = m.key;
-                          _prefillCurrentValue();
-                        });
+                        setState(() => _selectedMetric = m.key);
                       },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 180),
@@ -445,10 +725,10 @@ class _AddDataScreenState extends State<AddDataScreen> {
 
                 const SizedBox(height: 18),
 
-                // Main tactile value entry card
+                // Vertical Drum-Wheel Entry Card (HyperOS 3 / Clock inspired)
                 AppleCard(
-                  borderRadius: 24,
-                  padding: const EdgeInsets.all(20),
+                  borderRadius: 26,
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -458,11 +738,11 @@ class _AddDataScreenState extends State<AddDataScreen> {
                             width: 32,
                             height: 32,
                             decoration: BoxDecoration(
-                              color: spec.color,
+                              color: meta.color,
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
-                              spec.icon,
+                              meta.icon,
                               color: Colors.white,
                               size: 16,
                             ),
@@ -473,16 +753,16 @@ class _AddDataScreenState extends State<AddDataScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  spec.label,
+                                  meta.label,
                                   style: TextStyle(
                                     color: c.textPrimary,
                                     fontSize: 16.5,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                                if (currentVal != null)
+                                if (currentSummary != null)
                                   Text(
-                                    'Current: ${_formatForInput(currentVal)} ${spec.unit}',
+                                    currentSummary,
                                     style: TextStyle(
                                       color: c.textTertiary,
                                       fontSize: 12.5,
@@ -494,135 +774,45 @@ class _AddDataScreenState extends State<AddDataScreen> {
                               ],
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 18),
-
-                      // Stepper + centered tabular input
-                      Row(
-                        children: [
-                          _InputStepper(
-                            icon: CupertinoIcons.minus,
-                            onTap: () => _stepBy(-spec.step),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: _valueCtrl,
-                              textAlign: TextAlign.center,
-                              keyboardType: TextInputType.numberWithOptions(
-                                decimal: !spec.isInteger,
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 11,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: meta.color.withValues(
+                                alpha: c.isDark ? 0.22 : 0.12,
                               ),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              _currentReadout(),
                               style: TextStyle(
-                                color: c.textPrimary,
-                                fontSize: 28,
+                                color: meta.color,
+                                fontSize: 13,
                                 fontWeight: FontWeight.w700,
-                                letterSpacing: -0.5,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures(),
                                 ],
                               ),
-                              decoration: InputDecoration(
-                                hintText: spec.hint,
-                                hintStyle: TextStyle(
-                                  color: c.textHint,
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                suffixText: spec.unit,
-                                suffixStyle: TextStyle(
-                                  color: c.textSecondary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                filled: true,
-                                fillColor: c.searchBg,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 14,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                  borderSide: BorderSide.none,
-                                ),
-                              ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          _InputStepper(
-                            icon: CupertinoIcons.add,
-                            onTap: () => _stepBy(spec.step),
                           ),
                         ],
                       ),
 
-                      // Quick preset chips
-                      if (spec.presets.isNotEmpty) ...[
-                        const SizedBox(height: 14),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: spec.presets.map((p) {
-                            final currentNum =
-                                double.tryParse(_valueCtrl.text.trim());
-                            final active =
-                                currentNum != null && (currentNum - p).abs() < 0.01;
-                            return Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 3,
-                                ),
-                                child: GestureDetector(
-                                  onTap: () {
-                                    HapticFeedback.selectionClick();
-                                    setState(() {
-                                      _valueCtrl.text = _formatForInput(p);
-                                    });
-                                  },
-                                  child: AnimatedContainer(
-                                    duration:
-                                        const Duration(milliseconds: 160),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 8,
-                                    ),
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: active
-                                          ? spec.color.withValues(alpha: 0.16)
-                                          : c.searchBg,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: active
-                                          ? Border.all(
-                                              color: spec.color
-                                                  .withValues(alpha: 0.55),
-                                            )
-                                          : null,
-                                    ),
-                                    child: Text(
-                                      _formatPreset(p),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: active
-                                            ? spec.color
-                                            : c.textSecondary,
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w600,
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ],
+                      const SizedBox(height: 10),
 
-                      // Date row for body/recovery metrics
-                      if (spec.supportsDate) ...[
-                        const SizedBox(height: 14),
+                      // Smooth scrollable drum wheel(s)
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        child: _buildWheelForSelectedMetric(c),
+                      ),
+
+                      // Date selector for body/recovery metrics
+                      if (meta.supportsDate) ...[
+                        const SizedBox(height: 12),
                         GestureDetector(
                           onTap: _pickDate,
                           child: Container(
@@ -676,67 +866,10 @@ class _AddDataScreenState extends State<AddDataScreen> {
                     ],
                   ),
                 ),
-
-                const SizedBox(height: 18),
-
-                SizedBox(
-                  height: 52,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: c.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                    ),
-                    onPressed: _saving ? null : _save,
-                    child: _saving
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(
-                            'Save ${spec.label.toLowerCase()}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                  ),
-                ),
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _InputStepper extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _InputStepper({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: c.searchBg,
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, color: c.textPrimary, size: 20),
       ),
     );
   }

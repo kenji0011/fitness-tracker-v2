@@ -58,6 +58,12 @@ const List<SummaryFeatureItem> kAllSummaryFeatures = [
     icon: CupertinoIcons.flame_fill,
     color: Color(0xFFE8527A),
   ),
+  SummaryFeatureItem(
+    id: 'water',
+    title: 'Water',
+    icon: CupertinoIcons.drop_fill,
+    color: Color(0xFF38BDF8),
+  ),
 ];
 
 List<String> get kDefaultSummaryFeatureIds =>

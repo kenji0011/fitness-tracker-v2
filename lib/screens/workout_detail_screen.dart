@@ -13,8 +13,10 @@ import '../services/journey_progress_service.dart';
 import '../services/live_workout_service.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_toast.dart';
 import 'exercise_detail_screen.dart';
 
 class WorkoutDetailScreen extends StatefulWidget {
@@ -187,29 +189,157 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
 
       if (!mounted) return;
       HapticFeedback.heavyImpact();
-      await showCupertinoDialog<void>(
+      final c = AppColors.of(context, listen: false);
+      await showTempoSheet<void>(
         context: context,
-        builder: (ctx) => CupertinoAlertDialog(
-          title: const Text('Workout Completed'),
-          content: Text(
-            '${widget.workout.title}\n\nDuration: ${_formatTime(actualSec)}\nEstimated Burn: $calories kcal',
-          ),
-          actions: [
-            CupertinoDialogAction(
-              isDefaultAction: true,
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Done'),
+        backgroundColor: c.card,
+        borderRadius: 28,
+        showDragHandle: true,
+        builder: (ctx) {
+          final mc = AppColors.of(ctx);
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              22,
+              10,
+              22,
+              MediaQuery.paddingOf(ctx).bottom + 24,
             ),
-          ],
-        ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: mc.accent.withValues(alpha: mc.isDark ? 0.2 : 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      CupertinoIcons.checkmark_alt,
+                      color: mc.accent,
+                      size: 28,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Workout Completed',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.workout.title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: mc.textSecondary,
+                    fontSize: 14.5,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: mc.searchBg,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Text(
+                              _formatTime(actualSec),
+                              style: TextStyle(
+                                color: mc.textPrimary,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Duration',
+                              style: TextStyle(
+                                color: mc.textTertiary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(width: 1, height: 32, color: mc.divider),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Text(
+                              '$calories kcal',
+                              style: TextStyle(
+                                color: mc.textPrimary,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Est. Burn',
+                              style: TextStyle(
+                                color: mc.textTertiary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  height: 52,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: mc.accent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text(
+                      'Done',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
         setState(() => _isSaving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving workout: $e')),
-        );
+        showTempoToast(context, 'Error saving workout: $e', isError: true);
       }
     }
   }

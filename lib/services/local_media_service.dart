@@ -40,6 +40,34 @@ class LocalMediaService {
     return destPath;
   }
 
+  static Future<String> saveProfileAvatarBytes({
+    required String profileId,
+    required Uint8List bytes,
+    String extension = '.png',
+  }) async {
+    if (kIsWeb) return '';
+    final dir = await _ensureDir(p.join('tempo_media', profileId, 'avatars'));
+    final destPath = p.join(
+      dir.path,
+      'avatar_${DateTime.now().millisecondsSinceEpoch}$extension',
+    );
+    await File(destPath).writeAsBytes(bytes, flush: true);
+    _existsCache[destPath] = true;
+    return destPath;
+  }
+
+  static Future<String> saveTempAvatarBytes(Uint8List bytes) async {
+    if (kIsWeb) return '';
+    final dir = await _ensureDir(p.join('tempo_media', '_pending'));
+    final destPath = p.join(
+      dir.path,
+      'avatar_crop_${DateTime.now().millisecondsSinceEpoch}.png',
+    );
+    await File(destPath).writeAsBytes(bytes, flush: true);
+    _existsCache[destPath] = true;
+    return destPath;
+  }
+
   static Future<String> saveProgressPhotoBytes({
     required String profileId,
     required Uint8List bytes,

@@ -13,6 +13,8 @@ import '../theme/app_colors.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/pin_pad_sheet.dart';
+import '../widgets/tempo_toast.dart';
+import 'avatar_crop_screen.dart';
 
 /// Opens the Liquid Glass Profile Switcher modal sheet.
 /// Users double-tap any profile to verify its 4-digit PIN and switch, or create a new local profile.
@@ -618,20 +620,26 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
     final picker = ImagePicker();
     final xfile = await picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 600,
+      imageQuality: 92,
+      maxWidth: 1600,
     );
-    if (xfile != null && mounted) {
-      setState(() => _pickedImagePath = xfile.path);
+    if (xfile == null || !mounted) return;
+    final croppedBytes = await Navigator.of(context).push<Uint8List?>(
+      MaterialPageRoute(
+        builder: (_) => AvatarCropScreen(imagePath: xfile.path),
+      ),
+    );
+    if (croppedBytes == null || !mounted) return;
+    final tempPath = await LocalMediaService.saveTempAvatarBytes(croppedBytes);
+    if (tempPath.isNotEmpty && mounted) {
+      setState(() => _pickedImagePath = tempPath);
     }
   }
 
   Future<void> _continueToPin() async {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a profile name')),
-      );
+      showTempoToast(context, 'Please enter a profile name', isError: true);
       return;
     }
 
@@ -677,9 +685,7 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not create profile: $e')),
-        );
+        showTempoToast(context, 'Could not create profile: $e', isError: true);
       }
     }
   }

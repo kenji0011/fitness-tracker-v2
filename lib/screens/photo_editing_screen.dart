@@ -12,6 +12,7 @@ import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_toast.dart';
 
 class PhotoEditingScreen extends StatefulWidget {
   final String sourceImagePath;
@@ -93,9 +94,7 @@ class _PhotoEditingScreenState extends State<PhotoEditingScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save photo: $e')),
-        );
+        showTempoToast(context, 'Could not save photo: $e', isError: true);
       }
     }
   }

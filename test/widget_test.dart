@@ -7,26 +7,37 @@ import 'package:tempo_fitness/config/app_version.dart';
 import 'package:tempo_fitness/data/fitness_journey_workouts.dart';
 import 'package:tempo_fitness/screens/about_app_screen.dart';
 import 'package:tempo_fitness/screens/add_data_screen.dart';
+import 'package:tempo_fitness/screens/avatar_crop_screen.dart';
+import 'package:tempo_fitness/screens/custom_workout_builder_screen.dart';
 import 'package:tempo_fitness/screens/fitness_journey_detail_screen.dart';
+import 'package:tempo_fitness/screens/health_dashboard.dart';
 import 'package:tempo_fitness/screens/intro_walkthrough_screen.dart';
 import 'package:tempo_fitness/screens/manage_summary_features_screen.dart';
+import 'package:tempo_fitness/screens/metric_detail_screen.dart';
 import 'package:tempo_fitness/screens/my_profile.dart';
+import 'package:tempo_fitness/screens/photo_compare_screen.dart';
 import 'package:tempo_fitness/screens/photo_editing_screen.dart';
 import 'package:tempo_fitness/screens/profile_switcher_screen.dart';
 import 'package:tempo_fitness/screens/progress_album_screen.dart';
 import 'package:tempo_fitness/screens/progress_tracking_screen.dart';
 import 'package:tempo_fitness/screens/sleep_detail_screen.dart';
+import 'package:tempo_fitness/screens/tempo_shell_screen.dart';
 import 'package:tempo_fitness/screens/terms_and_conditions_screen.dart';
+import 'package:tempo_fitness/screens/water_detail_screen.dart';
 import 'package:tempo_fitness/screens/weight_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_screen.dart';
+import 'package:tempo_fitness/models/local_profile.dart';
 import 'package:tempo_fitness/services/active_profile_provider.dart';
 import 'package:tempo_fitness/services/tempo_rust_db.dart';
 import 'package:tempo_fitness/theme/theme_provider.dart';
 import 'package:tempo_fitness/widgets/ios_stretch_sheet.dart';
 import 'package:tempo_fitness/widgets/liquid_glass_nav_bar.dart';
 import 'package:tempo_fitness/widgets/oval_activity_rings.dart';
+import 'package:tempo_fitness/widgets/reorderable_summary_grid.dart';
+import 'package:tempo_fitness/widgets/streak_heatmap_card.dart';
 import 'package:tempo_fitness/widgets/tempo_sliver_header.dart';
+import 'package:tempo_fitness/widgets/tempo_spotlight_tour.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -132,6 +143,26 @@ void main() {
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
     expect(profileDoubleTapped, true);
+
+    // Minimized scroll mode collapses labels smoothly into icons-only capsule
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => ThemeProvider(),
+        child: MaterialApp(
+          home: Scaffold(
+            bottomNavigationBar: LiquidGlassNavBar(
+              currentIndex: 0,
+              minimized: true,
+              onTap: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Summary'), findsNothing);
+    expect(find.text('Workout'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('OvalActivityRings animates and responds to ring taps in Light & Dark mode', (tester) async {
@@ -257,8 +288,12 @@ void main() {
     await tester.tap(find.text('14D'));
     await tester.pumpAndSettle();
 
-    // Scroll down to reveal bento cards, segment switcher & PR list
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -440));
+    // Scroll down to reveal heatmap, bento cards, segment switcher & PR list
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -520));
+    await tester.pumpAndSettle();
+    expect(find.text('Activity heatmap'), findsOneWidget);
+
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -320));
     await tester.pumpAndSettle();
 
     expect(find.text('Bench Press'), findsAtLeastNWidgets(1));
@@ -509,7 +544,7 @@ void main() {
     expect(find.text('Competition'), findsNothing);
     expect(find.byIcon(CupertinoIcons.add), findsNothing);
 
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -240));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -360));
     await tester.pumpAndSettle();
     expect(find.text(kTempoDisplayVersion), findsOneWidget);
     expect(kTempoDisplayVersion.endsWith(' - R'), isTrue);
@@ -770,7 +805,7 @@ void main() {
     expect(find.text('lb'), findsWidgets);
     expect(find.text('136.14'), findsOneWidget);
 
-    // Tap Body composition card -> opens animated BMI popup with spectrum bar & trend graph
+    // Tap Body composition card -> opens clean BMI popup with spectrum bar (no BMI trend graph)
     await tester.tap(find.text('Body composition'));
     await tester.pumpAndSettle();
     expect(find.text('Level'), findsOneWidget);
@@ -778,14 +813,8 @@ void main() {
     expect(find.text('18.5'), findsOneWidget);
     expect(find.text('24'), findsOneWidget);
     expect(find.text('28'), findsOneWidget);
-    expect(find.text('BMI trend'), findsOneWidget);
+    expect(find.text('BMI trend'), findsNothing);
     expect(find.text('Collapse'), findsOneWidget);
-
-    // Switch BMI trend graph timeframe
-    await tester.tap(find.text('30D'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('7D'));
-    await tester.pumpAndSettle();
 
     // Dismiss via Collapse button
     await tester.tap(find.text('Collapse'));
@@ -962,12 +991,23 @@ void main() {
     expect(find.text('Log Health Data'), findsOneWidget);
     expect(find.text('Save sleep'), findsOneWidget);
     expect(find.text('Date'), findsOneWidget);
+    // Sleep uses HyperOS-style drum wheels for hrs : min
+    expect(find.text('hrs'), findsOneWidget);
+    expect(find.text('min'), findsOneWidget);
 
-    // Switch metric to Steps -> hides Date and updates save CTA
+    // Switch metric to Steps -> hides Date, shows always-visible 'steps' wheel unit
     await tester.tap(find.text('Steps'));
     await tester.pumpAndSettle();
     expect(find.text('Save steps'), findsOneWidget);
+    expect(find.text('steps'), findsOneWidget);
     expect(find.text('Date'), findsNothing);
+
+    // Switch metric to Activity -> shows hrs : min drum wheels
+    await tester.tap(find.text('Activity'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save activity'), findsOneWidget);
+    expect(find.text('hrs'), findsOneWidget);
+    expect(find.text('min'), findsOneWidget);
 
     await themeProvider.toggleTheme(true);
     await tester.pumpAndSettle();
@@ -1075,6 +1115,417 @@ void main() {
 
     await themeProvider.toggleTheme(true);
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('MetricDetailScreen renders unified Weight-style layout for Steps', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 62,
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: MetricDetailScreen(kind: TempoMetricKind.steps),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Steps'), findsWidgets);
+    expect(find.text('Latest'), findsOneWidget);
+    expect(find.text('Week'), findsOneWidget);
+    expect(find.text('Add data'), findsOneWidget);
+
+    await tester.tap(find.byIcon(CupertinoIcons.ellipsis_vertical));
+    await tester.pumpAndSettle();
+    expect(find.text('Daily goal'), findsOneWidget);
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('WaterDetailScreen logs quick hydration and supports Dark Mode', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 62,
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: WaterDetailScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Water'), findsOneWidget);
+    expect(find.text('+250 ml'), findsOneWidget);
+    await tester.tap(find.text('+250 ml'));
+    await tester.pumpAndSettle();
+    expect(find.text('250'), findsOneWidget);
+
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('PhotoCompareScreen, StreakHeatmapCard, and CustomWorkoutBuilderScreen render cleanly', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 62,
+    );
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    final pBefore = LocalProgressPhoto(
+      id: 'b1',
+      profileId: profile.id,
+      filePath: '',
+      caption: 'Day 1',
+      category: 'Front',
+      weightKg: 65,
+      takenAt: DateTime.now().subtract(const Duration(days: 30)),
+    );
+    final pAfter = LocalProgressPhoto(
+      id: 'a1',
+      profileId: profile.id,
+      filePath: '',
+      caption: 'Day 30',
+      category: 'Front',
+      weightKg: 62,
+      takenAt: DateTime.now(),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: PhotoCompareScreen(
+            photos: [pAfter, pBefore],
+            weightUnit: 'kg',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Compare'), findsOneWidget);
+    expect(find.text('Split'), findsOneWidget);
+    await tester.tap(find.text('Split'));
+    await tester.pumpAndSettle();
+    expect(find.text('Slider'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // StreakHeatmapCard
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: Padding(
+              padding: EdgeInsets.all(16),
+              child: StreakHeatmapCard(
+                dailyHistory: [],
+                workoutDayKeys: {},
+                currentStreak: 3,
+                longestStreak: 7,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Activity heatmap'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // CustomWorkoutBuilderScreen
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: CustomWorkoutBuilderScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Custom Workout'), findsWidgets);
+    expect(find.text('Routine name'), findsOneWidget);
+    expect(find.byIcon(CupertinoIcons.checkmark_alt), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('TempoShellScreen switches away from Profile back to Summary and Workout without freezing', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 62,
+    );
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: TempoShellScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Navigate to Profile (last child in Stack)
+    await tester.tap(find.text('Profile').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Dark mode'), findsOneWidget);
+
+    // Navigate back to Summary -> Profile AnimatedOpacity AND its FadeTransition must reach 0.0
+    await tester.tap(find.text('Summary').last);
+    await tester.pumpAndSettle();
+
+    final summaryPane = find.ancestor(
+      of: find.byType(HealthDashboard),
+      matching: find.byType(AnimatedOpacity),
+    );
+    final profilePane = find.ancestor(
+      of: find.byType(MyProfile),
+      matching: find.byType(AnimatedOpacity),
+    );
+    final summaryFade = tester.widget<FadeTransition>(
+      find.descendant(of: summaryPane, matching: find.byType(FadeTransition)).first,
+    );
+    final profileFade = tester.widget<FadeTransition>(
+      find.descendant(of: profilePane, matching: find.byType(FadeTransition)).first,
+    );
+    expect(summaryFade.opacity.value, 1.0);
+    expect(profileFade.opacity.value, 0.0);
+
+    // Navigate to Workout -> Workout active (1.0), Summary & Profile faded to 0.0
+    await tester.tap(find.text('Workout').last);
+    await tester.pumpAndSettle();
+    final workoutPane = find.ancestor(
+      of: find.byType(WorkoutScreen),
+      matching: find.byType(AnimatedOpacity),
+    );
+    final workoutFade = tester.widget<FadeTransition>(
+      find.descendant(of: workoutPane, matching: find.byType(FadeTransition)).first,
+    );
+    expect(summaryFade.opacity.value, 0.0);
+    expect(workoutFade.opacity.value, 1.0);
+    expect(profileFade.opacity.value, 0.0);
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('AvatarCropScreen renders circular crop controls and ReorderableSummaryGrid reorders on long-press drag', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final themeProvider = ThemeProvider();
+
+    // 1. AvatarCropScreen
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: const MaterialApp(
+          home: AvatarCropScreen(imagePath: ''),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Move and Scale'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Choose'), findsOneWidget);
+    await tester.tap(find.byIcon(CupertinoIcons.rotate_right));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // 2. ReorderableSummaryGrid hold-and-drag reorder
+    List<String> order = ['sleep', 'weight', 'waist', 'water'];
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Padding(
+              padding: const EdgeInsets.all(16),
+              child: StatefulBuilder(
+                builder: (ctx, setState) => ReorderableSummaryGrid(
+                  itemIds: order,
+                  itemBuilder: (_, id, __) => Container(
+                    alignment: Alignment.center,
+                    color: Colors.grey.shade200,
+                    child: Text(id),
+                  ),
+                  onReorder: (next) => setState(() => order = next),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sleepCenter = tester.getCenter(find.text('sleep'));
+    final weightCenter = tester.getCenter(find.text('weight'));
+    final gesture = await tester.startGesture(sleepCenter);
+    await tester.pump(const Duration(milliseconds: 600));
+    await gesture.moveTo(weightCenter);
+    await tester.pump(const Duration(milliseconds: 260));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(order[0], 'weight');
+    expect(order[1], 'sleep');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('TempoSpotlightTour highlights targets step-by-step and remembers seen state', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 62,
+    );
+    final themeProvider = ThemeProvider();
+    final k1 = GlobalKey();
+    final k2 = GlobalKey();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (ctx) => Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(key: k1, width: 120, height: 48, color: Colors.orange),
+                  const SizedBox(height: 24),
+                  Container(key: k2, width: 140, height: 48, color: Colors.blue),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: () {
+                      TempoSpotlightTour.showIfNeeded(
+                        context: ctx,
+                        profileId: profile.id,
+                        screenId: 'test_screen',
+                        delay: Duration.zero,
+                        ignoreTestGuard: true,
+                        steps: [
+                          TempoSpotlightStep(
+                            targetKey: k1,
+                            title: 'First Feature',
+                            description: 'Tap here to try the first feature.',
+                          ),
+                          TempoSpotlightStep(
+                            targetKey: k2,
+                            title: 'Second Feature',
+                            description: 'Hold here to customize layout.',
+                          ),
+                        ],
+                      );
+                    },
+                    child: const Text('Start Tour'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Start Tour'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.text('Tip 1 of 2'), findsOneWidget);
+    expect(find.text('First Feature'), findsOneWidget);
+    expect(find.text('Next'), findsOneWidget);
+
+    await tester.tap(find.text('Next'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(find.text('Tip 2 of 2'), findsOneWidget);
+    expect(find.text('Second Feature'), findsOneWidget);
+    expect(find.text('Got it'), findsOneWidget);
+
+    await tester.tap(find.text('Got it'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Second Feature'), findsNothing);
+
+    // Second trigger is a no-op because screenId was persisted as seen
+    await tester.tap(find.text('Start Tour'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('First Feature'), findsNothing);
     expect(tester.takeException(), isNull);
 
     await db.deleteProfile(profile.id);

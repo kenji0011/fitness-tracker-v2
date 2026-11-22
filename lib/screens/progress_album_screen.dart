@@ -13,8 +13,10 @@ import '../services/active_profile_provider.dart';
 import '../services/local_media_service.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
+import 'photo_compare_screen.dart';
 import 'photo_editing_screen.dart';
 
 class ProgressAlbumScreen extends StatefulWidget {
@@ -77,47 +79,95 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
 
   Future<bool> _confirmAndDeletePhoto(LocalProgressPhoto photo) async {
     final c = AppColors.of(context, listen: false);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showTempoSheet<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: c.card,
-        surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Text(
-          'Delete photo?',
-          style: TextStyle(
-            color: c.textPrimary,
-            fontSize: 19,
-            fontWeight: FontWeight.w700,
+      backgroundColor: c.card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) {
+        final mc = AppColors.of(ctx);
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            10,
+            20,
+            MediaQuery.paddingOf(ctx).bottom + 20,
           ),
-        ),
-        content: Text(
-          'This removes the progress photo permanently from local device storage.',
-          style: TextStyle(color: c.textSecondary, fontSize: 14.5, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              'Cancel',
-              style: TextStyle(
-                color: c.textSecondary,
-                fontWeight: FontWeight.w600,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Delete photo?',
+                style: TextStyle(
+                  color: mc.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(
-              'Delete',
-              style: TextStyle(
-                color: c.moveRed,
-                fontWeight: FontWeight.w700,
+              const SizedBox(height: 6),
+              Text(
+                'This removes the progress photo permanently from local device storage.',
+                style: TextStyle(
+                  color: mc.textSecondary,
+                  fontSize: 14,
+                  height: 1.4,
+                ),
               ),
-            ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          backgroundColor: mc.searchBg,
+                          foregroundColor: mc.textPrimary,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: mc.moveRed,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        child: const Text(
+                          'Delete',
+                          style: TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
     if (confirmed != true) return false;
 
@@ -130,120 +180,124 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
     return true;
   }
 
-  /// Native Material 3 Android bottom sheet used by both Add First Photo & the + button.
+  /// Unified Tempo spring & stretch sheet used by both Add First Photo & the + button.
   void _showAddOptions() {
     HapticFeedback.selectionClick();
     final c = AppColors.of(context, listen: false);
-    showModalBottomSheet<void>(
+    showTempoSheet<void>(
       context: context,
       backgroundColor: c.card,
+      borderRadius: 28,
       showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (ctx) {
         final mc = AppColors.of(ctx);
-        return SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 2, 8, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Add progress photo',
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            18,
+            6,
+            18,
+            MediaQuery.paddingOf(ctx).bottom + 18,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 2, 4, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Add progress photo',
+                      style: TextStyle(
+                        color: mc.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Stored privately on your phone',
+                      style: TextStyle(
+                        color: mc.textSecondary,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Material(
+                color: mc.searchBg,
+                borderRadius: BorderRadius.circular(18),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: Icon(
+                        Icons.photo_camera_outlined,
+                        color: mc.textPrimary,
+                      ),
+                      title: Text(
+                        'Take photo',
                         style: TextStyle(
                           color: mc.textPrimary,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.2,
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        'Stored privately on your phone',
+                      subtitle: Text(
+                        'Capture a new check-in with camera',
                         style: TextStyle(
-                          color: mc.textSecondary,
-                          fontSize: 13.5,
+                          color: mc.textTertiary,
+                          fontSize: 12.5,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                Material(
-                  color: mc.searchBg,
-                  borderRadius: BorderRadius.circular(18),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: Icon(
-                          Icons.photo_camera_outlined,
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        _addPhoto(ImageSource.camera);
+                      },
+                    ),
+                    Divider(
+                      height: 1,
+                      indent: 56,
+                      color: mc.divider,
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        Icons.photo_library_outlined,
+                        color: mc.textPrimary,
+                      ),
+                      title: Text(
+                        'Choose from gallery',
+                        style: TextStyle(
                           color: mc.textPrimary,
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w500,
                         ),
-                        title: Text(
-                          'Take photo',
-                          style: TextStyle(
-                            color: mc.textPrimary,
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Capture a new check-in with camera',
-                          style: TextStyle(
-                            color: mc.textTertiary,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          _addPhoto(ImageSource.camera);
-                        },
                       ),
-                      Divider(
-                        height: 1,
-                        indent: 56,
-                        color: mc.divider,
+                      subtitle: Text(
+                        'Pick an existing photo from your device',
+                        style: TextStyle(
+                          color: mc.textTertiary,
+                          fontSize: 12.5,
+                        ),
                       ),
-                      ListTile(
-                        leading: Icon(
-                          Icons.photo_library_outlined,
-                          color: mc.textPrimary,
-                        ),
-                        title: Text(
-                          'Choose from gallery',
-                          style: TextStyle(
-                            color: mc.textPrimary,
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Pick an existing photo from your device',
-                          style: TextStyle(
-                            color: mc.textTertiary,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.of(ctx).pop();
-                          _addPhoto(ImageSource.gallery);
-                        },
-                      ),
-                    ],
-                  ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        _addPhoto(ImageSource.gallery);
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
-                TextButton(
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 48,
+                child: TextButton(
                   style: TextButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48),
+                    backgroundColor: mc.searchBg,
+                    foregroundColor: mc.textPrimary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),
@@ -252,14 +306,14 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
                   child: Text(
                     'Cancel',
                     style: TextStyle(
-                      color: mc.textSecondary,
+                      color: mc.textPrimary,
                       fontSize: 15.5,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -301,6 +355,27 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
             title: 'Progress Album',
             showBackButton: true,
             actions: [
+              if (_photos.length >= 2)
+                TempoHeaderAction(
+                  tooltip: 'Compare Photos',
+                  icon: Icon(
+                    Icons.compare_rounded,
+                    size: 21,
+                    color: c.textPrimary,
+                  ),
+                  onPressed: () {
+                    HapticFeedback.selectionClick();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PhotoCompareScreen(
+                          photos: _photos,
+                          weightUnit: _weightUnit,
+                        ),
+                      ),
+                    );
+                  },
+                ),
               TempoHeaderAction(
                 tooltip: 'Add Photo',
                 icon: Icon(CupertinoIcons.add, size: 22, color: c.textPrimary),

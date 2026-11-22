@@ -25,8 +25,8 @@ class AppColors {
       ? Colors.white.withValues(alpha: 0.10)
       : Colors.black.withValues(alpha: 0.06);
 
-  // --- Primary & Semantic Apple Accents ---
-  Color get accent => isDark ? const Color(0xFF0A84FF) : const Color(0xFF007AFF);
+  // --- Primary & Semantic Tempo Accents (Unified Tempo Orange) ---
+  Color get accent => isDark ? const Color(0xFFFF7A33) : const Color(0xFFFF6A24);
   Color get accentSoft => accent.withValues(alpha: isDark ? 0.18 : 0.12);
   Color get moveRed => isDark ? const Color(0xFFFF453A) : const Color(0xFFFF3B30);
   Color get exerciseGreen => isDark ? const Color(0xFF30D158) : const Color(0xFF34C759);

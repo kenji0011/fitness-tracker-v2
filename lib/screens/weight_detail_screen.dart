@@ -1254,6 +1254,8 @@ class _WeightTrendChart extends StatelessWidget {
                 ),
               ],
             ),
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
           ),
         ),
         const SizedBox(height: 8),

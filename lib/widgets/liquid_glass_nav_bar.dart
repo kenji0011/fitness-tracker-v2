@@ -40,6 +40,7 @@ class LiquidGlassNavBar extends StatefulWidget {
   final VoidCallback? onProfileDoubleTap;
   final String? profileName;
   final String? profileAvatarPath;
+  final bool minimized;
   final List<LiquidGlassNavItem> items;
 
   const LiquidGlassNavBar({
@@ -49,6 +50,7 @@ class LiquidGlassNavBar extends StatefulWidget {
     this.onProfileDoubleTap,
     this.profileName,
     this.profileAvatarPath,
+    this.minimized = false,
     this.items = const [
       LiquidGlassNavItem(
         label: 'Summary',
@@ -94,6 +96,10 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   late final AnimationController _iconBounceController;
   int _bouncingTabIndex = -1;
 
+  /// Smooth scroll-driven liquid collapse (0.0 = expanded with labels, 1.0 = compact icons-only pill)
+  late final AnimationController _minimizeController;
+  late final Animation<double> _minimizeAnimation;
+
   Timer? _tapPulseTimer;
   DateTime? _lastProfileTapTime;
 
@@ -138,6 +144,18 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       vsync: this,
       duration: const Duration(milliseconds: 420),
     );
+
+    _minimizeController = AnimationController(
+      vsync: this,
+      value: widget.minimized ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 300),
+      reverseDuration: const Duration(milliseconds: 320),
+    );
+    _minimizeAnimation = CurvedAnimation(
+      parent: _minimizeController,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeOutCubic,
+    );
   }
 
   Future<void> _loadShader() async {
@@ -167,6 +185,13 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
         _animatePosTo(widget.currentIndex.toDouble());
       }
     }
+    if (oldWidget.minimized != widget.minimized) {
+      if (widget.minimized) {
+        _minimizeController.forward();
+      } else {
+        _minimizeController.reverse();
+      }
+    }
   }
 
   @override
@@ -175,6 +200,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     _lensController.dispose();
     _slideController.dispose();
     _iconBounceController.dispose();
+    _minimizeController.dispose();
     super.dispose();
   }
 
@@ -352,332 +378,381 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     final dpr = MediaQuery.devicePixelRatioOf(context);
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        18,
-        0,
-        18,
-        bottomPadding > 0 ? bottomPadding : 14,
-      ),
-      child: Center(
-        heightFactor: 1,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: SizedBox(
-            key: _barKey,
-            height: 82,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final totalWidth = constraints.maxWidth;
-                final tabWidth = totalWidth / widget.items.length;
+    return AnimatedBuilder(
+      animation: _minimizeAnimation,
+      builder: (context, _) {
+        final m = _minimizeAnimation.value.clamp(0.0, 1.0);
+        final hPad = ui.lerpDouble(18.0, 48.0, m)!;
+        final maxBarWidth = ui.lerpDouble(460.0, 272.0, m)!;
+        final dockBoxHeight = ui.lerpDouble(82.0, 66.0, m)!;
+        final capsuleInsetV = ui.lerpDouble(9.0, 7.0, m)!;
+        final capsuleHeight = dockBoxHeight - capsuleInsetV * 2;
+        final capsuleRadius = capsuleHeight / 2;
+        final labelReveal = (1.0 - m * 1.45).clamp(0.0, 1.0);
+        final labelHeightFactor = (1.0 - m).clamp(0.0, 1.0);
 
-                return MouseRegion(
-                  onEnter: (e) => _handleHoverEnter(e, totalWidth),
-                  onHover: (e) => _handleHoverMove(e, totalWidth),
-                  onExit: _handleHoverExit,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (details) =>
-                        _handleTapAt(details.localPosition.dx, totalWidth),
-                    onHorizontalDragStart: (d) =>
-                        _handleDragStart(d, totalWidth),
-                    onHorizontalDragUpdate: (d) =>
-                        _handleDragUpdate(d, totalWidth),
-                    onHorizontalDragEnd: _handleDragEnd,
-                    onHorizontalDragCancel: _handleDragCancel,
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([
-                        _lensAnimation,
-                        _slideController,
-                        _iconBounceController,
-                      ]),
-                      builder: (context, _) {
-                        final t = _lensAnimation.value.clamp(0.0, 1.12);
-                        final tClamped = t.clamp(0.0, 1.0);
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            hPad,
+            0,
+            hPad,
+            bottomPadding > 0 ? bottomPadding : 14,
+          ),
+          child: Center(
+            heightFactor: 1,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxBarWidth),
+              child: SizedBox(
+                key: _barKey,
+                height: dockBoxHeight,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final totalWidth = constraints.maxWidth;
+                    final tabWidth = totalWidth / widget.items.length;
 
-                        // Volume-preserving liquid droplet stretch
-                        final slideWave = _slideController.isAnimating
-                            ? math.sin(
-                                math.pi *
-                                    (_slideController.value * 1.15)
-                                        .clamp(0.0, 1.0),
-                              )
-                            : 0.0;
-                        final slideStretch = 0.18 *
-                            (_slideDistance / 3.0).clamp(0.0, 1.0) *
-                            slideWave;
-                        final totalStretch =
-                            math.max(_dragVelocityStretch, slideStretch);
+                    return MouseRegion(
+                      onEnter: (e) => _handleHoverEnter(e, totalWidth),
+                      onHover: (e) => _handleHoverMove(e, totalWidth),
+                      onExit: _handleHoverExit,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapUp: (details) =>
+                            _handleTapAt(details.localPosition.dx, totalWidth),
+                        onHorizontalDragStart: (d) =>
+                            _handleDragStart(d, totalWidth),
+                        onHorizontalDragUpdate: (d) =>
+                            _handleDragUpdate(d, totalWidth),
+                        onHorizontalDragEnd: _handleDragEnd,
+                        onHorizontalDragCancel: _handleDragCancel,
+                        child: AnimatedBuilder(
+                          animation: Listenable.merge([
+                            _lensAnimation,
+                            _slideController,
+                            _iconBounceController,
+                          ]),
+                          builder: (context, _) {
+                            final t = _lensAnimation.value.clamp(0.0, 1.12);
+                            final tClamped = t.clamp(0.0, 1.0);
 
-                        final scaleX = 1.0 + totalStretch;
-                        final scaleY = 1.0 - totalStretch * 0.55;
+                            // BitChord volume-preserving liquid droplet stretch (STRETCH=0.16, SQUASH=0.50)
+                            final slideWave = _slideController.isAnimating
+                                ? math.sin(
+                                    math.pi *
+                                        (_slideController.value * 1.15)
+                                            .clamp(0.0, 1.0),
+                                  )
+                                : 0.0;
+                            final slideStretch = 0.16 *
+                                (_slideDistance / 3.0).clamp(0.0, 1.0) *
+                                slideWave;
+                            final totalStretch =
+                                math.max(_dragVelocityStretch, slideStretch);
 
-                        // Resting subtle pill rect (follows continuous _currentPos so it never jumps!)
-                        final restPillWidth = (tabWidth - 10).clamp(64.0, 106.0);
-                        final restPillLeft = (_currentPos * tabWidth +
-                                (tabWidth - restPillWidth) / 2)
-                            .clamp(6.0, totalWidth - restPillWidth - 6.0);
+                            final scaleX = 1.0 + totalStretch;
+                            final scaleY = 1.0 - totalStretch * 0.50;
 
-                        // Active Liquid Glass droplet rect (inflates over icons when dragging/hovering/pulsing)
-                        final dropletWidth =
-                            (tabWidth * 1.02).clamp(76.0, 116.0) *
-                                ui.lerpDouble(0.88, 1.0, t)! *
-                                scaleX;
-                        final dropletHeight =
-                            ui.lerpDouble(52.0, 74.0, t)! * scaleY;
-                        final dropletTop = (82.0 - dropletHeight) / 2;
-                        final dropletLeft = (_currentPos * tabWidth +
-                                (tabWidth - dropletWidth) / 2)
-                            .clamp(-2.0, totalWidth - dropletWidth + 2.0);
+                            // Resting subtle pill rect (scales cleanly with minimized dock)
+                            final restPillWidth =
+                                (tabWidth - ui.lerpDouble(10.0, 8.0, m)!)
+                                    .clamp(46.0, 106.0);
+                            final restPillHeight =
+                                (capsuleHeight - 12.0).clamp(38.0, 52.0);
+                            final restPillTop =
+                                (dockBoxHeight - restPillHeight) / 2;
+                            final restPillLeft = (_currentPos * tabWidth +
+                                    (tabWidth - restPillWidth) / 2)
+                                .clamp(5.0, totalWidth - restPillWidth - 5.0);
 
-                        // Single source of truth for highlighted tab (never two blue tabs at once!)
-                        final activeVisualIndex = (_isDragging || _isHovering)
-                            ? _posToIndex(_currentPos)
-                            : widget.currentIndex;
+                            // Active Liquid Glass droplet rect (inflates over icons when dragging/hovering/pulsing)
+                            final dropletWidth =
+                                (tabWidth * 1.02).clamp(56.0, 116.0) *
+                                    ui.lerpDouble(0.88, 1.0, t)! *
+                                    scaleX;
+                            final dropletHeight = ui.lerpDouble(
+                                  restPillHeight,
+                                  ui.lerpDouble(74.0, 58.0, m)!,
+                                  t,
+                                )! *
+                                scaleY;
+                            final dropletTop =
+                                (dockBoxHeight - dropletHeight) / 2;
+                            final dropletLeft = (_currentPos * tabWidth +
+                                    (tabWidth - dropletWidth) / 2)
+                                .clamp(-2.0, totalWidth - dropletWidth + 2.0);
 
-                        // Compute exact screen-space rect for Impeller BackdropFilter shader
-                        final barOrigin =
-                            tClamped > 0.01 ? _barGlobalOrigin() : null;
-                        final dropletScreenRect = barOrigin != null
-                            ? Rect.fromLTWH(
-                                barOrigin.dx + dropletLeft,
-                                barOrigin.dy + dropletTop,
-                                dropletWidth,
-                                dropletHeight,
-                              )
-                            : Rect.zero;
+                            // Single source of truth for highlighted tab
+                            final activeVisualIndex =
+                                (_isDragging || _isHovering)
+                                    ? _posToIndex(_currentPos)
+                                    : widget.currentIndex;
 
-                        return Stack(
-                          clipBehavior: Clip.none,
-                          alignment: Alignment.center,
-                          children: [
-                            // LAYER 1: Outer floating frosted-glass capsule dock
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 9,
-                              bottom: 9,
-                              child: RepaintBoundary(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(34),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: isDark
-                                            ? Colors.black
-                                                .withValues(alpha: 0.52)
-                                            : Colors.black
-                                                .withValues(alpha: 0.09),
-                                        blurRadius: 28,
-                                        spreadRadius: -2,
-                                        offset: const Offset(0, 10),
-                                      ),
-                                    ],
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(34),
-                                    child: BackdropFilter(
-                                      filter: ui.ImageFilter.blur(
-                                        sigmaX: 28,
-                                        sigmaY: 28,
-                                      ),
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          borderRadius:
-                                              BorderRadius.circular(34),
-                                          gradient: LinearGradient(
-                                            begin: Alignment.topCenter,
-                                            end: Alignment.bottomCenter,
-                                            colors: isDark
-                                                ? [
-                                                    const Color(0xFF28282C)
-                                                        .withValues(
-                                                            alpha: 0.78),
-                                                    const Color(0xFF151518)
-                                                        .withValues(
-                                                            alpha: 0.84),
-                                                  ]
-                                                : [
-                                                    Colors.white.withValues(
-                                                        alpha: 0.86),
-                                                    const Color(0xFFF7F7F8)
-                                                        .withValues(
-                                                            alpha: 0.80),
-                                                  ],
-                                          ),
-                                          border: Border.all(
-                                            color: isDark
-                                                ? Colors.white
-                                                    .withValues(alpha: 0.14)
-                                                : Colors.black
-                                                    .withValues(alpha: 0.07),
-                                            width: 1,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                            // Compute exact screen-space rect for Impeller BackdropFilter shader
+                            final barOrigin =
+                                tClamped > 0.01 ? _barGlobalOrigin() : null;
+                            final dropletScreenRect = barOrigin != null
+                                ? Rect.fromLTWH(
+                                    barOrigin.dx + dropletLeft,
+                                    barOrigin.dy + dropletTop,
+                                    dropletWidth,
+                                    dropletHeight,
+                                  )
+                                : Rect.zero;
 
-                            // LAYER 2A: Subtle resting active pill (cleanly tracks _currentPos, fades out under droplet)
-                            if (tClamped < 0.99)
-                              Positioned(
-                                left: restPillLeft,
-                                top: 15,
-                                width: restPillWidth,
-                                height: 52,
-                                child: IgnorePointer(
-                                  child: Opacity(
-                                    opacity: (1.0 - tClamped).clamp(0.0, 1.0),
+                            return Stack(
+                              clipBehavior: Clip.none,
+                              alignment: Alignment.center,
+                              children: [
+                                // LAYER 1: Outer floating frosted-glass capsule dock
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  top: capsuleInsetV,
+                                  bottom: capsuleInsetV,
+                                  child: RepaintBoundary(
                                     child: Container(
                                       decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(26),
-                                        color: isDark
-                                            ? Colors.white
-                                                .withValues(alpha: 0.12)
-                                            : Colors.black
-                                                .withValues(alpha: 0.055),
+                                        borderRadius:
+                                            BorderRadius.circular(capsuleRadius),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: isDark
+                                                ? Colors.black
+                                                    .withValues(alpha: 0.52)
+                                                : Colors.black
+                                                    .withValues(alpha: 0.09),
+                                            blurRadius: 28,
+                                            spreadRadius: -2,
+                                            offset: const Offset(0, 10),
+                                          ),
+                                        ],
                                       ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-
-                            // LAYER 2B: Tab Icons & Labels
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 9,
-                              bottom: 9,
-                              child: Row(
-                                children: List.generate(widget.items.length, (i) {
-                                  final item = widget.items[i];
-                                  final isActive = i == activeVisualIndex;
-                                  final navOrange = isDark
-                                      ? const Color(0xFFFF7A33)
-                                      : const Color(0xFFFF6A24);
-                                  final activeTint =
-                                      isActive ? navOrange : c.navInactive;
-                                  final isProfileTab =
-                                      i == widget.items.length - 1;
-                                  final hasProfileAvatar = isProfileTab &&
-                                      (widget.profileName?.trim().isNotEmpty ??
-                                          false);
-
-                                  // SF-Symbols-inspired per-tab bounce/wiggle/lift animation on click
-                                  final animVal = (_bouncingTabIndex == i &&
-                                          _iconBounceController.isAnimating)
-                                      ? _iconBounceController.value
-                                      : 0.0;
-                                  final bounceScale = animVal > 0
-                                      ? 1.0 +
-                                          0.26 *
-                                              math.sin(animVal * math.pi) *
-                                              (1.0 - animVal * 0.35)
-                                      : 1.0;
-                                  // Tab 1 (Workout): subtle energetic tilt wiggle; Tab 2 (Progress): upward pop lift
-                                  final tiltAngle = (i == 1 && animVal > 0)
-                                      ? math.sin(animVal * math.pi * 3) *
-                                          0.16 *
-                                          (1.0 - animVal)
-                                      : 0.0;
-                                  final liftY = (i == 2 && animVal > 0)
-                                      ? -3.5 * math.sin(animVal * math.pi)
-                                      : 0.0;
-
-                                  return Expanded(
-                                    child: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Transform.translate(
-                                          offset: Offset(0, liftY),
-                                          child: Transform.rotate(
-                                            angle: tiltAngle,
-                                            child: Transform.scale(
-                                              scale: bounceScale,
-                                              child: hasProfileAvatar
-                                                  ? LocalProfileAvatar(
-                                                      name:
-                                                          widget.profileName!,
-                                                      avatarPath: widget
-                                                              .profileAvatarPath ??
-                                                          '',
-                                                      size: 25,
-                                                      showBorder: true,
-                                                      borderWidth: 1.8,
-                                                      borderColor: isActive
-                                                          ? navOrange
-                                                          : (isDark
-                                                              ? Colors.white
-                                                                  .withValues(
-                                                                      alpha:
-                                                                          0.35)
-                                                              : Colors.white),
-                                                      showShadow: false,
-                                                    )
-                                                  : _buildNavIcon(
-                                                      index: i,
-                                                      item: item,
-                                                      isActive: isActive,
-                                                      color: activeTint,
-                                                    ),
+                                      child: ClipRRect(
+                                        borderRadius:
+                                            BorderRadius.circular(capsuleRadius),
+                                        child: BackdropFilter(
+                                          filter: ui.ImageFilter.blur(
+                                            sigmaX: 28,
+                                            sigmaY: 28,
+                                          ),
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              borderRadius: BorderRadius.circular(
+                                                capsuleRadius,
+                                              ),
+                                              gradient: LinearGradient(
+                                                begin: Alignment.topCenter,
+                                                end: Alignment.bottomCenter,
+                                                colors: isDark
+                                                    ? [
+                                                        const Color(0xFF28282C)
+                                                            .withValues(
+                                                                alpha: 0.78),
+                                                        const Color(0xFF151518)
+                                                            .withValues(
+                                                                alpha: 0.84),
+                                                      ]
+                                                    : [
+                                                        Colors.white.withValues(
+                                                            alpha: 0.86),
+                                                        const Color(0xFFF7F7F8)
+                                                            .withValues(
+                                                                alpha: 0.80),
+                                                      ],
+                                              ),
+                                              border: Border.all(
+                                                color: isDark
+                                                    ? Colors.white
+                                                        .withValues(alpha: 0.14)
+                                                    : Colors.black
+                                                        .withValues(alpha: 0.07),
+                                                width: 1,
+                                              ),
                                             ),
                                           ),
                                         ),
-                                        const SizedBox(height: 3),
-                                        Text(
-                                          item.label,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: isActive
-                                                ? FontWeight.w700
-                                                : FontWeight.w500,
-                                            letterSpacing: -0.1,
-                                            color: activeTint,
-                                          ),
-                                        ),
-                                      ],
+                                      ),
                                     ),
-                                  );
-                                }),
-                              ),
-                            ),
-
-                            // LAYER 3 (TOP): Screen-space GPU Optical Liquid Glass Droplet
-                            // Only active when dragging, hovering, or briefly pulsing on tap
-                            if (tClamped > 0.01 && barOrigin != null)
-                              Positioned(
-                                left: dropletLeft,
-                                top: dropletTop,
-                                width: dropletWidth,
-                                height: dropletHeight,
-                                child: IgnorePointer(
-                                  child: _OpticalLiquidGlassDroplet(
-                                    program: _program,
-                                    screenRect: dropletScreenRect,
-                                    expansion: tClamped,
-                                    isDark: isDark,
-                                    dpr: dpr,
-                                    pressIntensity: _isDragging ? 0.85 : 0.30,
                                   ),
                                 ),
-                              ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
+
+                                // LAYER 2A: Subtle resting active pill (cleanly tracks _currentPos)
+                                if (tClamped < 0.99)
+                                  Positioned(
+                                    left: restPillLeft,
+                                    top: restPillTop,
+                                    width: restPillWidth,
+                                    height: restPillHeight,
+                                    child: IgnorePointer(
+                                      child: Opacity(
+                                        opacity:
+                                            (1.0 - tClamped).clamp(0.0, 1.0),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              restPillHeight / 2,
+                                            ),
+                                            color: isDark
+                                                ? Colors.white
+                                                    .withValues(alpha: 0.12)
+                                                : Colors.black
+                                                    .withValues(alpha: 0.055),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                // LAYER 2B: Tab Icons & Collapsing Labels
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  top: capsuleInsetV,
+                                  bottom: capsuleInsetV,
+                                  child: Row(
+                                    children:
+                                        List.generate(widget.items.length, (i) {
+                                      final item = widget.items[i];
+                                      final isActive = i == activeVisualIndex;
+                                      final activeTint =
+                                          isActive ? c.accent : c.navInactive;
+                                      final isProfileTab =
+                                          i == widget.items.length - 1;
+                                      final hasProfileAvatar = isProfileTab &&
+                                          (widget.profileName
+                                                  ?.trim()
+                                                  .isNotEmpty ??
+                                              false);
+
+                                      final animVal = (_bouncingTabIndex == i &&
+                                              _iconBounceController.isAnimating)
+                                          ? _iconBounceController.value
+                                          : 0.0;
+                                      final bounceScale = animVal > 0
+                                          ? 1.0 +
+                                              0.26 *
+                                                  math.sin(animVal * math.pi) *
+                                                  (1.0 - animVal * 0.35)
+                                          : 1.0;
+                                      final tiltAngle = (i == 1 && animVal > 0)
+                                          ? math.sin(animVal * math.pi * 3) *
+                                              0.16 *
+                                              (1.0 - animVal)
+                                          : 0.0;
+                                      final liftY = (i == 2 && animVal > 0)
+                                          ? -3.5 * math.sin(animVal * math.pi)
+                                          : 0.0;
+
+                                      return Expanded(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Transform.translate(
+                                              offset: Offset(0, liftY),
+                                              child: Transform.rotate(
+                                                angle: tiltAngle,
+                                                child: Transform.scale(
+                                                  scale: bounceScale,
+                                                  child: hasProfileAvatar
+                                                      ? LocalProfileAvatar(
+                                                          name: widget
+                                                              .profileName!,
+                                                          avatarPath: widget
+                                                                  .profileAvatarPath ??
+                                                              '',
+                                                          size: 25,
+                                                          showBorder: true,
+                                                          borderWidth: 1.8,
+                                                          borderColor: isActive
+                                                              ? c.accent
+                                                              : (isDark
+                                                                  ? Colors.white
+                                                                      .withValues(
+                                                                          alpha:
+                                                                              0.35)
+                                                                  : Colors
+                                                                      .white),
+                                                          showShadow: false,
+                                                        )
+                                                      : _buildNavIcon(
+                                                          index: i,
+                                                          item: item,
+                                                          isActive: isActive,
+                                                          color: activeTint,
+                                                        ),
+                                                ),
+                                              ),
+                                            ),
+                                            if (labelHeightFactor > 0.02)
+                                              ClipRect(
+                                                child: Align(
+                                                  alignment: Alignment.topCenter,
+                                                  heightFactor:
+                                                      labelHeightFactor,
+                                                  child: Opacity(
+                                                    opacity: labelReveal,
+                                                    child: Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                        top: 3,
+                                                      ),
+                                                      child: Text(
+                                                        item.label,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          fontWeight: isActive
+                                                              ? FontWeight.w700
+                                                              : FontWeight.w500,
+                                                          letterSpacing: -0.1,
+                                                          color: activeTint,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      );
+                                    }),
+                                  ),
+                                ),
+
+                                // LAYER 3 (TOP): Screen-space GPU Optical Liquid Glass Droplet
+                                if (tClamped > 0.01 && barOrigin != null)
+                                  Positioned(
+                                    left: dropletLeft,
+                                    top: dropletTop,
+                                    width: dropletWidth,
+                                    height: dropletHeight,
+                                    child: IgnorePointer(
+                                      child: _OpticalLiquidGlassDroplet(
+                                        program: _program,
+                                        screenRect: dropletScreenRect,
+                                        expansion: tClamped,
+                                        isDark: isDark,
+                                        dpr: dpr,
+                                        pressIntensity:
+                                            _isDragging ? 0.85 : 0.30,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

@@ -2,20 +2,26 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../config/app_version.dart';
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/local_backup_service.dart';
 import '../services/local_media_service.dart';
 import '../services/tempo_rust_db.dart';
+import '../services/weight_unit_helper.dart';
 import '../theme/app_colors.dart';
 import '../theme/theme_provider.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/pin_pad_sheet.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_spotlight_tour.dart';
+import '../widgets/tempo_toast.dart';
 import 'about_app_screen.dart';
+import 'avatar_crop_screen.dart';
 import 'intro_walkthrough_screen.dart';
 import 'permissions_screen.dart';
 import 'progress_album_screen.dart';
@@ -39,23 +45,177 @@ class MyProfile extends StatefulWidget {
 
 class _MyProfileState extends State<MyProfile> {
   final ImagePicker _imagePicker = ImagePicker();
+  String _weightUnit = 'kg';
+  bool _wasTickerEnabled = false;
+  final GlobalKey _avatarHintKey = GlobalKey();
+  final GlobalKey _identityHintKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWeightUnit();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = TickerMode.of(context);
+    if (enabled && !_wasTickerEnabled) {
+      _maybeShowSpotlight();
+    }
+    _wasTickerEnabled = enabled;
+  }
+
+  Future<void> _replayFeatureHints(LocalProfile profile) async {
+    await TempoSpotlightTour.resetAllTours(profile.id);
+    if (!mounted) return;
+    showTempoToast(
+      context,
+      'Feature hints reset — visit any tab to preview',
+    );
+    _maybeShowSpotlight(forceShow: true);
+  }
+
+  void _maybeShowSpotlight({bool forceShow = false}) {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    if (pid == null || pid.isEmpty) return;
+    TempoSpotlightTour.showIfNeeded(
+      context: context,
+      profileId: pid,
+      screenId: 'profile',
+      forceShow: forceShow,
+      delay: forceShow
+          ? const Duration(milliseconds: 120)
+          : const Duration(milliseconds: 520),
+      steps: [
+        TempoSpotlightStep(
+          targetKey: _avatarHintKey,
+          title: 'Crop your profile photo',
+          description:
+              'Tap your avatar anytime to upload from gallery or camera with pinch-to-zoom circular cropping.',
+          borderRadius: 999,
+          padding: const EdgeInsets.all(6),
+        ),
+        TempoSpotlightStep(
+          targetKey: _identityHintKey,
+          title: 'Quick profile switcher',
+          description:
+              'Double-tap your profile header or the Profile tab icon to switch between local profiles.',
+          borderRadius: 20,
+        ),
+      ],
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant MyProfile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.refreshVersion != oldWidget.refreshVersion) {
+      _loadWeightUnit();
+    }
+  }
+
+  Future<void> _loadWeightUnit() async {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    final unit = await WeightUnitHelper.loadUnit(pid);
+    if (mounted && unit != _weightUnit) {
+      setState(() => _weightUnit = unit);
+    }
+  }
 
   Future<void> _changeAvatar(LocalProfile profile) async {
+    final c = AppColors.of(context, listen: false);
+    final source = await showTempoSheet<ImageSource>(
+      context: context,
+      backgroundColor: c.card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) {
+        final mc = AppColors.of(ctx);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Update profile photo',
+                style: TextStyle(
+                  color: mc.textPrimary,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 48,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: mc.accent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(ImageSource.gallery),
+                  icon: const Icon(CupertinoIcons.photo_fill, size: 18),
+                  label: const Text(
+                    'Choose from gallery',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 48,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: mc.textPrimary,
+                    side: BorderSide(color: mc.cardBorder),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(ImageSource.camera),
+                  icon: const Icon(CupertinoIcons.camera_fill, size: 18),
+                  label: const Text(
+                    'Take photo',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (source == null || !mounted) return;
+
     final picked = await _imagePicker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 600,
+      source: source,
+      imageQuality: 92,
+      maxWidth: 1600,
     );
     if (picked == null || !mounted) return;
 
-    final savedPath = await LocalMediaService.saveProfileAvatar(
+    final croppedBytes = await Navigator.of(context).push<Uint8List?>(
+      MaterialPageRoute(
+        builder: (_) => AvatarCropScreen(imagePath: picked.path),
+      ),
+    );
+    if (croppedBytes == null || !mounted) return;
+
+    final savedPath = await LocalMediaService.saveProfileAvatarBytes(
       profileId: profile.id,
-      sourcePath: picked.path,
+      bytes: croppedBytes,
     );
     if (!mounted) return;
     await context.read<ActiveProfileProvider>().updateActiveProfile(
           avatarPath: savedPath,
         );
+    if (mounted) {
+      showTempoToast(context, 'Profile photo updated');
+    }
   }
 
   Future<void> _editProfileDetails(LocalProfile profile) async {
@@ -64,7 +224,10 @@ class _MyProfileState extends State<MyProfile> {
       text: profile.heightCm > 0 ? profile.heightCm.toStringAsFixed(0) : '',
     );
     final weightCtrl = TextEditingController(
-      text: profile.weightKg > 0 ? profile.weightKg.toStringAsFixed(1) : '',
+      text: profile.weightKg > 0
+          ? WeightUnitHelper.toDisplay(profile.weightKg, _weightUnit)
+              .toStringAsFixed(1)
+          : '',
     );
     final calGoalCtrl =
         TextEditingController(text: profile.dailyCaloriesGoal.toString());
@@ -106,7 +269,9 @@ class _MyProfileState extends State<MyProfile> {
                 children: [
                   Expanded(child: _dialogField('Height (cm)', heightCtrl, c)),
                   const SizedBox(width: 10),
-                  Expanded(child: _dialogField('Weight (kg)', weightCtrl, c)),
+                  Expanded(
+                    child: _dialogField('Weight ($_weightUnit)', weightCtrl, c),
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -144,12 +309,16 @@ class _MyProfileState extends State<MyProfile> {
     );
 
     if (saved == true && mounted) {
+      final parsedWeight = double.tryParse(weightCtrl.text.trim());
+      final weightKg = parsedWeight != null
+          ? WeightUnitHelper.fromDisplay(parsedWeight, _weightUnit)
+          : null;
       await context.read<ActiveProfileProvider>().updateActiveProfile(
             displayName: nameCtrl.text.trim().isNotEmpty
                 ? nameCtrl.text.trim()
                 : null,
             heightCm: double.tryParse(heightCtrl.text.trim()),
-            weightKg: double.tryParse(weightCtrl.text.trim()),
+            weightKg: weightKg,
             dailyCaloriesGoal: int.tryParse(calGoalCtrl.text.trim()),
             dailyMinutesGoal: int.tryParse(minGoalCtrl.text.trim()),
             dailyStepsGoal: int.tryParse(stepsGoalCtrl.text.trim()),
@@ -226,17 +395,259 @@ class _MyProfileState extends State<MyProfile> {
         newPin: newPin,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('4-digit PIN updated successfully')),
-        );
+        showTempoToast(context, '4-digit PIN updated');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not update PIN: $e')),
-        );
+        showTempoToast(context, 'Could not update PIN: $e', isError: true);
       }
     }
+  }
+
+  Future<void> _openBackupSheet(LocalProfile profile) async {
+    final c = AppColors.of(context, listen: false);
+    final profileProvider = context.read<ActiveProfileProvider>();
+    List<LocalBackupEntry> backups = await LocalBackupService.listBackups();
+    bool busy = false;
+    if (!mounted) return;
+
+    await showTempoSheet<void>(
+      context: context,
+      backgroundColor: c.card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final mc = AppColors.of(ctx);
+          final maxH = MediaQuery.sizeOf(ctx).height * 0.68;
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxH),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Local Backup & Restore',
+                    style: TextStyle(
+                      color: mc.textPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Export your offline workouts, body metrics, hydration, and custom routines to a local JSON file on this device.',
+                    style: TextStyle(
+                      color: mc.textSecondary,
+                      fontSize: 13.5,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 48,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: mc.accent,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              setSheetState(() => busy = true);
+                              try {
+                                final res = await LocalBackupService
+                                    .exportProfileBackup(profile);
+                                final updated =
+                                    await LocalBackupService.listBackups();
+                                if (ctx.mounted) {
+                                  setSheetState(() {
+                                    backups = updated;
+                                    busy = false;
+                                  });
+                                }
+                                if (mounted) {
+                                  showTempoToast(
+                                    context,
+                                    'Saved ${res.fileName} (${res.recordCount} records)',
+                                  );
+                                }
+                              } catch (e) {
+                                if (ctx.mounted) {
+                                  setSheetState(() => busy = false);
+                                }
+                                if (mounted) {
+                                  showTempoToast(
+                                    context,
+                                    'Backup failed: $e',
+                                    isError: true,
+                                  );
+                                }
+                              }
+                            },
+                      icon: const Icon(
+                        CupertinoIcons.tray_arrow_down_fill,
+                        size: 18,
+                      ),
+                      label: Text(
+                        busy ? 'Working...' : 'Create local backup',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Saved backups (${backups.length})',
+                    style: TextStyle(
+                      color: mc.textSecondary,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (backups.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 16,
+                      ),
+                      decoration: BoxDecoration(
+                        color: mc.searchBg,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(
+                        'No local backups yet. Tap above to save your first snapshot.',
+                        style: TextStyle(
+                          color: mc.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                    )
+                  else
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: backups.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (_, i) {
+                          final entry = backups[i];
+                          final kb = (entry.sizeBytes / 1024).toStringAsFixed(1);
+                          final dateStr = DateFormat('MMM d, yyyy · HH:mm')
+                              .format(entry.modifiedAt.toLocal());
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 11,
+                            ),
+                            decoration: BoxDecoration(
+                              color: mc.searchBg,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: mc.cardBorder),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        entry.fileName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: mc.textPrimary,
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '$dateStr · $kb KB',
+                                        style: TextStyle(
+                                          color: mc.textSecondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                GestureDetector(
+                                  onTap: busy
+                                      ? null
+                                      : () async {
+                                          setSheetState(() => busy = true);
+                                          try {
+                                            final count = await LocalBackupService
+                                                .restoreBackupFile(
+                                              profileId: profile.id,
+                                              filePath: entry.filePath,
+                                            );
+                                            await profileProvider.refreshProfiles();
+                                            await _loadWeightUnit();
+                                            if (ctx.mounted) {
+                                              Navigator.of(ctx).pop();
+                                            }
+                                            if (mounted) {
+                                              showTempoToast(
+                                                context,
+                                                'Restored $count local records',
+                                              );
+                                            }
+                                          } catch (e) {
+                                            if (ctx.mounted) {
+                                              setSheetState(() => busy = false);
+                                            }
+                                            if (mounted) {
+                                              showTempoToast(
+                                                context,
+                                                'Restore failed: $e',
+                                                isError: true,
+                                              );
+                                            }
+                                          }
+                                        },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 7,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: mc.accent.withValues(
+                                        alpha: mc.isDark ? 0.20 : 0.12,
+                                      ),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      'Restore',
+                                      style: TextStyle(
+                                        color: mc.accent,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _confirmDeleteProfile(LocalProfile profile) async {
@@ -262,7 +673,14 @@ class _MyProfileState extends State<MyProfile> {
       parts.add('${profile.heightCm.toStringAsFixed(0)}cm');
     }
     if (profile.weightKg > 0) {
-      parts.add('${profile.weightKg.toStringAsFixed(1)}kg');
+      parts.add(
+        WeightUnitHelper.format(
+          profile.weightKg,
+          _weightUnit,
+          decimals: 1,
+          includeSpace: false,
+        ),
+      );
     }
     if (profile.age > 0) {
       parts.add('${profile.age}');
@@ -298,6 +716,7 @@ class _MyProfileState extends State<MyProfile> {
               children: [
                 // --- Clean Identity Header (Avatar, Name, Inline Bio/Metrics, Edit) ---
                 GestureDetector(
+                  key: _identityHintKey,
                   behavior: HitTestBehavior.opaque,
                   onTap: () => _editProfileDetails(profile),
                   onDoubleTap: () {
@@ -312,6 +731,7 @@ class _MyProfileState extends State<MyProfile> {
                     child: Row(
                       children: [
                         GestureDetector(
+                          key: _avatarHintKey,
                           onTap: () => _changeAvatar(profile),
                           child: LocalProfileAvatar(
                             name: profile.displayName,
@@ -433,6 +853,13 @@ class _MyProfileState extends State<MyProfile> {
                         ),
                       ),
                       _settingTile(
+                        icon: CupertinoIcons.tray_arrow_down_fill,
+                        badgeColor: c.accent,
+                        title: 'Backup & restore',
+                        c: c,
+                        onTap: () => _openBackupSheet(profile),
+                      ),
+                      _settingTile(
                         icon: CupertinoIcons.lock_rotation,
                         badgeColor: const Color(0xFF4BD166),
                         title: 'Change 4-digit PIN',
@@ -492,6 +919,13 @@ class _MyProfileState extends State<MyProfile> {
                             ),
                           ),
                         ),
+                      ),
+                      _settingTile(
+                        icon: CupertinoIcons.sparkles,
+                        badgeColor: c.accent,
+                        title: 'Replay feature hints',
+                        c: c,
+                        onTap: () => _replayFeatureHints(profile),
                       ),
                       _settingTile(
                         icon: CupertinoIcons.info,

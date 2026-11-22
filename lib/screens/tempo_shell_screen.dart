@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../services/active_profile_provider.dart';
@@ -25,13 +26,111 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
   int _currentIndex = 0;
   final Set<int> _mountedTabs = {0};
   String? _lastProfileId;
+  bool _navMinimized = false;
+  double _accumulatedScroll = 0.0;
+  ScrollDirection _lastUserDirection = ScrollDirection.idle;
+
+  static const double _minimizeThreshold = 48.0;
+  static const double _expandThreshold = 36.0;
 
   void _onSelectTab(int index) {
-    if (_currentIndex == index && _mountedTabs.contains(index)) return;
+    if (_currentIndex == index && _mountedTabs.contains(index)) {
+      if (_navMinimized) {
+        setState(() {
+          _navMinimized = false;
+          _accumulatedScroll = 0.0;
+        });
+      }
+      return;
+    }
     setState(() {
       _currentIndex = index;
       _mountedTabs.add(index);
+      _navMinimized = false;
+      _accumulatedScroll = 0.0;
+      _lastUserDirection = ScrollDirection.idle;
     });
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+
+    if (notification is UserScrollNotification) {
+      if (notification.direction != ScrollDirection.idle) {
+        _lastUserDirection = notification.direction;
+      }
+      return false;
+    }
+
+    if (notification is ScrollEndNotification) {
+      _accumulatedScroll = 0.0;
+      return false;
+    }
+
+    if (notification is ScrollUpdateNotification) {
+      final metrics = notification.metrics;
+      final delta = notification.scrollDelta ?? 0.0;
+      if (delta.abs() < 0.5 || metrics.maxScrollExtent <= 0) return false;
+
+      // Ignore rubber-band overscroll & bounce-back frames at top/bottom edges
+      if (metrics.outOfRange) {
+        _accumulatedScroll = 0.0;
+        return false;
+      }
+
+      // Always expand cleanly when back near the very top of the page
+      if (metrics.pixels <= 16 &&
+          (notification.dragDetails != null ||
+              _lastUserDirection == ScrollDirection.forward)) {
+        if (_navMinimized) {
+          setState(() {
+            _navMinimized = false;
+            _accumulatedScroll = 0.0;
+          });
+        }
+        return false;
+      }
+
+      final isUserDragging = notification.dragDetails != null;
+
+      // Ignore ballistic bottom-bounce rebounds (negative delta without a user
+      // upward scroll gesture or while settling right at maxScrollExtent)
+      if (delta < 0 &&
+          !isUserDragging &&
+          (_lastUserDirection != ScrollDirection.forward ||
+              metrics.pixels >= metrics.maxScrollExtent - 8)) {
+        _accumulatedScroll = 0.0;
+        return false;
+      }
+
+      // Ignore top-bounce rebounds when scrolling down
+      if (delta > 0 &&
+          !isUserDragging &&
+          _lastUserDirection != ScrollDirection.reverse) {
+        _accumulatedScroll = 0.0;
+        return false;
+      }
+
+      // Reset accumulator on direction reversal (BitChord FloatingTabBar pattern)
+      if ((_accumulatedScroll > 0 && delta < 0) ||
+          (_accumulatedScroll < 0 && delta > 0)) {
+        _accumulatedScroll = 0.0;
+      }
+      _accumulatedScroll += delta;
+
+      if (_accumulatedScroll >= _minimizeThreshold && !_navMinimized) {
+        setState(() {
+          _navMinimized = true;
+          _accumulatedScroll = 0.0;
+        });
+      } else if (_accumulatedScroll <= -_expandThreshold && _navMinimized) {
+        setState(() {
+          _navMinimized = false;
+          _accumulatedScroll = 0.0;
+        });
+      }
+    }
+    return false;
   }
 
   @override
@@ -53,50 +152,99 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
     return Scaffold(
       backgroundColor: c.scaffold,
       extendBody: true,
-      body: KeyedSubtree(
-        key: ValueKey('profile_shell_$activeProfileId'),
-        child: IndexedStack(
-          index: _currentIndex,
-          children: [
-            _mountedTabs.contains(0)
-                ? HealthDashboard(
-                    refreshVersion: dataVersion,
-                    onSwitchToWorkouts: () => _onSelectTab(1),
-                    onSwitchToProgress: () => _onSelectTab(2),
-                    onDoubleTapProfileSwitcher: () =>
-                        showProfileSwitcherSheet(context),
-                  )
-                : const SizedBox.shrink(),
-            _mountedTabs.contains(1)
-                ? WorkoutScreen(
-                    showChatbot: false,
-                    refreshVersion: dataVersion,
-                  )
-                : const SizedBox.shrink(),
-            _mountedTabs.contains(2)
-                ? ProgressTrackingScreen(
-                    embedded: true,
-                    refreshVersion: dataVersion,
-                  )
-                : const SizedBox.shrink(),
-            _mountedTabs.contains(3)
-                ? MyProfile(
-                    refreshVersion: dataVersion,
-                    showChatbot: false,
-                    onOpenProfileSwitcher: () =>
-                        showProfileSwitcherSheet(context),
-                  )
-                : const SizedBox.shrink(),
-          ],
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _handleScrollNotification,
+        child: KeyedSubtree(
+          key: ValueKey('profile_shell_$activeProfileId'),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _AnimatedTabPane(
+                active: _currentIndex == 0,
+                mounted: _mountedTabs.contains(0),
+                child: HealthDashboard(
+                  refreshVersion: dataVersion,
+                  onSwitchToWorkouts: () => _onSelectTab(1),
+                  onSwitchToProgress: () => _onSelectTab(2),
+                  onDoubleTapProfileSwitcher: () =>
+                      showProfileSwitcherSheet(context),
+                ),
+              ),
+              _AnimatedTabPane(
+                active: _currentIndex == 1,
+                mounted: _mountedTabs.contains(1),
+                child: WorkoutScreen(
+                  showChatbot: false,
+                  refreshVersion: dataVersion,
+                ),
+              ),
+              _AnimatedTabPane(
+                active: _currentIndex == 2,
+                mounted: _mountedTabs.contains(2),
+                child: ProgressTrackingScreen(
+                  embedded: true,
+                  refreshVersion: dataVersion,
+                ),
+              ),
+              _AnimatedTabPane(
+                active: _currentIndex == 3,
+                mounted: _mountedTabs.contains(3),
+                child: MyProfile(
+                  refreshVersion: dataVersion,
+                  showChatbot: false,
+                  onOpenProfileSwitcher: () =>
+                      showProfileSwitcherSheet(context),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: RepaintBoundary(
         child: LiquidGlassNavBar(
           currentIndex: _currentIndex,
+          minimized: _navMinimized,
           onTap: _onSelectTab,
           onProfileDoubleTap: () => showProfileSwitcherSheet(context),
           profileName: activeProfile?.displayName,
           profileAvatarPath: activeProfile?.avatarPath,
+        ),
+      ),
+    );
+  }
+}
+
+class _AnimatedTabPane extends StatelessWidget {
+  final bool active;
+  final bool mounted;
+  final Widget child;
+
+  const _AnimatedTabPane({
+    required this.active,
+    required this.mounted,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!mounted) return const SizedBox.shrink();
+    return IgnorePointer(
+      ignoring: !active,
+      child: ExcludeSemantics(
+        excluding: !active,
+        child: AnimatedOpacity(
+          opacity: active ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          child: AnimatedScale(
+            scale: active ? 1.0 : 0.985,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            child: TickerMode(
+              enabled: active,
+              child: child,
+            ),
+          ),
         ),
       ),
     );
