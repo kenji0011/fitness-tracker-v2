@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/step_counter_sync.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/bmi_detail_popup.dart';
@@ -72,7 +73,8 @@ class HealthDashboard extends StatefulWidget {
   State<HealthDashboard> createState() => _HealthDashboardState();
 }
 
-class _HealthDashboardState extends State<HealthDashboard> {
+class _HealthDashboardState extends State<HealthDashboard>
+    with WidgetsBindingObserver {
   final TempoRustDb _db = TempoRustDb.instance;
 
   LocalDashboardSummary? _summary;
@@ -82,10 +84,13 @@ class _HealthDashboardState extends State<HealthDashboard> {
   int _waterGoalMl = 2500;
   bool _isLoading = true;
   bool _pedometerActive = false;
-  int? _pedometerBaseline;
-  int _initialStoredSteps = 0;
+  bool _liveStepsEnabled = false;
+  bool _isStationary = false;
+  bool _ingestingStepEvent = false;
+  int? _pendingSensorSteps;
   int? _highlightedRing;
   StreamSubscription<StepCount>? _stepSub;
+  StreamSubscription<PedestrianStatus>? _pedestrianSub;
   bool _wasTickerEnabled = false;
 
   final GlobalKey _addDataHintKey = GlobalKey();
@@ -95,8 +100,15 @@ class _HealthDashboardState extends State<HealthDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadDashboard();
-    _initPedometer();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      _syncPedometerStream(forceResubscribe: true);
+    }
   }
 
   @override
@@ -153,7 +165,9 @@ class _HealthDashboardState extends State<HealthDashboard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stepSub?.cancel();
+    _pedestrianSub?.cancel();
     super.dispose();
   }
 
@@ -168,6 +182,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
         _db.getSetting('summary_features_$profileId'),
         _db.getBodyMetricHistory(profileId, 'water', limit: 60),
         _db.getSetting('water_goal_ml_$profileId'),
+        StepCounterSync.isLiveEnabled(profileId),
       ]);
       if (!mounted) return;
       final summary = results[0] as LocalDashboardSummary;
@@ -175,6 +190,7 @@ class _HealthDashboardState extends State<HealthDashboard> {
       final savedFeatures = results[2] as String?;
       final waterPts = results[3] as List<BodyMetricPoint>;
       final savedWaterGoal = int.tryParse((results[4] as String?) ?? '');
+      final liveEnabled = results[5] as bool;
       setState(() {
         _summary = summary;
         _weightUnit = savedUnit == 'lb' ? 'lb' : 'kg';
@@ -182,9 +198,10 @@ class _HealthDashboardState extends State<HealthDashboard> {
         _waterPoints = waterPts;
         _waterGoalMl =
             (savedWaterGoal != null && savedWaterGoal >= 500) ? savedWaterGoal : 2500;
-        _initialStoredSteps = summary.today.steps;
+        _liveStepsEnabled = liveEnabled;
         _isLoading = false;
       });
+      await _syncPedometerStream();
       if (mounted && TickerMode.of(context)) {
         _maybeShowSpotlight();
       }
@@ -194,46 +211,104 @@ class _HealthDashboardState extends State<HealthDashboard> {
     }
   }
 
-  Future<void> _initPedometer() async {
+  Future<void> _syncPedometerStream({bool forceResubscribe = false}) async {
     if (kIsWeb) return;
+    if (!_liveStepsEnabled) {
+      await _stepSub?.cancel();
+      await _pedestrianSub?.cancel();
+      _stepSub = null;
+      _pedestrianSub = null;
+      if (mounted && _pedometerActive) {
+        setState(() => _pedometerActive = false);
+      }
+      return;
+    }
+
+    if (forceResubscribe) {
+      await _stepSub?.cancel();
+      await _pedestrianSub?.cancel();
+      _stepSub = null;
+      _pedestrianSub = null;
+    }
+    if (_stepSub != null) return;
+
     try {
       final status = await Permission.activityRecognition.status;
       if (!status.isGranted) return;
 
-      _stepSub = Pedometer.stepCountStream.listen(
-        (event) async {
-          final profileId = mounted
-              ? context.read<ActiveProfileProvider>().activeProfileId
-              : null;
-          if (profileId == null) return;
-
-          _pedometerBaseline ??= event.steps;
-          final delta = (event.steps - _pedometerBaseline!).clamp(0, 100000);
-          final totalSteps = _initialStoredSteps + delta;
-
-          await _db.upsertDailyActivity(
-            profileId: profileId,
-            steps: totalSteps,
-          );
-          if (mounted) {
-            setState(() => _pedometerActive = true);
-            _loadDashboard();
-          }
+      _pedestrianSub = Pedometer.pedestrianStatusStream.listen(
+        (event) {
+          _isStationary = event.status.toLowerCase() == 'stopped';
         },
         onError: (_) {},
       );
+      _stepSub = Pedometer.stepCountStream.listen(
+        (event) => _handleSensorSteps(event.steps),
+        onError: (_) {},
+      );
+      if (mounted && !_pedometerActive) {
+        setState(() => _pedometerActive = true);
+      }
     } catch (_) {}
+  }
+
+  Future<void> _handleSensorSteps(int sensorSteps) async {
+    if (_ingestingStepEvent) {
+      _pendingSensorSteps = sensorSteps;
+      return;
+    }
+    _ingestingStepEvent = true;
+    final profileProvider = context.read<ActiveProfileProvider>();
+    try {
+      int? nextSteps = sensorSteps;
+      while (nextSteps != null && mounted) {
+        final current = nextSteps;
+        _pendingSensorSteps = null;
+        final profileId = profileProvider.activeProfileId;
+        if (profileId == null || profileId.isEmpty) break;
+
+        final updated = await StepCounterSync.ingestHardwareSteps(
+          db: _db,
+          profileId: profileId,
+          sensorSteps: current,
+          isStationary: _isStationary,
+        );
+        if (mounted) {
+          if (!_pedometerActive) {
+            setState(() => _pedometerActive = true);
+          }
+          if (updated != null) {
+            await _loadDashboard();
+          }
+        }
+        nextSteps = _pendingSensorSteps;
+      }
+    } finally {
+      _ingestingStepEvent = false;
+    }
   }
 
   Future<void> _enableStepsTracking() async {
     if (kIsWeb) return;
-    final res = await Permission.activityRecognition.request();
-    if (res.isGranted) {
-      await _initPedometer();
+    final profileProvider = context.read<ActiveProfileProvider>();
+    final pid = profileProvider.activeProfileId;
+    if (pid == null) return;
+    final res = await StepCounterSync.requestAndToggleLiveSteps(pid, true);
+    if (!mounted) return;
+    if (res.enabled) {
+      setState(() => _liveStepsEnabled = true);
+      await _syncPedometerStream(forceResubscribe: true);
       if (mounted) {
         showTempoToast(context, 'Live step counter enabled');
       }
-    } else if (mounted) {
+    } else if (res.deniedPermanently) {
+      showTempoToast(
+        context,
+        'Allow Physical Activity in phone settings to count steps',
+        isError: true,
+      );
+      await openAppSettings();
+    } else {
       _openAddData(initialMetric: 'steps');
     }
   }

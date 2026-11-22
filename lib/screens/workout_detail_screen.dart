@@ -46,8 +46,19 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    LiveWorkoutService.instance.onRemoteTogglePause = () {
+      if (mounted && !_isCountingDown) {
+        _toggleTimer();
+      }
+    };
+  }
+
+  @override
   void dispose() {
     _timer?.cancel();
+    LiveWorkoutService.instance.onRemoteTogglePause = null;
     LiveWorkoutService.instance.stop();
     super.dispose();
   }
@@ -57,10 +68,29 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
       ? widget.workout.journeyName!
       : widget.workout.bodyFocus;
 
+  String get _activeExerciseName {
+    final list = widget.workout.exerciseList;
+    for (int i = 0; i < list.length; i++) {
+      if (!_checkedExercises.contains(i)) {
+        return list[i].name;
+      }
+    }
+    return list.isNotEmpty ? list.last.name : '';
+  }
+
+  double get _avgKcalPerMin {
+    final list = widget.workout.exerciseList;
+    if (list.isEmpty) return 7.5;
+    final total = list.fold<int>(0, (s, e) => s + e.baseCaloriesPerMinute);
+    return (total / list.length).clamp(4.0, 16.0);
+  }
+
   void _syncLiveUpdate({required bool isPaused}) {
     LiveWorkoutService.instance.startOrUpdate(
       workoutTitle: widget.workout.title,
       category: _categoryLabel,
+      currentExercise: _activeExerciseName,
+      kcalPerMin: _avgKcalPerMin,
       elapsedSeconds: _elapsedSeconds,
       completedExercises: _checkedExercises.length,
       totalExercises: widget.workout.exerciseList.length,

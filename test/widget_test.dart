@@ -29,6 +29,7 @@ import 'package:tempo_fitness/screens/workout_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_screen.dart';
 import 'package:tempo_fitness/models/local_profile.dart';
 import 'package:tempo_fitness/services/active_profile_provider.dart';
+import 'package:tempo_fitness/services/step_counter_sync.dart';
 import 'package:tempo_fitness/services/tempo_rust_db.dart';
 import 'package:tempo_fitness/theme/theme_provider.dart';
 import 'package:tempo_fitness/widgets/ios_stretch_sheet.dart';
@@ -539,12 +540,13 @@ void main() {
     expect(find.text('Ken ji'), findsOneWidget);
     expect(find.text('Male | 173cm | 61.0kg | 21'), findsOneWidget);
     expect(find.text('Dark mode'), findsOneWidget);
+    expect(find.text('Live step counter'), findsOneWidget);
     expect(find.text('Switch profile'), findsNothing);
     expect(find.text('Add profile'), findsNothing);
     expect(find.text('Competition'), findsNothing);
     expect(find.byIcon(CupertinoIcons.add), findsNothing);
 
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -360));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -440));
     await tester.pumpAndSettle();
     expect(find.text(kTempoDisplayVersion), findsOneWidget);
     expect(kTempoDisplayVersion.endsWith(' - R'), isTrue);
@@ -1152,6 +1154,7 @@ void main() {
     expect(find.text('Steps'), findsWidgets);
     expect(find.text('Latest'), findsOneWidget);
     expect(find.text('Week'), findsOneWidget);
+    expect(find.text('Live step counter'), findsOneWidget);
     expect(find.text('Add data'), findsOneWidget);
 
     await tester.tap(find.byIcon(CupertinoIcons.ellipsis_vertical));
@@ -1527,6 +1530,108 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('First Feature'), findsNothing);
     expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  test('StepCounterSync counts 1:1 live, catches up after close, and survives reboots', () async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Walker',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 62,
+    );
+    final today = TempoRustDb.todayKey();
+    final t0 = DateTime(2026, 11, 22, 10, 0, 0).millisecondsSinceEpoch;
+
+    // 0. Live toggle defaults false and persists ON/OFF cleanly
+    expect(await StepCounterSync.isLiveEnabled(profile.id), false);
+    await StepCounterSync.setLiveEnabled(profile.id, true);
+    expect(await StepCounterSync.isLiveEnabled(profile.id), true);
+
+    // 1. First reading sets today's baseline (delta 0, does not add boot lifetime steps)
+    final r1 = await StepCounterSync.ingestHardwareSteps(
+      db: db,
+      profileId: profile.id,
+      sensorSteps: 10000,
+      todayKeyOverride: today,
+      nowMsOverride: t0,
+    );
+    expect(r1, isNull);
+
+    // 2. Live 1:1 steps (zero double-counting!)
+    expect(
+      await StepCounterSync.ingestHardwareSteps(
+        db: db,
+        profileId: profile.id,
+        sensorSteps: 10001,
+        todayKeyOverride: today,
+        nowMsOverride: t0 + 1000,
+      ),
+      1,
+    );
+    expect(
+      await StepCounterSync.ingestHardwareSteps(
+        db: db,
+        profileId: profile.id,
+        sensorSteps: 10002,
+        todayKeyOverride: today,
+        nowMsOverride: t0 + 2000,
+      ),
+      2,
+    );
+
+    // 2B. Stationary desk-pickup jitter (+1 step within 500ms while stopped) is ignored
+    expect(
+      await StepCounterSync.ingestHardwareSteps(
+        db: db,
+        profileId: profile.id,
+        sensorSteps: 10003,
+        todayKeyOverride: today,
+        nowMsOverride: t0 + 2500,
+        isStationary: true,
+      ),
+      isNull,
+    );
+
+    // 2C. Impossible glitch spike (+5000 steps in 1 second) is safely rejected
+    expect(
+      await StepCounterSync.ingestHardwareSteps(
+        db: db,
+        profileId: profile.id,
+        sensorSteps: 15003,
+        todayKeyOverride: today,
+        nowMsOverride: t0 + 3500,
+      ),
+      isNull,
+    );
+
+    // 3. App closed in pocket for 15 mins, user walks +1500 steps -> catches up cleanly
+    expect(
+      await StepCounterSync.ingestHardwareSteps(
+        db: db,
+        profileId: profile.id,
+        sensorSteps: 16503,
+        todayKeyOverride: today,
+        nowMsOverride: t0 + 15 * 60 * 1000,
+      ),
+      1502,
+    );
+
+    // 4. Phone reboots mid-day 5 mins later (sensor resets to 0, walks 250 steps) -> preserves 1502 + adds 250
+    expect(
+      await StepCounterSync.ingestHardwareSteps(
+        db: db,
+        profileId: profile.id,
+        sensorSteps: 250,
+        todayKeyOverride: today,
+        nowMsOverride: t0 + 20 * 60 * 1000,
+      ),
+      1752,
+    );
 
     await db.deleteProfile(profile.id);
   });

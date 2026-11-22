@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../config/app_version.dart';
@@ -10,6 +11,7 @@ import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
 import '../services/local_backup_service.dart';
 import '../services/local_media_service.dart';
+import '../services/step_counter_sync.dart';
 import '../services/tempo_rust_db.dart';
 import '../services/weight_unit_helper.dart';
 import '../theme/app_colors.dart';
@@ -46,6 +48,7 @@ class MyProfile extends StatefulWidget {
 class _MyProfileState extends State<MyProfile> {
   final ImagePicker _imagePicker = ImagePicker();
   String _weightUnit = 'kg';
+  bool _liveStepsEnabled = false;
   bool _wasTickerEnabled = false;
   final GlobalKey _avatarHintKey = GlobalKey();
   final GlobalKey _identityHintKey = GlobalKey();
@@ -53,7 +56,7 @@ class _MyProfileState extends State<MyProfile> {
   @override
   void initState() {
     super.initState();
-    _loadWeightUnit();
+    _loadProfilePrefs();
   }
 
   @override
@@ -111,15 +114,49 @@ class _MyProfileState extends State<MyProfile> {
   void didUpdateWidget(covariant MyProfile oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.refreshVersion != oldWidget.refreshVersion) {
-      _loadWeightUnit();
+      _loadProfilePrefs();
     }
   }
 
-  Future<void> _loadWeightUnit() async {
+  Future<void> _loadProfilePrefs() async {
     final pid = context.read<ActiveProfileProvider>().activeProfileId;
     final unit = await WeightUnitHelper.loadUnit(pid);
-    if (mounted && unit != _weightUnit) {
-      setState(() => _weightUnit = unit);
+    final liveSteps =
+        pid != null ? await StepCounterSync.isLiveEnabled(pid) : false;
+    if (mounted && (unit != _weightUnit || liveSteps != _liveStepsEnabled)) {
+      setState(() {
+        _weightUnit = unit;
+        _liveStepsEnabled = liveSteps;
+      });
+    }
+  }
+
+  Future<void> _toggleLiveSteps(bool wantEnabled) async {
+    final profileProvider = context.read<ActiveProfileProvider>();
+    final pid = profileProvider.activeProfileId;
+    if (pid == null) return;
+    HapticFeedback.selectionClick();
+    final res = await StepCounterSync.requestAndToggleLiveSteps(pid, wantEnabled);
+    if (!mounted) return;
+    setState(() => _liveStepsEnabled = res.enabled);
+    profileProvider.notifyDataChanged();
+    if (res.enabled) {
+      showTempoToast(context, 'Live step counter enabled');
+    } else if (wantEnabled && res.deniedPermanently) {
+      showTempoToast(
+        context,
+        'Enable Physical Activity in phone settings',
+        isError: true,
+      );
+      await openAppSettings();
+    } else if (wantEnabled) {
+      showTempoToast(
+        context,
+        'Physical Activity permission is needed for live steps',
+        isError: true,
+      );
+    } else {
+      showTempoToast(context, 'Live step counter paused');
     }
   }
 
@@ -591,7 +628,7 @@ class _MyProfileState extends State<MyProfile> {
                                               filePath: entry.filePath,
                                             );
                                             await profileProvider.refreshProfiles();
-                                            await _loadWeightUnit();
+                                            await _loadProfilePrefs();
                                             if (ctx.mounted) {
                                               Navigator.of(ctx).pop();
                                             }
@@ -836,6 +873,52 @@ class _MyProfileState extends State<MyProfile> {
                                 HapticFeedback.selectionClick();
                                 themeProvider.toggleTheme(v);
                               },
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Live step counter toggle row
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 11,
+                        ),
+                        child: Row(
+                          children: [
+                            _circleIcon(
+                              CupertinoIcons.hare_fill,
+                              const Color(0xFF4CD964),
+                            ),
+                            const SizedBox(width: 15),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Live step counter',
+                                    style: TextStyle(
+                                      color: c.textPrimary,
+                                      fontSize: 15.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    _liveStepsEnabled
+                                        ? 'Counting steps offline via motion sensor'
+                                        : 'Off · Enable to count steps as you walk',
+                                    style: TextStyle(
+                                      color: c.textTertiary,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            CupertinoSwitch(
+                              activeTrackColor: c.accent,
+                              value: _liveStepsEnabled,
+                              onChanged: _toggleLiveSteps,
                             ),
                           ],
                         ),

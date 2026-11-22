@@ -3,10 +3,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/step_counter_sync.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_popover_menu.dart';
@@ -54,6 +56,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   DateTime _anchorDate = DateTime.now();
   List<_MetricPoint> _allPoints = [];
   double? _customWaistTargetCm;
+  bool _liveStepsEnabled = false;
   bool _loading = true;
 
   String get _title {
@@ -184,10 +187,44 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     _load();
   }
 
+  Future<void> _toggleLiveSteps(bool wantEnabled) async {
+    final profileProvider = context.read<ActiveProfileProvider>();
+    final pid = profileProvider.activeProfileId;
+    if (pid == null) return;
+    HapticFeedback.selectionClick();
+    final res = await StepCounterSync.requestAndToggleLiveSteps(pid, wantEnabled);
+    if (!mounted) return;
+    setState(() => _liveStepsEnabled = res.enabled);
+    profileProvider.notifyDataChanged();
+    if (res.enabled) {
+      showTempoToast(context, 'Live step counter enabled');
+    } else if (wantEnabled && res.deniedPermanently) {
+      showTempoToast(
+        context,
+        'Enable Physical Activity in phone settings',
+        isError: true,
+      );
+      await openAppSettings();
+    } else if (wantEnabled) {
+      showTempoToast(
+        context,
+        'Physical Activity permission is needed for live steps',
+        isError: true,
+      );
+    } else {
+      showTempoToast(context, 'Live step counter paused');
+    }
+  }
+
   Future<void> _load() async {
     final pid = context.read<ActiveProfileProvider>().activeProfileId;
     if (pid == null) return;
     setState(() => _loading = true);
+
+    if (widget.kind == TempoMetricKind.steps) {
+      final live = await StepCounterSync.isLiveEnabled(pid);
+      if (mounted) _liveStepsEnabled = live;
+    }
 
     if (widget.kind == TempoMetricKind.waist) {
       final results = await Future.wait([
@@ -1245,6 +1282,67 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                             ),
                           ),
                           const SizedBox(height: 14),
+
+                          if (widget.kind == TempoMetricKind.steps) ...[
+                            AppleCard(
+                              borderRadius: 24,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 16,
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration: BoxDecoration(
+                                      color: _badgeColor,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      CupertinoIcons.hare_fill,
+                                      color: Colors.white,
+                                      size: 17,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Live step counter',
+                                          style: TextStyle(
+                                            color: c.textPrimary,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _liveStepsEnabled
+                                              ? 'Active · Syncs automatically with phone sensor'
+                                              : 'Off · Enable to count steps while walking',
+                                          style: TextStyle(
+                                            color: c.textSecondary,
+                                            fontSize: 12.5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  CupertinoSwitch(
+                                    activeTrackColor: c.accent,
+                                    value: _liveStepsEnabled,
+                                    onChanged: _toggleLiveSteps,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                          ],
 
                           // Card 3: Data source + Add data
                           AppleCard(

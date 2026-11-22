@@ -8,50 +8,67 @@ class MainActivity : FlutterActivity() {
     private val LIVE_UPDATES_CHANNEL = "com.tempo.fitness/live_updates"
 
     private lateinit var liveUpdateManager: WorkoutLiveUpdateManager
+    private var liveChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        liveUpdateManager = WorkoutLiveUpdateManager(applicationContext)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LIVE_UPDATES_CHANNEL)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "getStatus" -> {
-                        result.success(liveUpdateManager.getStatus())
-                    }
-                    "startOrUpdate" -> {
-                        try {
-                            val title = call.argument<String>("title") ?: "Tempo Workout"
-                            val subtitle = call.argument<String>("subtitle") ?: ""
-                            val elapsedSeconds = call.argument<Int>("elapsedSeconds") ?: 0
-                            val completedExercises = call.argument<Int>("completedExercises") ?: 0
-                            val totalExercises = call.argument<Int>("totalExercises") ?: 1
-                            val isPaused = call.argument<Boolean>("isPaused") ?: false
-                            val shortText = call.argument<String>("shortText") ?: ""
-                            val status = liveUpdateManager.startOrUpdate(
-                                title = title,
-                                subtitle = subtitle,
-                                elapsedSeconds = elapsedSeconds,
-                                completedExercises = completedExercises,
-                                totalExercises = totalExercises,
-                                isPaused = isPaused,
-                                shortText = shortText
-                            )
-                            result.success(status)
-                        } catch (e: Exception) {
-                            result.error("LIVE_UPDATE_ERROR", e.message, null)
-                        }
-                    }
-                    "stop" -> {
-                        liveUpdateManager.stop()
-                        result.success(true)
-                    }
-                    "openLiveUpdatesSettings" -> {
-                        result.success(liveUpdateManager.openLiveUpdatesSettings())
-                    }
-                    else -> result.notImplemented()
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LIVE_UPDATES_CHANNEL)
+        liveChannel = channel
+
+        liveUpdateManager = WorkoutLiveUpdateManager(
+            context = applicationContext,
+            onRemoteTogglePause = {
+                runOnUiThread {
+                    liveChannel?.invokeMethod("onTogglePause", null)
                 }
             }
+        )
+
+        channel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getStatus" -> {
+                    result.success(liveUpdateManager.getStatus())
+                }
+                "startOrUpdate" -> {
+                    try {
+                        val title = call.argument<String>("title") ?: "Tempo Workout"
+                        val subtitle = call.argument<String>("subtitle") ?: ""
+                        val category = call.argument<String>("category") ?: ""
+                        val currentExercise = call.argument<String>("currentExercise") ?: ""
+                        val elapsedSeconds = call.argument<Int>("elapsedSeconds") ?: 0
+                        val completedExercises = call.argument<Int>("completedExercises") ?: 0
+                        val totalExercises = call.argument<Int>("totalExercises") ?: 1
+                        val kcalPerMin = call.argument<Double>("kcalPerMin") ?: 7.5
+                        val isPaused = call.argument<Boolean>("isPaused") ?: false
+                        val shortText = call.argument<String>("shortText") ?: ""
+                        val status = liveUpdateManager.startOrUpdate(
+                            title = title,
+                            subtitle = subtitle,
+                            category = category,
+                            currentExercise = currentExercise,
+                            elapsedSeconds = elapsedSeconds,
+                            completedExercises = completedExercises,
+                            totalExercises = totalExercises,
+                            kcalPerMin = kcalPerMin,
+                            isPaused = isPaused,
+                            shortText = shortText
+                        )
+                        result.success(status)
+                    } catch (e: Exception) {
+                        result.error("LIVE_UPDATE_ERROR", e.message, null)
+                    }
+                }
+                "stop" -> {
+                    liveUpdateManager.stop()
+                    result.success(true)
+                }
+                "openLiveUpdatesSettings" -> {
+                    result.success(liveUpdateManager.openLiveUpdatesSettings())
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun onDestroy() {

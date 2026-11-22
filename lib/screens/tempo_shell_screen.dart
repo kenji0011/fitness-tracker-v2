@@ -34,19 +34,10 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
   static const double _expandThreshold = 36.0;
 
   void _onSelectTab(int index) {
-    if (_currentIndex == index && _mountedTabs.contains(index)) {
-      if (_navMinimized) {
-        setState(() {
-          _navMinimized = false;
-          _accumulatedScroll = 0.0;
-        });
-      }
-      return;
-    }
+    if (_currentIndex == index && _mountedTabs.contains(index)) return;
     setState(() {
       _currentIndex = index;
       _mountedTabs.add(index);
-      _navMinimized = false;
       _accumulatedScroll = 0.0;
       _lastUserDirection = ScrollDirection.idle;
     });
@@ -70,19 +61,17 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
     if (notification is ScrollUpdateNotification) {
       final metrics = notification.metrics;
       final delta = notification.scrollDelta ?? 0.0;
-      if (delta.abs() < 0.5 || metrics.maxScrollExtent <= 0) return false;
+      if (delta.abs() < 0.5) return false;
 
-      // Ignore rubber-band overscroll & bounce-back frames at top/bottom edges
-      if (metrics.outOfRange) {
-        _accumulatedScroll = 0.0;
-        return false;
-      }
+      final isUserDragging = notification.dragDetails != null;
 
-      // Always expand cleanly when back near the very top of the page
-      if (metrics.pixels <= 16 &&
-          (notification.dragDetails != null ||
-              _lastUserDirection == ScrollDirection.forward)) {
-        if (_navMinimized) {
+      // Allow expanding when the user manually pulls down at the very top of a tab
+      if (isUserDragging && delta < 0 && metrics.pixels <= 16) {
+        if ((_accumulatedScroll > 0 && delta < 0)) {
+          _accumulatedScroll = 0.0;
+        }
+        _accumulatedScroll += delta;
+        if (_accumulatedScroll <= -_expandThreshold && _navMinimized) {
           setState(() {
             _navMinimized = false;
             _accumulatedScroll = 0.0;
@@ -91,7 +80,13 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
         return false;
       }
 
-      final isUserDragging = notification.dragDetails != null;
+      if (metrics.maxScrollExtent <= 0) return false;
+
+      // Ignore rubber-band overscroll & bounce-back frames at top/bottom edges
+      if (metrics.outOfRange) {
+        _accumulatedScroll = 0.0;
+        return false;
+      }
 
       // Ignore ballistic bottom-bounce rebounds (negative delta without a user
       // upward scroll gesture or while settling right at maxScrollExtent)

@@ -28,11 +28,22 @@ class LiveUpdateStatus {
 /// Bridge to Android 16+ Live Updates (Promoted Ongoing Notifications) for
 /// HyperOS 3 HyperIsland and stock Android status-bar Live Update capsules.
 class LiveWorkoutService {
-  LiveWorkoutService._();
+  LiveWorkoutService._() {
+    _channel.setMethodCallHandler(_handleNativeCall);
+  }
   static final LiveWorkoutService instance = LiveWorkoutService._();
 
   static const MethodChannel _channel =
       MethodChannel('com.tempo.fitness/live_updates');
+
+  VoidCallback? onRemoteTogglePause;
+
+  Future<dynamic> _handleNativeCall(MethodCall call) async {
+    if (call.method == 'onTogglePause') {
+      onRemoteTogglePause?.call();
+    }
+    return null;
+  }
 
   bool get _isAndroid => !kIsWeb && Platform.isAndroid;
 
@@ -69,6 +80,8 @@ class LiveWorkoutService {
   Future<void> startOrUpdate({
     required String workoutTitle,
     required String category,
+    String currentExercise = '',
+    double kcalPerMin = 7.5,
     required int elapsedSeconds,
     required int completedExercises,
     required int totalExercises,
@@ -90,6 +103,9 @@ class LiveWorkoutService {
       await _channel.invokeMethod<dynamic>('startOrUpdate', {
         'title': workoutTitle,
         'subtitle': subtitle,
+        'category': category,
+        'currentExercise': currentExercise,
+        'kcalPerMin': kcalPerMin,
         'elapsedSeconds': elapsedSeconds,
         'completedExercises': completedExercises,
         'totalExercises': totalExercises,
