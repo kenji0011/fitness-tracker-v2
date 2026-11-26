@@ -84,7 +84,6 @@ class _PhotoCompareScreenState extends State<PhotoCompareScreen> {
               child: Row(
                 children: [
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
@@ -101,28 +100,22 @@ class _PhotoCompareScreenState extends State<PhotoCompareScreen> {
                       ),
                     ),
                   ),
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
+                  TempoLiquidButton(
+                    primary: false,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    onPressed: () {
                       HapticFeedback.selectionClick();
                       setState(() => _sideBySide = !_sideBySide);
                     },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: c.searchBg,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        _sideBySide ? 'Slider' : 'Split',
-                        style: TextStyle(
-                          color: c.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
+                    child: Text(
+                      _sideBySide ? 'Slider' : 'Split',
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),

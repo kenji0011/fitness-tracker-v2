@@ -6,9 +6,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:jiggicons/jiggicons.dart';
 
 import '../theme/app_colors.dart';
 import 'liquid_glass_surface.dart';
+import 'tempo_jigg_icon.dart';
 
 class LiquidGlassNavItem {
   final String label;
@@ -81,8 +83,8 @@ class LiquidGlassNavBar extends StatefulWidget {
 
 class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     with TickerProviderStateMixin {
-  static ui.FragmentProgram? _cachedProgram;
   ui.FragmentProgram? _program;
+  bool _layoutSynced = false;
 
   final GlobalKey _barKey = GlobalKey();
 
@@ -92,9 +94,12 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   late final AnimationController _slideController;
   Animation<double>? _slideAnimation;
 
-  /// Per-tab SF-Symbols-inspired spring click bounce animation
+  /// Per-tab SF-Symbols-inspired spring click bounce animation (Profile avatar)
   late final AnimationController _iconBounceController;
   int _bouncingTabIndex = -1;
+
+  /// Per-tab Jiggicon spring controllers (Summary: heart, Workout: dumbbell, Progress: trophy)
+  late final List<JiggIconController> _jiggControllers;
 
   /// Smooth scroll-driven liquid collapse (0.0 = expanded with labels, 1.0 = compact icons-only pill)
   late final AnimationController _minimizeController;
@@ -144,35 +149,56 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       vsync: this,
       duration: const Duration(milliseconds: 420),
     );
+    _jiggControllers = List<JiggIconController>.generate(
+      widget.items.length,
+      (_) => JiggIconController(),
+    );
 
     _minimizeController = AnimationController(
       vsync: this,
       value: widget.minimized ? 1.0 : 0.0,
       duration: const Duration(milliseconds: 300),
       reverseDuration: const Duration(milliseconds: 320),
-    );
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed ||
+            status == AnimationStatus.dismissed) {
+          _scheduleLayoutSync();
+        }
+      });
     _minimizeAnimation = CurvedAnimation(
       parent: _minimizeController,
       curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeOutCubic,
     );
+    _scheduleLayoutSync();
+  }
+
+  void _scheduleLayoutSync() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_barGlobalOrigin() != null) {
+        setState(() => _layoutSynced = true);
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_layoutSynced) {
+      _scheduleLayoutSync();
+    }
   }
 
   Future<void> _loadShader() async {
-    if (_cachedProgram != null) {
-      _program = _cachedProgram;
+    final existing = TempoLiquidShaderCache.program;
+    if (existing != null) {
+      _program = existing;
       return;
     }
-    if (!ui.ImageFilter.isShaderFilterSupported) return;
-    try {
-      final program =
-          await ui.FragmentProgram.fromAsset('shaders/liquid_glass_lens.frag');
-      _cachedProgram = program;
-      if (mounted) {
-        setState(() => _program = program);
-      }
-    } catch (e) {
-      debugPrint('LiquidGlass shader fallback active: $e');
+    final program = await TempoLiquidShaderCache.load();
+    if (program != null && mounted) {
+      setState(() => _program = program);
     }
   }
 
@@ -200,6 +226,9 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     _lensController.dispose();
     _slideController.dispose();
     _iconBounceController.dispose();
+    for (final ctrl in _jiggControllers) {
+      ctrl.dispose();
+    }
     _minimizeController.dispose();
     super.dispose();
   }
@@ -207,6 +236,9 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   void _triggerIconBounce(int index) {
     _bouncingTabIndex = index;
     _iconBounceController.forward(from: 0);
+    if (index >= 0 && index < _jiggControllers.length) {
+      _jiggControllers[index].play();
+    }
   }
 
   bool get _isGlassLensEngaged => _isDragging || _isHovering || _isTapPulsing;
@@ -486,9 +518,18 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                     ? _posToIndex(_currentPos)
                                     : widget.currentIndex;
 
-                            // Compute exact screen-space rect for Impeller BackdropFilter shader
-                            final barOrigin =
-                                tClamped > 0.01 ? _barGlobalOrigin() : null;
+                            // Compute exact screen-space rects for live Impeller GPU refraction
+                            // on BOTH the floating outer capsule dock (always live while scrolling!)
+                            // and the elevated hover/drag/tap droplet lens.
+                            final barOrigin = _barGlobalOrigin();
+                            final dockScreenRect = barOrigin != null
+                                ? Rect.fromLTWH(
+                                    barOrigin.dx,
+                                    barOrigin.dy + capsuleInsetV,
+                                    totalWidth,
+                                    capsuleHeight,
+                                  )
+                                : null;
                             final dropletScreenRect = barOrigin != null
                                 ? Rect.fromLTWH(
                                     barOrigin.dx + dropletLeft,
@@ -502,80 +543,27 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                               clipBehavior: Clip.none,
                               alignment: Alignment.center,
                               children: [
-                                // LAYER 1: Outer floating frosted-glass capsule dock
+                                // LAYER 1: Live GPU Optical Refraction Floating Navbar Dock
+                                // Uses the exact same screen-space SDF refraction + chromatic
+                                // dispersion shader as the hover/drag pill so scrolling cards,
+                                // rings, and charts visibly pass & bend behind the glass dock!
                                 Positioned(
                                   left: 0,
                                   right: 0,
                                   top: capsuleInsetV,
                                   bottom: capsuleInsetV,
-                                  child: RepaintBoundary(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        borderRadius:
-                                            BorderRadius.circular(capsuleRadius),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: isDark
-                                                ? Colors.black
-                                                    .withValues(alpha: 0.52)
-                                                : Colors.black
-                                                    .withValues(alpha: 0.09),
-                                            blurRadius: 28,
-                                            spreadRadius: -2,
-                                            offset: const Offset(0, 10),
-                                          ),
-                                        ],
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius:
-                                            BorderRadius.circular(capsuleRadius),
-                                        child: BackdropFilter(
-                                          filter: ui.ImageFilter.blur(
-                                            sigmaX: 28,
-                                            sigmaY: 28,
-                                          ),
-                                          child: Container(
-                                            decoration: BoxDecoration(
-                                              borderRadius: BorderRadius.circular(
-                                                capsuleRadius,
-                                              ),
-                                              gradient: LinearGradient(
-                                                begin: Alignment.topCenter,
-                                                end: Alignment.bottomCenter,
-                                                colors: isDark
-                                                    ? [
-                                                        const Color(0xFF28282C)
-                                                            .withValues(
-                                                                alpha: 0.78),
-                                                        const Color(0xFF151518)
-                                                            .withValues(
-                                                                alpha: 0.84),
-                                                      ]
-                                                    : [
-                                                        Colors.white.withValues(
-                                                            alpha: 0.86),
-                                                        const Color(0xFFF7F7F8)
-                                                            .withValues(
-                                                                alpha: 0.80),
-                                                      ],
-                                              ),
-                                              border: Border.all(
-                                                color: isDark
-                                                    ? Colors.white
-                                                        .withValues(alpha: 0.14)
-                                                    : Colors.black
-                                                        .withValues(alpha: 0.07),
-                                                width: 1,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+                                  child: _OpticalLiquidGlassDock(
+                                    program: _program,
+                                    screenRect: dockScreenRect,
+                                    radius: capsuleRadius,
+                                    isDark: isDark,
+                                    dpr: dpr,
                                   ),
                                 ),
 
-                                // LAYER 2A: Subtle resting active pill (cleanly tracks _currentPos)
+                                // LAYER 2A: Elevated 3D Domed Liquid Glass Active Selection Pill
+                                // Pure neutral optical glass lens at rest, morphing seamlessly
+                                // into the GPU chromatic-refraction droplet (Layer 3) on tap/drag.
                                 if (tClamped < 0.99)
                                   Positioned(
                                     left: restPillLeft,
@@ -591,11 +579,37 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                             borderRadius: BorderRadius.circular(
                                               restPillHeight / 2,
                                             ),
-                                            color: isDark
-                                                ? Colors.white
-                                                    .withValues(alpha: 0.12)
-                                                : Colors.black
-                                                    .withValues(alpha: 0.055),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black.withValues(
+                                                  alpha: isDark ? 0.38 : 0.09,
+                                                ),
+                                                blurRadius: 12,
+                                                spreadRadius: -2,
+                                                offset: const Offset(0, 3),
+                                              ),
+                                            ],
+                                          ),
+                                          child: CustomPaint(
+                                            foregroundPainter:
+                                                LiquidGlassRimPainter(
+                                              borderRadius: restPillHeight / 2,
+                                              isDark: isDark,
+                                              intensity: 1.15,
+                                              strokeWidth: 1.2,
+                                            ),
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                  restPillHeight / 2,
+                                                ),
+                                                gradient: LiquidGlassPalette
+                                                    .activeLensGradient(
+                                                  isDark: isDark,
+                                                ),
+                                              ),
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -623,24 +637,21 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                                   .isNotEmpty ??
                                               false);
 
+                                      final isJiggTab = i >= 0 && i <= 2;
                                       final animVal = (_bouncingTabIndex == i &&
                                               _iconBounceController.isAnimating)
                                           ? _iconBounceController.value
                                           : 0.0;
+                                      // Jiggicons (tabs 0-2) already play rich intrinsic spring physics;
+                                      // keep only a gentle tactile scale lift on them, and full bounce on Profile.
                                       final bounceScale = animVal > 0
                                           ? 1.0 +
-                                              0.26 *
+                                              (isJiggTab ? 0.08 : 0.24) *
                                                   math.sin(animVal * math.pi) *
                                                   (1.0 - animVal * 0.35)
                                           : 1.0;
-                                      final tiltAngle = (i == 1 && animVal > 0)
-                                          ? math.sin(animVal * math.pi * 3) *
-                                              0.16 *
-                                              (1.0 - animVal)
-                                          : 0.0;
-                                      final liftY = (i == 2 && animVal > 0)
-                                          ? -3.5 * math.sin(animVal * math.pi)
-                                          : 0.0;
+                                      final tiltAngle = 0.0;
+                                      final liftY = 0.0;
 
                                       return Expanded(
                                         child: Column(
@@ -762,28 +773,23 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     required bool isActive,
     required Color color,
   }) {
-    if (index == 0) {
-      return SizedBox(
-        width: 24,
-        height: 24,
-        child: CustomPaint(
-          painter: _HealthRingNavIconPainter(
-            color: color,
-            isActive: isActive,
-          ),
-        ),
-      );
-    }
-    if (index == 1) {
-      return SizedBox(
-        width: 24,
-        height: 24,
-        child: CustomPaint(
-          painter: _WorkoutRunnerNavIconPainter(
-            color: color,
-            isActive: isActive,
-          ),
-        ),
+    final jiggName = switch (index) {
+      0 => 'heart',
+      1 => 'dumbbell',
+      2 => 'trophy',
+      _ => null,
+    };
+    if (jiggName != null) {
+      final ctrl =
+          index < _jiggControllers.length ? _jiggControllers[index] : null;
+      return TempoJiggIcon(
+        jiggName,
+        variant: isActive ? JiggIconVariant.solid : JiggIconVariant.outline,
+        size: 24,
+        color: color,
+        controller: ctrl,
+        trigger: JiggIconTrigger.none,
+        fallbackIcon: isActive ? item.activeIcon : item.icon,
       );
     }
     return Icon(
@@ -794,113 +800,109 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   }
 }
 
-/// Thick circular ring ("Health" / Summary) icon matching the Mi Fitness nav style.
-class _HealthRingNavIconPainter extends CustomPainter {
-  final Color color;
-  final bool isActive;
+/// Live GPU-refracted floating outer navbar capsule using `shaders/liquid_glass_lens.frag`
+/// so scrolled cards, rings, and colors visibly pass through and bend along the curved bevel,
+/// matching the exact optical glass effect of the hover/drag pill.
+class _OpticalLiquidGlassDock extends StatelessWidget {
+  final ui.FragmentProgram? program;
+  final Rect? screenRect;
+  final double radius;
+  final bool isDark;
+  final double dpr;
 
-  const _HealthRingNavIconPainter({
-    required this.color,
-    required this.isActive,
+  const _OpticalLiquidGlassDock({
+    required this.program,
+    required this.screenRect,
+    required this.radius,
+    required this.isDark,
+    required this.dpr,
   });
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final stroke = isActive ? size.width * 0.22 : size.width * 0.20;
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..isAntiAlias = true;
-    final radius = (size.width * 0.80 - stroke) / 2;
-    canvas.drawCircle(
-      Offset(size.width / 2, size.height / 2),
-      radius,
-      paint,
-    );
-  }
+  Widget build(BuildContext context) {
+    final useLiveShader = program != null &&
+        screenRect != null &&
+        !screenRect!.isEmpty &&
+        ui.ImageFilter.isShaderFilterSupported;
 
-  @override
-  bool shouldRepaint(covariant _HealthRingNavIconPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.isActive != isActive;
-}
+    ui.ImageFilter backdropFilter;
+    if (useLiveShader) {
+      final shader = program!.fragmentShader();
+      shader.setFloat(2, screenRect!.left * dpr); // u_rectLeft
+      shader.setFloat(3, screenRect!.top * dpr); // u_rectTop
+      shader.setFloat(4, screenRect!.width * dpr); // u_rectWidth
+      shader.setFloat(5, screenRect!.height * dpr); // u_rectHeight
+      shader.setFloat(6, 1.0); // u_expansion (always active!)
+      shader.setFloat(7, 15.0 * dpr); // u_bevel (wide curved rim refraction)
+      shader.setFloat(8, 10.5 * dpr); // u_refract (live bending as content scrolls)
+      shader.setFloat(9, 0.075); // u_dispersion (subtle chromatic edge shimmer)
+      shader.setFloat(10, isDark ? 1.0 : 0.0); // u_isDark
+      shader.setFloat(11, 0.14); // u_press (calm resting optical lens depth)
+      backdropFilter = ui.ImageFilter.shader(shader);
+    } else {
+      backdropFilter = ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12);
+    }
 
-/// Dynamic sprinting runner ("Workout") icon matching the Mi Fitness nav style.
-class _WorkoutRunnerNavIconPainter extends CustomPainter {
-  final Color color;
-  final bool isActive;
-
-  const _WorkoutRunnerNavIconPainter({
-    required this.color,
-    required this.isActive,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-
-    final fillPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill
-      ..isAntiAlias = true;
-
-    final limbStroke = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * (isActive ? 0.115 : 0.105)
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..isAntiAlias = true;
-
-    // Head (leaning forward top-right)
-    canvas.drawCircle(Offset(w * 0.67, h * 0.20), w * 0.11, fillPaint);
-
-    // Torso (slanted forward athletic posture)
-    final torsoPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * (isActive ? 0.145 : 0.135)
-      ..strokeCap = StrokeCap.round
-      ..isAntiAlias = true;
-    canvas.drawLine(
-      Offset(w * 0.56, h * 0.37),
-      Offset(w * 0.42, h * 0.58),
-      torsoPaint,
+    // Balanced 75% frosted neutral glass veil over the live refracted backdrop:
+    // substantial Liquid Glass presence & crisp icon contrast while scrolling
+    // cards and colors still visibly refract & pass behind the capsule.
+    final sheerVeil = LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: isDark
+          ? [
+              const Color(0xFF2C2E36).withValues(alpha: 0.74),
+              const Color(0xFF14151A).withValues(alpha: 0.78),
+            ]
+          : [
+              Colors.white.withValues(alpha: 0.78),
+              const Color(0xFFF4F6FB).withValues(alpha: 0.72),
+            ],
     );
 
-    // Trailing arm (reaching back-left)
-    final backArm = Path()
-      ..moveTo(w * 0.54, h * 0.38)
-      ..lineTo(w * 0.37, h * 0.34)
-      ..lineTo(w * 0.25, h * 0.44);
-    canvas.drawPath(backArm, limbStroke);
-
-    // Leading arm (bent forward-right)
-    final frontArm = Path()
-      ..moveTo(w * 0.56, h * 0.39)
-      ..lineTo(w * 0.70, h * 0.46)
-      ..lineTo(w * 0.81, h * 0.38);
-    canvas.drawPath(frontArm, limbStroke);
-
-    // Leading driving leg
-    final frontLeg = Path()
-      ..moveTo(w * 0.44, h * 0.58)
-      ..lineTo(w * 0.63, h * 0.65)
-      ..lineTo(w * 0.57, h * 0.86);
-    canvas.drawPath(frontLeg, limbStroke);
-
-    // Trailing extended sprint leg
-    final backLeg = Path()
-      ..moveTo(w * 0.41, h * 0.58)
-      ..lineTo(w * 0.28, h * 0.73)
-      ..lineTo(w * 0.14, h * 0.79);
-    canvas.drawPath(backLeg, limbStroke);
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.56)
+                : Colors.black.withValues(alpha: 0.11),
+            blurRadius: 30,
+            spreadRadius: -3,
+            offset: const Offset(0, 12),
+          ),
+          if (!isDark)
+            BoxShadow(
+              color: Colors.white.withValues(alpha: 0.32),
+              blurRadius: 6,
+              spreadRadius: -1,
+              offset: const Offset(0, -1),
+            ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: BackdropFilter(
+          filter: backdropFilter,
+          child: CustomPaint(
+            foregroundPainter: LiquidGlassRimPainter(
+              borderRadius: radius,
+              isDark: isDark,
+              intensity: 1.08,
+              strokeWidth: 1.25,
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(radius),
+                gradient: sheerVeil,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
-
-  @override
-  bool shouldRepaint(covariant _WorkoutRunnerNavIconPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.isActive != isActive;
 }
 
 class _OpticalLiquidGlassDroplet extends StatelessWidget {

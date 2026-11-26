@@ -3,8 +3,11 @@ import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../services/active_profile_provider.dart';
+import '../services/app_update_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_nav_bar.dart';
+import '../widgets/tempo_startup_splash.dart';
+import '../widgets/tempo_update_sheet.dart';
 import 'health_dashboard.dart';
 import 'my_profile.dart';
 import 'profile_switcher_screen.dart';
@@ -32,6 +35,34 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
 
   static const double _minimizeThreshold = 48.0;
   static const double _expandThreshold = 36.0;
+  static bool _didRunStartupUpdateCheck = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleStartupUpdateCheck();
+  }
+
+  Future<void> _scheduleStartupUpdateCheck() async {
+    if (_didRunStartupUpdateCheck) return;
+    if (WidgetsBinding.instance.runtimeType.toString().contains('Test')) return;
+    _didRunStartupUpdateCheck = true;
+
+    // Reclaim any cached APK left over from a previous completed update.
+    await AppUpdateService.cleanupStaleApks();
+
+    // Wait cleanly past the 120Hz startup splash before checking GitHub Releases.
+    await TempoStartupSplash.waitForCompletion();
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    if (!mounted) return;
+
+    final result = await AppUpdateService.checkForUpdate(manual: false);
+    if (!mounted) return;
+    if (result.status == TempoUpdateCheckStatus.updateAvailable &&
+        result.release != null) {
+      await showTempoUpdateSheet(context, result.release!);
+    }
+  }
 
   void _onSelectTab(int index) {
     if (_currentIndex == index && _mountedTabs.contains(index)) return;
@@ -195,15 +226,13 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: RepaintBoundary(
-        child: LiquidGlassNavBar(
-          currentIndex: _currentIndex,
-          minimized: _navMinimized,
-          onTap: _onSelectTab,
-          onProfileDoubleTap: () => showProfileSwitcherSheet(context),
-          profileName: activeProfile?.displayName,
-          profileAvatarPath: activeProfile?.avatarPath,
-        ),
+      bottomNavigationBar: LiquidGlassNavBar(
+        currentIndex: _currentIndex,
+        minimized: _navMinimized,
+        onTap: _onSelectTab,
+        onProfileDoubleTap: () => showProfileSwitcherSheet(context),
+        profileName: activeProfile?.displayName,
+        profileAvatarPath: activeProfile?.avatarPath,
       ),
     );
   }

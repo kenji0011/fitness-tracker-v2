@@ -52,7 +52,6 @@ class _WeightUnitScreenState extends State<WeightUnitScreen> {
               child: Row(
                 children: [
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
                     onPressed: () => Navigator.of(context).pop(_selected),
                   ),

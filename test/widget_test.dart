@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tempo_fitness/config/app_version.dart';
@@ -29,16 +30,22 @@ import 'package:tempo_fitness/screens/workout_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_screen.dart';
 import 'package:tempo_fitness/models/local_profile.dart';
 import 'package:tempo_fitness/services/active_profile_provider.dart';
+import 'package:tempo_fitness/services/app_update_service.dart';
 import 'package:tempo_fitness/services/step_counter_sync.dart';
 import 'package:tempo_fitness/services/tempo_rust_db.dart';
 import 'package:tempo_fitness/theme/theme_provider.dart';
 import 'package:tempo_fitness/widgets/ios_stretch_sheet.dart';
 import 'package:tempo_fitness/widgets/liquid_glass_nav_bar.dart';
+import 'package:tempo_fitness/widgets/liquid_glass_surface.dart';
 import 'package:tempo_fitness/widgets/oval_activity_rings.dart';
 import 'package:tempo_fitness/widgets/reorderable_summary_grid.dart';
+import 'package:tempo_fitness/widgets/step_accuracy_warning_sheet.dart';
 import 'package:tempo_fitness/widgets/streak_heatmap_card.dart';
+import 'package:tempo_fitness/widgets/tempo_jigg_icon.dart';
 import 'package:tempo_fitness/widgets/tempo_sliver_header.dart';
 import 'package:tempo_fitness/widgets/tempo_spotlight_tour.dart';
+import 'package:tempo_fitness/widgets/tempo_startup_splash.dart';
+import 'package:tempo_fitness/widgets/tempo_update_sheet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -506,7 +513,7 @@ void main() {
     await db.deleteProfile(profile.id);
   });
 
-  testWidgets('MyProfile renders clean identity row and single unified settings card', (tester) async {
+  testWidgets('MyProfile renders clean identity row and organized grouped settings sections', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final db = TempoRustDb.instance;
     await db.init();
@@ -539,6 +546,8 @@ void main() {
 
     expect(find.text('Ken ji'), findsOneWidget);
     expect(find.text('Male | 173cm | 61.0kg | 21'), findsOneWidget);
+    expect(find.text('PREFERENCES'), findsOneWidget);
+    expect(find.text('DATA & MEDIA'), findsOneWidget);
     expect(find.text('Dark mode'), findsOneWidget);
     expect(find.text('Live step counter'), findsOneWidget);
     expect(find.text('Switch profile'), findsNothing);
@@ -546,15 +555,20 @@ void main() {
     expect(find.text('Competition'), findsNothing);
     expect(find.byIcon(CupertinoIcons.add), findsNothing);
 
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -440));
+    await tester.scrollUntilVisible(
+      find.text('SECURITY & PRIVACY'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
-    expect(find.text(kTempoDisplayVersion), findsOneWidget);
-    expect(kTempoDisplayVersion.endsWith(' - R'), isTrue);
+    expect(find.text('SECURITY & PRIVACY'), findsOneWidget);
 
-    // App version row is non-clickable (does not navigate to About Tempo)
-    await tester.tap(find.text('App version'));
+    await tester.scrollUntilVisible(
+      find.text('Privacy & terms'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
-    expect(find.byType(AboutAppScreen), findsNothing);
 
     // Privacy & Terms has no bullet points or 100% text
     await tester.tap(find.text('Privacy & terms'));
@@ -565,6 +579,24 @@ void main() {
     expect(find.textContaining('•'), findsNothing);
     await tester.tap(find.byType(TempoBackChevron));
     await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('UPDATES & SUPPORT'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('UPDATES & SUPPORT'), findsOneWidget);
+    expect(find.text('Auto-updates'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('About Tempo'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(kTempoDisplayVersion), findsOneWidget);
+    expect(kTempoDisplayVersion.endsWith(' - R'), isTrue);
 
     // About Tempo has no Rust Native text
     await tester.tap(find.text('About Tempo'));
@@ -1635,4 +1667,432 @@ void main() {
 
     await db.deleteProfile(profile.id);
   });
+
+  testWidgets(
+      'TempoStartupSplash plays X-style anticipation dip, portal zoom-through, preserves child state, and unmounts cleanly',
+      (tester) async {
+    bool completed = false;
+    int taps = 0;
+    int childInitCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TempoStartupSplash(
+          onCompleted: () => completed = true,
+          child: _InitCountProbe(
+            onInit: () => childInitCount++,
+            child: Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => taps++,
+                  child: const Text('Dashboard Ready'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Frame 0: Splash overlay is active and underlying content is initialized once
+    expect(find.byKey(TempoStartupSplash.overlayKey), findsOneWidget);
+    expect(find.text('Dashboard Ready'), findsOneWidget);
+    expect(childInitCount, 1);
+    expect(completed, false);
+
+    // Gate future stays pending while splash is running
+    bool gateResolved = false;
+    final gateFuture =
+        TempoStartupSplash.waitForCompletion().then((_) => gateResolved = true);
+
+    // Mid-anticipation dip (~180ms)
+    await tester.pump(const Duration(milliseconds: 180));
+    expect(find.byKey(TempoStartupSplash.overlayKey), findsOneWidget);
+    expect(completed, false);
+    expect(gateResolved, false);
+
+    // Mid-zoom-through portal expansion (~600ms)
+    await tester.pump(const Duration(milliseconds: 420));
+    expect(find.byKey(TempoStartupSplash.overlayKey), findsOneWidget);
+    expect(completed, false);
+
+    // Complete full 840ms choreography -> overlay unmounts WITHOUT remounting child!
+    await tester.pumpAndSettle();
+    await gateFuture;
+    expect(completed, true);
+    expect(gateResolved, true);
+    expect(childInitCount, 1);
+    expect(find.byKey(TempoStartupSplash.overlayKey), findsNothing);
+
+    // Underlying interactive content is completely unobstructed after unmount
+    await tester.tap(find.text('Dashboard Ready'));
+    await tester.pump();
+    expect(taps, 1);
+  });
+
+  testWidgets('TempoStartupSplash respects reduced motion and enabled flag',
+      (tester) async {
+    bool reducedCompleted = false;
+
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: MaterialApp(
+          theme: ThemeData.dark(),
+          home: TempoStartupSplash(
+            onCompleted: () => reducedCompleted = true,
+            child: const Scaffold(body: Text('Dark Ready')),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(TempoStartupSplash.overlayKey), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 240));
+    await tester.pump();
+    expect(reducedCompleted, true);
+    expect(find.byKey(TempoStartupSplash.overlayKey), findsNothing);
+    expect(find.text('Dark Ready'), findsOneWidget);
+
+    // Disabled splash bypasses overlay immediately
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: TempoStartupSplash(
+          enabled: false,
+          child: Scaffold(body: Text('Instant Content')),
+        ),
+      ),
+    );
+    expect(find.byKey(TempoStartupSplash.overlayKey), findsNothing);
+    expect(find.text('Instant Content'), findsOneWidget);
+  });
+
+  testWidgets(
+      'TempoJiggIcon prewarms and plays spring motion cleanly across navbar and screens',
+      (tester) async {
+    await tester.runAsync(() => TempoJiggicons.prewarm());
+    expect(TempoJiggicons.cached('heart'), isNotNull);
+    expect(TempoJiggicons.cached('dumbbell'), isNotNull);
+    expect(TempoJiggicons.cached('trophy'), isNotNull);
+    expect(TempoJiggicons.cached('drop'), isNotNull);
+    expect(TempoJiggicons.cached('weather-moon'), isNotNull);
+    expect(TempoJiggicons.cached('confetti'), isNotNull);
+
+    final ctrl = JiggIconController();
+    addTearDown(ctrl.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: TempoJiggIcon(
+              'dumbbell',
+              variant: JiggIconVariant.solid,
+              size: 28,
+              color: const Color(0xFFFF6A24),
+              controller: ctrl,
+              trigger: JiggIconTrigger.none,
+              fallbackIcon: CupertinoIcons.bolt_fill,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(JiggIconFrame), findsOneWidget);
+    ctrl.play();
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pumpAndSettle();
+    expect(find.byType(JiggIconFrame), findsOneWidget);
+  });
+
+  testWidgets(
+      'Optical Liquid Glass navbar pill and TempoGlassCircleButton render cleanly in Light & Dark Mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final themeProvider = ThemeProvider();
+    int plusTaps = 0;
+    int selectedTab = 0;
+
+    Widget buildHarness({required bool minimized}) {
+      return ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: TempoGlassCircleButton(
+                tooltip: 'Add',
+                onPressed: () => plusTaps++,
+                icon: const Icon(CupertinoIcons.add, size: 22),
+              ),
+            ),
+            bottomNavigationBar: LiquidGlassNavBar(
+              currentIndex: selectedTab,
+              minimized: minimized,
+              onTap: (i) => selectedTab = i,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Light Mode expanded + tap glass button
+    await tester.pumpWidget(buildHarness(minimized: false));
+    await tester.pumpAndSettle();
+    expect(find.byType(TempoGlassCircleButton), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.foregroundPainter is LiquidGlassRimPainter,
+      ),
+      findsAtLeastNWidgets(3), // outer dock + active pill + circle button
+    );
+    await tester.tap(find.byType(TempoGlassCircleButton));
+    await tester.pumpAndSettle();
+    expect(plusTaps, 1);
+
+    // Dark Mode + minimized navbar glass capsule
+    await themeProvider.toggleTheme(true);
+    await tester.pumpWidget(buildHarness(minimized: true));
+    await tester.pumpAndSettle();
+    expect(find.byType(LiquidGlassNavBar), findsOneWidget);
+    expect(find.byType(TempoGlassCircleButton), findsOneWidget);
+  });
+
+  test('AppUpdateService parses GitHub releases, compares semver, and defaults Auto-updates ON',
+      () async {
+    SharedPreferences.setMockInitialValues({});
+    AppUpdateService.availableRelease.value = null;
+
+    // Auto-updates defaults to ON and persists toggle cleanly
+    expect(await AppUpdateService.isAutoUpdateEnabled(), true);
+    await AppUpdateService.setAutoUpdateEnabled(false);
+    expect(await AppUpdateService.isAutoUpdateEnabled(), false);
+    await AppUpdateService.setAutoUpdateEnabled(true);
+    expect(await AppUpdateService.isAutoUpdateEnabled(), true);
+
+    // Semver parsing & comparisons
+    expect(AppUpdateService.isRemoteNewer('v2.0.18', '2.0.17'), true);
+    expect(AppUpdateService.isRemoteNewer('V2.1.0 - R', '2.0.99'), true);
+    expect(AppUpdateService.isRemoteNewer('v2.0.17', '2.0.17'), false);
+    expect(AppUpdateService.isRemoteNewer('v2.0.12', '2.0.17'), false);
+
+    // GitHub release JSON parsing prefers Tempo.apk and extracts sha256 digest
+    final mockPayload = <String, dynamic>{
+      'tag_name': 'v2.1.0',
+      'name': 'Tempo V2.1.0 - R',
+      'body': '## Highlights\n- Faster splash\n- Liquid Glass pill',
+      'draft': false,
+      'prerelease': false,
+      'published_at': '2026-11-26T08:00:00Z',
+      'html_url': 'https://github.com/kenji0011/fitness-tracker-v2/releases/tag/v2.1.0',
+      'assets': [
+        {
+          'name': 'notes.txt',
+          'size': 512,
+          'browser_download_url': 'https://example.com/notes.txt',
+        },
+        {
+          'name': 'Tempo.apk',
+          'size': 203948032,
+          'digest':
+              'sha256:88e4d38f8a4193b7abe666f5a30123456789abcdef0123456789abcdef012345',
+          'browser_download_url':
+              'https://github.com/kenji0011/fitness-tracker-v2/releases/download/v2.1.0/Tempo.apk',
+        },
+      ],
+    };
+
+    final parsed = AppUpdateService.parseReleaseJson(mockPayload);
+    expect(parsed, isNotNull);
+    expect(parsed!.version, '2.1.0');
+    expect(parsed.displayVersion, 'V2.1.0 - R');
+    expect(parsed.apkName, 'Tempo.apk');
+    expect(parsed.sha256Digest,
+        '88e4d38f8a4193b7abe666f5a30123456789abcdef0123456789abcdef012345');
+
+    // Mocked checkForUpdate returns updateAvailable when remote > current
+    final res = await AppUpdateService.checkForUpdate(
+      manual: false,
+      currentVersionOverride: '2.0.17',
+      releaseFetcherOverride: () async => mockPayload,
+      nowMsOverride: 100000000,
+    );
+    expect(res.status, TempoUpdateCheckStatus.updateAvailable);
+    expect(res.release?.version, '2.1.0');
+
+    // Skipped version is respected on automatic check, but still shown on manual check
+    await AppUpdateService.skipVersion('2.1.0');
+    final skippedRes = await AppUpdateService.checkForUpdate(
+      manual: false,
+      currentVersionOverride: '2.0.17',
+      releaseFetcherOverride: () async => mockPayload,
+      nowMsOverride: 100000000 + 7 * 60 * 60 * 1000,
+    );
+    expect(skippedRes.status, TempoUpdateCheckStatus.skipped);
+
+    final manualRes = await AppUpdateService.checkForUpdate(
+      manual: true,
+      currentVersionOverride: '2.0.17',
+      releaseFetcherOverride: () async => mockPayload,
+    );
+    expect(manualRes.status, TempoUpdateCheckStatus.updateAvailable);
+    AppUpdateService.availableRelease.value = null;
+  });
+
+  testWidgets(
+      'showTempoUpdateSheet renders floating bottom modal with navbar clearance in Light & Dark Mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final themeProvider = ThemeProvider();
+    const release = TempoReleaseInfo(
+      version: '2.1.0',
+      tagName: 'v2.1.0',
+      title: 'Tempo V2.1.0 - R',
+      releaseNotes: '- Smooth Liquid Glass navbar\n- In-app GitHub updates',
+      apkUrl: 'https://example.com/Tempo.apk',
+      apkName: 'Tempo.apk',
+      apkSizeBytes: 204472320,
+      htmlUrl: 'https://github.com/kenji0011/fitness-tracker-v2/releases/tag/v2.1.0',
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(400, 860),
+              viewPadding: EdgeInsets.only(bottom: 34),
+            ),
+            child: Builder(
+              builder: (context) => Scaffold(
+                body: Center(
+                  child: ElevatedButton(
+                    onPressed: () => showTempoUpdateSheet(context, release),
+                    child: const Text('Open Update'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open Update'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Update Available'), findsOneWidget);
+    expect(find.textContaining('V2.1.0 - R'), findsOneWidget);
+    expect(find.text('Update now'), findsOneWidget);
+    expect(find.text('Later'), findsOneWidget);
+    expect(find.text('Skip version'), findsOneWidget);
+
+    // Dismiss via Later button
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+    expect(find.text('Update Available'), findsNothing);
+  });
+
+  testWidgets(
+      'StepCounterSync accuracy warning shows daily and respects "Don\'t show again today"',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'StepNoticeUser',
+      pin: '2222',
+    );
+
+    // Shown by default today, suppressed after dismissing for today, resets tomorrow
+    expect(
+      await StepCounterSync.shouldShowAccuracyWarning(
+        profile.id,
+        todayKeyOverride: '2026-11-26',
+      ),
+      true,
+    );
+    await StepCounterSync.dismissAccuracyWarningForToday(
+      profile.id,
+      todayKeyOverride: '2026-11-26',
+    );
+    expect(
+      await StepCounterSync.shouldShowAccuracyWarning(
+        profile.id,
+        todayKeyOverride: '2026-11-26',
+      ),
+      false,
+    );
+    expect(
+      await StepCounterSync.shouldShowAccuracyWarning(
+        profile.id,
+        todayKeyOverride: '2026-11-27',
+      ),
+      true,
+    );
+
+    // Floating modal renders warning copy and returns suppressForToday on tap
+    final themeProvider = ThemeProvider();
+    StepAccuracyWarningResult? result;
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () async {
+                    result = await showStepAccuracyWarningSheet(context);
+                  },
+                  child: const Text('Trigger Notice'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Trigger Notice'));
+    await tester.pumpAndSettle();
+    expect(find.text('Step Counter Accuracy'), findsOneWidget);
+    expect(find.text('Offline motion sensor estimate'), findsNothing);
+    expect(find.byIcon(CupertinoIcons.xmark), findsNothing);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Enable'), findsOneWidget);
+    expect(find.text("Don't show again today"), findsOneWidget);
+
+    // Toggle circular "Don't show again today" then tap flat Enable on the right
+    await tester.tap(find.text("Don't show again today"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Enable'));
+    await tester.pumpAndSettle();
+    expect(result?.proceed, true);
+    expect(result?.suppressForToday, true);
+
+    await db.deleteProfile(profile.id);
+  });
+}
+
+class _InitCountProbe extends StatefulWidget {
+  final VoidCallback onInit;
+  final Widget child;
+
+  const _InitCountProbe({required this.onInit, required this.child});
+
+  @override
+  State<_InitCountProbe> createState() => _InitCountProbeState();
+}
+
+class _InitCountProbeState extends State<_InitCountProbe> {
+  @override
+  void initState() {
+    super.initState();
+    widget.onInit();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

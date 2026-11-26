@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
@@ -12,6 +13,7 @@ import '../theme/app_colors.dart';
 import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_sliver_header.dart';
 import 'history_calendar_screen.dart';
 
@@ -335,10 +337,13 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(
-                            CupertinoIcons.calendar,
+                          TempoJiggIcon(
+                            'calendar',
+                            variant: JiggIconVariant.outline,
                             size: 18,
                             color: mc.textSecondary,
+                            trigger: JiggIconTrigger.appear,
+                            fallbackIcon: CupertinoIcons.calendar,
                           ),
                           const SizedBox(width: 10),
                           Text(
@@ -918,7 +923,6 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
               child: Row(
                 children: [
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
@@ -967,7 +971,6 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                   ),
                   TempoGlassCircleButton(
                     key: _moreButtonKey,
-                    glassOpacity: 0.0,
                     icon: Icon(
                       CupertinoIcons.ellipsis_vertical,
                       size: 20,
@@ -1014,6 +1017,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                   children: [
                                     const _PurpleCircleBadge(
                                       icon: CupertinoIcons.bed_double_fill,
+                                      jiggIconName: 'weather-moon',
                                       color: _sleepPurple,
                                     ),
                                     const SizedBox(width: 12),
@@ -1617,9 +1621,14 @@ class _SleepTrendChart extends StatelessWidget {
 
 class _PurpleCircleBadge extends StatelessWidget {
   final IconData icon;
+  final String? jiggIconName;
   final Color color;
 
-  const _PurpleCircleBadge({required this.icon, required this.color});
+  const _PurpleCircleBadge({
+    required this.icon,
+    this.jiggIconName,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1627,7 +1636,18 @@ class _PurpleCircleBadge extends StatelessWidget {
       width: 32,
       height: 32,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-      child: Icon(icon, color: Colors.white, size: 17),
+      child: Center(
+        child: jiggIconName != null
+            ? TempoJiggIcon(
+                jiggIconName!,
+                variant: JiggIconVariant.solid,
+                color: Colors.white,
+                size: 17,
+                trigger: JiggIconTrigger.appear,
+                fallbackIcon: icon,
+              )
+            : Icon(icon, color: Colors.white, size: 17),
+      ),
     );
   }
 }

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tempo Dual-Ring Splash Vector (288dp canvas, 116dp optical mark inside Android 12's 192dp safe circle) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+
+    <!-- Outer luminous Electric Blue to Sky Cyan ring (radius 50.1, stroke 15.8 -> 116dp outer diameter) -->
+    <path
+        android:pathData="M 144,93.9 A 50.1,50.1 0 1,0 144,194.1 A 50.1,50.1 0 1,0 144,93.9 Z"
+        android:strokeWidth="15.8">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="86"
+                android:startY="144"
+                android:endX="202"
+                android:endY="144"
+                android:type="linear">
+                <item android:color="#FF1677FF" android:offset="0.0" />
+                <item android:color="#FF2EA7FF" android:offset="0.5" />
+                <item android:color="#FF28D7FF" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner warm dark-amber track circle (visible in the 12:00-1:36 gap) -->
+    <path
+        android:pathData="M 144,113.4 A 30.6,30.6 0 1,0 144,174.6 A 30.6,30.6 0 1,0 144,113.4 Z"
+        android:strokeColor="#FF452319"
+        android:strokeWidth="10.0" />
+
+    <!-- Inner Tempo Orange open progress arc (~308 deg clockwise from 1:36 to 12:00) -->
+    <path
+        android:pathData="M 166.74,123.52 A 30.6,30.6 0 1,1 141.87,113.47"
+        android:strokeLineCap="round"
+        android:strokeWidth="10.0">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="113"
+                android:startY="113"
+                android:endX="175"
+                android:endY="175"
+                android:type="linear">
+                <item android:color="#FFFF5630" android:offset="0.0" />
+                <item android:color="#FFFF6A24" android:offset="0.5" />
+                <item android:color="#FFFF7A33" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

@@ -14,6 +14,7 @@ import '../theme/app_colors.dart';
 import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/step_accuracy_warning_sheet.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_toast.dart';
 import 'history_calendar_screen.dart';
@@ -192,6 +193,16 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     final pid = profileProvider.activeProfileId;
     if (pid == null) return;
     HapticFeedback.selectionClick();
+
+    if (wantEnabled && await StepCounterSync.shouldShowAccuracyWarning(pid)) {
+      if (!mounted) return;
+      final choice = await showStepAccuracyWarningSheet(context);
+      if (!mounted || choice == null || !choice.proceed) return;
+      if (choice.suppressForToday) {
+        await StepCounterSync.dismissAccuracyWarningForToday(pid);
+      }
+    }
+
     final res = await StepCounterSync.requestAndToggleLiveSteps(pid, wantEnabled);
     if (!mounted) return;
     setState(() => _liveStepsEnabled = res.enabled);
@@ -903,7 +914,6 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
               child: Row(
                 children: [
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
@@ -952,7 +962,6 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                   ),
                   TempoGlassCircleButton(
                     key: _moreButtonKey,
-                    glassOpacity: 0.0,
                     icon: Icon(
                       CupertinoIcons.ellipsis_vertical,
                       size: 20,

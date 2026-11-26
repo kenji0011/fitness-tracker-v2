@@ -81,6 +81,7 @@ android {
 
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.0")
+    implementation("androidx.core:core-ktx:1.13.1")
 }
 
 flutter {

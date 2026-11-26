@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
@@ -18,6 +19,7 @@ import '../services/workout_history_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/streak_heatmap_card.dart';
+import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_spotlight_tour.dart';
 import 'progress_album_screen.dart';
@@ -244,11 +246,14 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                     actions: [
                       TempoHeaderAction(
                         tooltip: 'Progress Album',
-                        icon: Icon(
-                          CupertinoIcons.photo_on_rectangle,
+                        icon: TempoJiggIcon(
+                          'camera',
                           key: _albumHintKey,
+                          variant: JiggIconVariant.outline,
                           size: 20,
                           color: c.textPrimary,
+                          trigger: JiggIconTrigger.none,
+                          fallbackIcon: CupertinoIcons.photo_on_rectangle,
                         ),
                         onPressed: () async {
                           await Navigator.push(

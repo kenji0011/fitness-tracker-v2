@@ -6,8 +6,10 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val LIVE_UPDATES_CHANNEL = "com.tempo.fitness/live_updates"
+    private val APP_UPDATER_CHANNEL = "com.tempo.fitness/app_updater"
 
     private lateinit var liveUpdateManager: WorkoutLiveUpdateManager
+    private lateinit var appUpdateInstaller: AppUpdateInstaller
     private var liveChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -24,6 +26,24 @@ class MainActivity : FlutterActivity() {
                 }
             }
         )
+
+        appUpdateInstaller = AppUpdateInstaller(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_UPDATER_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "canInstallPackages" -> {
+                        result.success(appUpdateInstaller.canRequestPackageInstalls())
+                    }
+                    "openInstallPermissionSettings" -> {
+                        result.success(appUpdateInstaller.openInstallPermissionSettings())
+                    }
+                    "installApk" -> {
+                        val filePath = call.argument<String>("filePath") ?: ""
+                        result.success(appUpdateInstaller.installApk(filePath))
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         channel.setMethodCallHandler { call, result ->
             when (call.method) {

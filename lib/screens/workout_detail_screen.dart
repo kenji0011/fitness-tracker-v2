@@ -5,6 +5,7 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:provider/provider.dart';
 
 import '../models/workout_model.dart';
@@ -15,6 +16,7 @@ import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_toast.dart';
 import 'exercise_detail_screen.dart';
@@ -239,18 +241,50 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Center(
-                  child: Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      color: mc.accent.withValues(alpha: mc.isDark ? 0.2 : 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      CupertinoIcons.checkmark_alt,
-                      color: mc.accent,
-                      size: 28,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TempoJiggIcon(
+                        'confetti',
+                        variant: JiggIconVariant.duotone,
+                        color: mc.accent,
+                        size: 28,
+                        trigger: JiggIconTrigger.appear,
+                        fallbackIcon: CupertinoIcons.sparkles,
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          color: mc.accent
+                              .withValues(alpha: mc.isDark ? 0.22 : 0.13),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: TempoJiggIcon(
+                            'trophy',
+                            variant: JiggIconVariant.solid,
+                            color: mc.accent,
+                            size: 30,
+                            trigger: JiggIconTrigger.appear,
+                            fallbackIcon: CupertinoIcons.checkmark_alt,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Transform.flip(
+                        flipX: true,
+                        child: TempoJiggIcon(
+                          'confetti',
+                          variant: JiggIconVariant.duotone,
+                          color: mc.accent,
+                          size: 28,
+                          trigger: JiggIconTrigger.appear,
+                          fallbackIcon: CupertinoIcons.sparkles,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 14),

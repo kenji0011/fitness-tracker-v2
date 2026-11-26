@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
@@ -12,6 +13,7 @@ import '../theme/app_colors.dart';
 import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_toast.dart';
 import 'history_calendar_screen.dart';
@@ -32,6 +34,7 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
 
   final TempoRustDb _db = TempoRustDb.instance;
   final GlobalKey _moreButtonKey = GlobalKey();
+  final JiggIconController _dropController = JiggIconController();
 
   int _selectedTab = 0;
   DateTime _anchorDate = DateTime.now();
@@ -43,6 +46,12 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _dropController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -121,6 +130,7 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
     final pid = provider.activeProfileId;
     if (pid == null) return;
     HapticFeedback.lightImpact();
+    _dropController.play();
 
     final now = DateTime.now();
     final recorded = DateTime(
@@ -265,10 +275,13 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          CupertinoIcons.calendar,
+                        TempoJiggIcon(
+                          'calendar',
+                          variant: JiggIconVariant.outline,
                           size: 18,
                           color: mc.textSecondary,
+                          trigger: JiggIconTrigger.appear,
+                          fallbackIcon: CupertinoIcons.calendar,
                         ),
                         const SizedBox(width: 10),
                         Text(
@@ -343,6 +356,7 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
       );
       provider.notifyDataChanged();
       await _load();
+      _dropController.play();
       if (mounted) showTempoToast(context, '+$savedMl ml logged');
     }
   }
@@ -589,7 +603,6 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
               child: Row(
                 children: [
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
@@ -638,7 +651,6 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                   ),
                   TempoGlassCircleButton(
                     key: _moreButtonKey,
-                    glassOpacity: 0.0,
                     icon: Icon(
                       CupertinoIcons.ellipsis_vertical,
                       size: 20,
@@ -688,10 +700,16 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                                         color: _waterBlue,
                                         shape: BoxShape.circle,
                                       ),
-                                      child: const Icon(
-                                        CupertinoIcons.drop_fill,
-                                        color: Colors.white,
-                                        size: 17,
+                                      child: Center(
+                                        child: TempoJiggIcon(
+                                          'drop',
+                                          variant: JiggIconVariant.solid,
+                                          color: Colors.white,
+                                          size: 17,
+                                          controller: _dropController,
+                                          trigger: JiggIconTrigger.appear,
+                                          fallbackIcon: CupertinoIcons.drop_fill,
+                                        ),
                                       ),
                                     ),
                                     const SizedBox(width: 12),

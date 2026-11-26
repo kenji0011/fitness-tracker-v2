@@ -30,11 +30,12 @@ Always read colors via `final c = AppColors.of(context);` — never hardcode pag
 
 ## 2. Liquid Glass Material Spec
 
-- **Frosted Glass Backdrop:** `BackdropFilter(filter: ImageFilter.blur(sigmaX: 18–28, sigmaY: 18–28))` inside `ClipRRect` / `ClipOval`.
-- **Specular Top-Left Rim Sheen:** Always use a diagonal `LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight)` with higher highlight luminance at top-left plus a crisp `0.9–1.0px` hairline border (`Colors.white.withValues(alpha: 0.14–0.32)` dark / `Colors.black.withValues(alpha: 0.07–0.12)` light).
-- **Neutral Transparent Glass (No Blue Tint):** The floating navbar and glass controls stay optically neutral (`Colors.white` / charcoal `#28282C`–`#151518`) — never apply a blue glass wash.
-- **GPU Refraction Droplet:** The floating navbar active droplet uses `shaders/liquid_glass_lens.frag` (`ui.FragmentProgram`) with screen-space SDF refraction and subtle chromatic dispersion while dragging/scrubbing/pulsing.
-- **Critical Performance Rule (No `Opacity` Around `BackdropFilter`):** Never wrap a `BackdropFilter` in an `Opacity` widget during animations — Impeller allocates a `saveLayer` per frame and causes blur pop/stutter on close. Instead, animate `sigmaX/sigmaY`, surface fill alpha, border alpha, shadow alpha, and inner content `Opacity` directly.
+- **Crystal-Clear iOS 26/27 Backdrop Blur:** `BackdropFilter(filter: ImageFilter.blur(sigmaX: 20–26, sigmaY: 20–26))` inside `ClipRRect` / `ClipOval` with translucent neutral fills (`LiquidGlassPalette.surfaceGradient`: ~`48–64%` Light / `46–54%` Dark) so cards & colors softly shimmer behind floating docks and top action circles.
+- **Dual-Lobe Directional Specular Rim (`LiquidGlassRimPainter`):** Always use `LiquidGlassRimPainter` (in `liquid_glass_surface.dart`) aligned with `shaders/liquid_glass_lens.frag` (`lightDir = (0.62, 0.78)`): bright top-left specular caustic + counter bottom-right reflection (`SweepGradient` `1.2px`), curved top inner meniscus glint, and a subtle `0.7px` outer hairline contour so crystal glass stays razor-sharp even on pure white cards.
+- **3D Domed Navbar Active Pill & GPU Refraction Droplet:** The floating navbar uses `LiquidGlassPalette.activeLensGradient` + `LiquidGlassRimPainter` for an elevated pure-neutral domed glass pill at rest, seamlessly morphing into `shaders/liquid_glass_lens.frag` (`ui.FragmentProgram`) with screen-space SDF refraction & chromatic dispersion on tap/drag/hover.
+- **Always-On Top Header Glass Bubbles (`TempoGlassCircleButton`):** All top circular action buttons (`+`, `⋮`, `<` Back, Camera, Calendar, Search, Compare, Edit) render as crisp floating Liquid Glass bubbles even at `scrollOffset == 0` (`glassOpacity` defaults to `1.0`), deepening frost and specular rim sheen on scroll or droplet squish press.
+- **Neutral Transparent Glass (No Blue Tint):** The floating navbar, active pill, and glass controls stay optically neutral — never apply a blue glass wash.
+- **Critical Performance Rule (No `Opacity` Around `BackdropFilter`):** Never wrap a `BackdropFilter` in an `Opacity` widget during animations — Impeller allocates a `saveLayer` per frame and causes blur pop/stutter on close. Instead, animate `sigmaX/sigmaY`, surface fill alpha, rim intensity, shadow alpha, and inner content `Opacity` directly.
 
 ---
 
@@ -50,6 +51,7 @@ Always read colors via `final c = AppColors.of(context);` — never hardcode pag
 | **Tab Transitions** (`TempoShellScreen._AnimatedTabPane`) | `easeOutCubic` | `180ms` | `AnimatedOpacity` (`0 ↔ 1`) + `AnimatedScale` (`0.985 ↔ 1.0`). **Always place `TickerMode(enabled: active)` INSIDE `AnimatedOpacity`/`AnimatedScale`** so inactive tabs finish fading out cleanly instead of freezing on top of the stack. |
 | **Card Tap Feedback** (`AppleCard`) | `easeOutCubic` | `110ms` | Subtle `0.978` tactile press scale on interactive cards. |
 | **Summary Grid Reorder** (`ReorderableSummaryGrid`) | `AnimatedPositioned` `easeOutCubic` (`240ms`) | Hold + drag | Long-press lifts tile (`scale: 1.045`, shadow + Tempo Orange drop frame); neighboring tiles glide smoothly into new slots with haptic ticks; persists order per profile. |
+| **Startup Splash Screen** (`TempoStartupSplash` in `tempo_startup_splash.dart`) | Beat 0 hold (`100ms`) → Beat 1 dip `easeInOutCubic` (`168ms`, `1.0x → 0.82x`) → Beat 2 optical logarithmic zoom `Cubic(0.68, 0.0, 0.24, 1.0)` (`572ms`, `0.82x → screen clear`) | `840ms` total (`220ms` fade if reduced-motion) | Midnight Obsidian (`#0B101A`) canvas with pure vector `116dp` Tempo Dual-Ring matching Android 12+ `ic_tempo_splash.xml`. Uses persistent `Stack` + `ScaleTransition` (never reparenting `child` on completion so `State` & shaders never re-init), per-ring off-screen culling, and a single-pass `PathFillType.evenOdd` portal. |
 
 ---
 

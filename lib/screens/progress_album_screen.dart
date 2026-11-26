@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
@@ -15,6 +16,7 @@ import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_sliver_header.dart';
 import 'photo_compare_screen.dart';
 import 'photo_editing_screen.dart';
@@ -234,9 +236,13 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
                 child: Column(
                   children: [
                     ListTile(
-                      leading: Icon(
-                        Icons.photo_camera_outlined,
+                      leading: TempoJiggIcon(
+                        'camera',
+                        variant: JiggIconVariant.outline,
+                        size: 22,
                         color: mc.textPrimary,
+                        trigger: JiggIconTrigger.appear,
+                        fallbackIcon: Icons.photo_camera_outlined,
                       ),
                       title: Text(
                         'Take photo',
@@ -408,10 +414,15 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
                             ),
                             shape: BoxShape.circle,
                           ),
-                          child: Icon(
-                            CupertinoIcons.photo_on_rectangle,
-                            size: 28,
-                            color: c.accent,
+                          child: Center(
+                            child: TempoJiggIcon(
+                              'camera',
+                              variant: JiggIconVariant.duotone,
+                              size: 30,
+                              color: c.accent,
+                              trigger: JiggIconTrigger.appear,
+                              fallbackIcon: CupertinoIcons.photo_on_rectangle,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 16),

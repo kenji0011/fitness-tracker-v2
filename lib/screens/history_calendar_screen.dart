@@ -171,13 +171,11 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
               child: Row(
                 children: [
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                   const Spacer(),
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     tooltip: 'Jump to today',
                     icon: Icon(
                       CupertinoIcons.calendar_today,

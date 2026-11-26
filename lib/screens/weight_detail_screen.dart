@@ -587,7 +587,6 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
               child: Row(
                 children: [
                   TempoGlassCircleButton(
-                    glassOpacity: 0.0,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
@@ -636,7 +635,6 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
                   ),
                   TempoGlassCircleButton(
                     key: _moreButtonKey,
-                    glassOpacity: 0.0,
                     icon: Icon(
                       CupertinoIcons.ellipsis_vertical,
                       size: 20,

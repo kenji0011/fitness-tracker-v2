@@ -8,9 +8,11 @@ import 'screens/intro_walkthrough_screen.dart';
 import 'screens/profile_switcher_screen.dart';
 import 'screens/tempo_shell_screen.dart';
 import 'services/active_profile_provider.dart';
-import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_provider.dart';
+import 'widgets/liquid_glass_surface.dart';
+import 'widgets/tempo_jigg_icon.dart';
+import 'widgets/tempo_startup_splash.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +27,8 @@ Future<void> main() async {
   await Future.wait([
     activeProfileProvider.initialize(),
     themeProvider.initialize(),
+    TempoJiggicons.prewarm(),
+    TempoLiquidShaderCache.load(),
   ]);
 
   runApp(
@@ -62,7 +66,9 @@ class TempoApp extends StatelessWidget {
           themeMode: themeProvider.themeMode,
           theme: AppTheme.lightTheme.copyWith(pageTransitionsTheme: transitions),
           darkTheme: AppTheme.darkTheme.copyWith(pageTransitionsTheme: transitions),
-          home: const _TempoRootGate(),
+          home: const TempoStartupSplash(
+            child: _TempoRootGate(),
+          ),
         );
       },
     );
@@ -74,45 +80,21 @@ class _TempoRootGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = AppColors.of(context);
     final profileProvider = context.watch<ActiveProfileProvider>();
 
     if (profileProvider.isLoading) {
-      return Scaffold(
-        backgroundColor: c.scaffold,
+      return const Scaffold(
+        backgroundColor: kTempoSplashBackground,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [c.accent, c.bodyCyan],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: const Icon(
-                  CupertinoIcons.waveform_path_ecg,
-                  color: Colors.white,
-                  size: 38,
-                ),
+              TempoDualRingLogo(size: kTempoSplashLogoSize),
+              SizedBox(height: 24),
+              CupertinoActivityIndicator(
+                radius: 13,
+                color: Color(0xFFFF7A33),
               ),
-              const SizedBox(height: 18),
-              Text(
-                'Tempo',
-                style: TextStyle(
-                  color: c.textPrimary,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.7,
-                ),
-              ),
-              const SizedBox(height: 16),
-              CupertinoActivityIndicator(radius: 13, color: c.accent),
             ],
           ),
         ),

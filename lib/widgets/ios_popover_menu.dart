@@ -5,6 +5,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_colors.dart';
+import 'liquid_glass_surface.dart';
 
 class TempoPopoverAction {
   final String label;
@@ -180,10 +181,10 @@ class _IosPopoverMenuRoute extends PopupRoute<void> {
         final scaleX = lerpDouble(0.28, 1.0, morphT)!;
         final scaleY = lerpDouble(0.24, 1.0, Curves.easeOutCubic.transform(morphT))!;
         final cornerRadius = lerpDouble(30.0, 24.0, morphT)!;
-        final blurSigma = (24.0 * glassAlpha).clamp(0.0, 24.0);
+        final blurSigma = (26.0 * glassAlpha).clamp(0.0, 26.0);
 
-        final baseBgAlpha = c.isDark ? 0.86 : 0.88;
-        final shadowAlpha = (c.isDark ? 0.46 : 0.15) * glassAlpha;
+        final baseBgAlpha = c.isDark ? 0.68 : 0.74;
+        final shadowAlpha = (c.isDark ? 0.48 : 0.14) * glassAlpha;
 
         return Stack(
           children: [
@@ -254,36 +255,39 @@ class _IosPopoverMenuRoute extends PopupRoute<void> {
     required double contentAlpha,
     required Widget child,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(radius),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: c.isDark
-              ? [
-                  const Color(0xFF32333A)
-                      .withValues(alpha: baseBgAlpha * glassAlpha),
-                  const Color(0xFF1E1F24)
-                      .withValues(alpha: (baseBgAlpha + 0.04) * glassAlpha),
-                ]
-              : [
-                  Colors.white.withValues(alpha: (baseBgAlpha + 0.06) * glassAlpha),
-                  const Color(0xFFF4F5F9)
-                      .withValues(alpha: baseBgAlpha * glassAlpha),
-                ],
-        ),
-        border: Border.all(
-          color: c.isDark
-              ? Colors.white.withValues(alpha: 0.18 * glassAlpha)
-              : Colors.black.withValues(alpha: 0.08 * glassAlpha),
-          width: 0.9,
-        ),
+    return CustomPaint(
+      foregroundPainter: LiquidGlassRimPainter(
+        borderRadius: radius,
+        isDark: c.isDark,
+        intensity: 1.05 * glassAlpha,
+        strokeWidth: 1.2,
       ),
-      child: Opacity(
-        opacity: contentAlpha,
-        child: child,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: c.isDark
+                ? [
+                    const Color(0xFF3A3C45)
+                        .withValues(alpha: baseBgAlpha * glassAlpha),
+                    const Color(0xFF1A1B20)
+                        .withValues(alpha: (baseBgAlpha + 0.06) * glassAlpha),
+                  ]
+                : [
+                    Colors.white
+                        .withValues(alpha: (baseBgAlpha + 0.08) * glassAlpha),
+                    const Color(0xFFF3F5FA)
+                        .withValues(alpha: (baseBgAlpha - 0.04) * glassAlpha),
+                  ],
+          ),
+        ),
+        child: Opacity(
+          opacity: contentAlpha,
+          child: child,
+        ),
       ),
     );
   }

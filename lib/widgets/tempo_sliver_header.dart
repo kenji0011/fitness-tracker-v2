@@ -1,9 +1,10 @@
-import 'dart:ui';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_colors.dart';
+import 'liquid_glass_surface.dart';
 
 /// Optically centered thin `<` chevron matching the iOS 26 / HyperOS 3 back button.
 class TempoBackChevron extends StatelessWidget {
@@ -72,22 +73,30 @@ class TempoHeaderAction {
   });
 }
 
-/// Circular Liquid Glass icon button with specular glass rim and BitChord-style
-/// droplet squish-and-spring press animation.
+/// Circular optical Liquid Glass icon button with dual-lobe specular rim,
+/// curved top meniscus sheen, and BitChord droplet squish-and-spring physics.
+///
+/// Always displays crisp crystal-clear Liquid Glass at rest (never fading to an
+/// invisible flat circle), subtly deepening frost & specular sheen as content
+/// scrolls underneath or while pressed.
 class TempoGlassCircleButton extends StatefulWidget {
   final Widget icon;
   final VoidCallback onPressed;
   final double glassOpacity;
   final double size;
   final String? tooltip;
+  final Color? tintColor;
+  final bool useLiveRefraction;
 
   const TempoGlassCircleButton({
     super.key,
     required this.icon,
     required this.onPressed,
-    required this.glassOpacity,
+    this.glassOpacity = 1.0,
     this.size = 42,
     this.tooltip,
+    this.tintColor,
+    this.useLiveRefraction = true,
   });
 
   @override
@@ -95,16 +104,78 @@ class TempoGlassCircleButton extends StatefulWidget {
 }
 
 class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
+  final GlobalKey _circleKey = GlobalKey();
+  ui.FragmentProgram? _program;
   bool _pressed = false;
+  bool _layoutSynced = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _program = TempoLiquidShaderCache.program;
+    if (_program == null) {
+      TempoLiquidShaderCache.load().then((prog) {
+        if (prog != null && mounted) {
+          setState(() => _program = prog);
+        }
+      });
+    }
+    _scheduleLayoutSync();
+  }
+
+  void _scheduleLayoutSync() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_globalCircleRect() != null) {
+        setState(() => _layoutSynced = true);
+      }
+    });
+  }
+
+  Rect? _globalCircleRect() {
+    final box = _circleKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize || !box.attached) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final isDark = c.isDark;
-    // Always maintain a subtle translucent liquid glass pill (min 0.42),
-    // deepening smoothly to 1.0 as content scrolls behind the header or on press.
-    final g = (_pressed ? 1.0 : (0.42 + 0.58 * widget.glassOpacity.clamp(0.0, 1.0)))
-        .clamp(0.0, 1.0);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final scrollBoost = widget.glassOpacity.clamp(0.0, 1.0);
+    final rimIntensity = _pressed ? 1.25 : (0.98 + 0.14 * scrollBoost);
+    final shadowAlpha = (isDark ? 0.42 : 0.10) * (0.88 + 0.12 * scrollBoost);
+
+    final circleRect =
+        (widget.useLiveRefraction && _layoutSynced) ? _globalCircleRect() : null;
+    final useLiveShader = widget.useLiveRefraction &&
+        _program != null &&
+        circleRect != null &&
+        !circleRect.isEmpty &&
+        ui.ImageFilter.isShaderFilterSupported;
+
+    ui.ImageFilter backdropFilter;
+    if (useLiveShader) {
+      final shader = _program!.fragmentShader();
+      shader.setFloat(2, circleRect.left * dpr);
+      shader.setFloat(3, circleRect.top * dpr);
+      shader.setFloat(4, circleRect.width * dpr);
+      shader.setFloat(5, circleRect.height * dpr);
+      shader.setFloat(6, 1.0);
+      shader.setFloat(7, 9.5 * dpr);
+      shader.setFloat(8, 7.5 * dpr);
+      shader.setFloat(9, 0.065);
+      shader.setFloat(10, isDark ? 1.0 : 0.0);
+      shader.setFloat(11, _pressed ? 0.65 : 0.12);
+      backdropFilter = ui.ImageFilter.shader(shader);
+    } else {
+      final blurSigma = _pressed ? 14.0 : (10.0 + 3.0 * scrollBoost);
+      backdropFilter = ui.ImageFilter.blur(
+        sigmaX: blurSigma,
+        sigmaY: blurSigma,
+      );
+    }
 
     Widget btn = GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -130,6 +201,7 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
           );
         },
         child: SizedBox(
+          key: _circleKey,
           width: widget.size,
           height: widget.size,
           child: Container(
@@ -137,53 +209,80 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: (isDark ? 0.36 : 0.075) * g,
-                  ),
-                  blurRadius: 14 * g,
-                  offset: Offset(0, 4 * g),
+                  color: widget.tintColor != null
+                      ? widget.tintColor!
+                          .withValues(alpha: _pressed ? 0.28 : 0.18)
+                      : Colors.black.withValues(alpha: shadowAlpha),
+                  blurRadius: _pressed ? 18 : 15,
+                  spreadRadius: -2,
+                  offset: Offset(0, _pressed ? 3 : 5),
                 ),
               ],
             ),
             child: ClipOval(
               child: BackdropFilter(
-                filter: ImageFilter.blur(
-                  sigmaX: 18 * g,
-                  sigmaY: 18 * g,
-                ),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 140),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: isDark
-                          ? [
-                              const Color(0xFF383940)
-                                  .withValues(alpha: (_pressed ? 0.88 : 0.74) * g),
-                              const Color(0xFF1A1B1F)
-                                  .withValues(alpha: (_pressed ? 0.82 : 0.66) * g),
-                            ]
-                          : [
-                              Colors.white
-                                  .withValues(alpha: (_pressed ? 0.94 : 0.84) * g),
-                              const Color(0xFFF1F2F7)
-                                  .withValues(alpha: (_pressed ? 0.86 : 0.72) * g),
-                            ],
-                    ),
-                    border: Border.all(
-                      color: isDark
-                          ? Colors.white.withValues(
-                              alpha: (_pressed ? 0.32 : 0.18) * g,
-                            )
-                          : Colors.black.withValues(
-                              alpha: (_pressed ? 0.12 : 0.075) * g,
-                            ),
-                      width: 1.0,
-                    ),
+                filter: backdropFilter,
+                child: CustomPaint(
+                  foregroundPainter: LiquidGlassRimPainter(
+                    borderRadius: widget.size / 2,
+                    isDark: isDark,
+                    intensity: rimIntensity,
+                    strokeWidth: 1.2,
+                    tintColor: widget.tintColor,
                   ),
-                  child: Center(child: widget.icon),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 140),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: widget.tintColor != null
+                          ? LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                widget.tintColor!.withValues(
+                                  alpha: isDark
+                                      ? (_pressed ? 0.34 : 0.22)
+                                      : (_pressed ? 0.22 : 0.14),
+                                ),
+                                widget.tintColor!.withValues(
+                                  alpha: isDark
+                                      ? (_pressed ? 0.22 : 0.12)
+                                      : (_pressed ? 0.14 : 0.08),
+                                ),
+                              ],
+                            )
+                          : LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: isDark
+                                  ? [
+                                      const Color(0xFF343640).withValues(
+                                        alpha: useLiveShader
+                                            ? (_pressed ? 0.38 : 0.26)
+                                            : (_pressed ? 0.62 : 0.48),
+                                      ),
+                                      const Color(0xFF16171C).withValues(
+                                        alpha: useLiveShader
+                                            ? (_pressed ? 0.42 : 0.30)
+                                            : (_pressed ? 0.66 : 0.52),
+                                      ),
+                                    ]
+                                  : [
+                                      Colors.white.withValues(
+                                        alpha: useLiveShader
+                                            ? (_pressed ? 0.42 : 0.28)
+                                            : (_pressed ? 0.78 : 0.62),
+                                      ),
+                                      const Color(0xFFF3F5FA).withValues(
+                                        alpha: useLiveShader
+                                            ? (_pressed ? 0.32 : 0.18)
+                                            : (_pressed ? 0.68 : 0.50),
+                                      ),
+                                    ],
+                            ),
+                    ),
+                    child: Center(child: widget.icon),
+                  ),
                 ),
               ),
             ),

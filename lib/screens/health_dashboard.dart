@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:pedometer/pedometer.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
@@ -20,6 +21,7 @@ import '../widgets/bmi_detail_popup.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/oval_activity_rings.dart';
 import '../widgets/reorderable_summary_grid.dart';
+import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_spotlight_tour.dart';
 import '../widgets/tempo_toast.dart';
@@ -96,6 +98,7 @@ class _HealthDashboardState extends State<HealthDashboard>
   final GlobalKey _addDataHintKey = GlobalKey();
   final GlobalKey _ringsCardHintKey = GlobalKey();
   final GlobalKey _summaryGridHintKey = GlobalKey();
+  final JiggIconController _waterDropController = JiggIconController();
 
   @override
   void initState() {
@@ -168,6 +171,7 @@ class _HealthDashboardState extends State<HealthDashboard>
     WidgetsBinding.instance.removeObserver(this);
     _stepSub?.cancel();
     _pedestrianSub?.cancel();
+    _waterDropController.dispose();
     super.dispose();
   }
 
@@ -372,6 +376,7 @@ class _HealthDashboardState extends State<HealthDashboard>
     final pid = provider.activeProfileId;
     if (pid == null) return;
     HapticFeedback.lightImpact();
+    _waterDropController.play();
     await _db.logBodyMetric(
       profileId: pid,
       metricType: 'water',
@@ -574,6 +579,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                         final cardMap = <String, Widget>{
                           'sleep': _HealthGridTile(
                             badgeIcon: CupertinoIcons.bed_double_fill,
+                            jiggIconName: 'weather-moon',
                             badgeColor: const Color(0xFF6B63F6),
                             title: 'Sleep',
                             trailingPill: 'Log',
@@ -627,6 +633,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                           ),
                           'bmi': _HealthGridTile(
                             badgeIcon: CupertinoIcons.heart_fill,
+                            jiggIconName: 'heart',
                             badgeColor: const Color(0xFFE84A4A),
                             title: 'BMI Index',
                             primaryValue: (profile?.bmi ?? 0) > 0
@@ -667,6 +674,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                           ),
                           'burn': _HealthGridTile(
                             badgeIcon: CupertinoIcons.bolt_fill,
+                            jiggIconName: 'flash',
                             badgeColor: const Color(0xFFF39C2E),
                             title: '7-Day Burn',
                             primaryValue:
@@ -684,6 +692,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                           ),
                           'workouts': _HealthGridTile(
                             badgeIcon: CupertinoIcons.flame_fill,
+                            jiggIconName: 'dumbbell',
                             badgeColor: const Color(0xFFE8527A),
                             title: 'Workouts',
                             primaryValue:
@@ -702,6 +711,8 @@ class _HealthDashboardState extends State<HealthDashboard>
                           ),
                           'water': _HealthGridTile(
                             badgeIcon: CupertinoIcons.drop_fill,
+                            jiggIconName: 'drop',
+                            jiggController: _waterDropController,
                             badgeColor: const Color(0xFF38BDF8),
                             title: 'Water',
                             trailingPill: '+250',
@@ -972,6 +983,8 @@ class _RingMetricColumn extends StatelessWidget {
 
 class _HealthGridTile extends StatelessWidget {
   final IconData badgeIcon;
+  final String? jiggIconName;
+  final JiggIconController? jiggController;
   final Color badgeColor;
   final String title;
   final String? trailingPill;
@@ -983,6 +996,8 @@ class _HealthGridTile extends StatelessWidget {
 
   const _HealthGridTile({
     required this.badgeIcon,
+    this.jiggIconName,
+    this.jiggController,
     required this.badgeColor,
     required this.title,
     this.trailingPill,
@@ -1013,7 +1028,19 @@ class _HealthGridTile extends StatelessWidget {
                     color: badgeColor,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(badgeIcon, color: Colors.white, size: 14),
+                  child: Center(
+                    child: jiggIconName != null
+                        ? TempoJiggIcon(
+                            jiggIconName!,
+                            variant: JiggIconVariant.solid,
+                            color: Colors.white,
+                            size: 14,
+                            controller: jiggController,
+                            trigger: JiggIconTrigger.none,
+                            fallbackIcon: badgeIcon,
+                          )
+                        : Icon(badgeIcon, color: Colors.white, size: 14),
+                  ),
                 ),
                 const Spacer(),
                 if (trailingPill != null)

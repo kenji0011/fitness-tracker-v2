@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:jiggicons/jiggicons.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../config/app_version.dart';
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/app_update_service.dart';
 import '../services/local_backup_service.dart';
 import '../services/local_media_service.dart';
 import '../services/step_counter_sync.dart';
@@ -19,9 +21,12 @@ import '../theme/theme_provider.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/pin_pad_sheet.dart';
+import '../widgets/step_accuracy_warning_sheet.dart';
+import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_spotlight_tour.dart';
 import '../widgets/tempo_toast.dart';
+import '../widgets/tempo_update_sheet.dart';
 import 'about_app_screen.dart';
 import 'avatar_crop_screen.dart';
 import 'intro_walkthrough_screen.dart';
@@ -49,14 +54,32 @@ class _MyProfileState extends State<MyProfile> {
   final ImagePicker _imagePicker = ImagePicker();
   String _weightUnit = 'kg';
   bool _liveStepsEnabled = false;
+  bool _autoUpdateEnabled = true;
+  bool _checkingUpdates = false;
   bool _wasTickerEnabled = false;
   final GlobalKey _avatarHintKey = GlobalKey();
   final GlobalKey _identityHintKey = GlobalKey();
+  final JiggIconController _themeJiggController = JiggIconController();
+  final JiggIconController _autoUpdateJiggController = JiggIconController();
+  final Map<String, JiggIconController> _settingJiggControllers = {};
+
+  JiggIconController _settingController(String key) =>
+      _settingJiggControllers.putIfAbsent(key, JiggIconController.new);
 
   @override
   void initState() {
     super.initState();
     _loadProfilePrefs();
+  }
+
+  @override
+  void dispose() {
+    _themeJiggController.dispose();
+    _autoUpdateJiggController.dispose();
+    for (final ctrl in _settingJiggControllers.values) {
+      ctrl.dispose();
+    }
+    super.dispose();
   }
 
   @override
@@ -123,11 +146,61 @@ class _MyProfileState extends State<MyProfile> {
     final unit = await WeightUnitHelper.loadUnit(pid);
     final liveSteps =
         pid != null ? await StepCounterSync.isLiveEnabled(pid) : false;
-    if (mounted && (unit != _weightUnit || liveSteps != _liveStepsEnabled)) {
+    final autoUpdate = await AppUpdateService.isAutoUpdateEnabled();
+    if (mounted &&
+        (unit != _weightUnit ||
+            liveSteps != _liveStepsEnabled ||
+            autoUpdate != _autoUpdateEnabled)) {
       setState(() {
         _weightUnit = unit;
         _liveStepsEnabled = liveSteps;
+        _autoUpdateEnabled = autoUpdate;
       });
+    }
+  }
+
+  Future<void> _toggleAutoUpdates(bool enabled) async {
+    HapticFeedback.selectionClick();
+    _autoUpdateJiggController.play();
+    setState(() => _autoUpdateEnabled = enabled);
+    await AppUpdateService.setAutoUpdateEnabled(enabled);
+    if (!mounted) return;
+    showTempoToast(
+      context,
+      enabled ? 'Auto-updates enabled' : 'Auto-updates paused',
+    );
+  }
+
+  Future<void> _checkForUpdatesManually() async {
+    if (_checkingUpdates) return;
+    HapticFeedback.selectionClick();
+    setState(() => _checkingUpdates = true);
+    final res = await AppUpdateService.checkForUpdate(manual: true);
+    if (!mounted) return;
+    setState(() => _checkingUpdates = false);
+
+    switch (res.status) {
+      case TempoUpdateCheckStatus.updateAvailable:
+        if (res.release != null) {
+          await showTempoUpdateSheet(context, res.release!);
+        }
+        break;
+      case TempoUpdateCheckStatus.upToDate:
+        showTempoToast(context, 'Tempo is up to date ($kTempoDisplayVersion)');
+        break;
+      case TempoUpdateCheckStatus.offlineOrError:
+        showTempoToast(
+          context,
+          'Could not check for updates — verify internet connection',
+          isError: true,
+        );
+        break;
+      case TempoUpdateCheckStatus.skipped:
+      case TempoUpdateCheckStatus.throttled:
+        if (res.release != null) {
+          await showTempoUpdateSheet(context, res.release!);
+        }
+        break;
     }
   }
 
@@ -136,6 +209,16 @@ class _MyProfileState extends State<MyProfile> {
     final pid = profileProvider.activeProfileId;
     if (pid == null) return;
     HapticFeedback.selectionClick();
+
+    if (wantEnabled && await StepCounterSync.shouldShowAccuracyWarning(pid)) {
+      if (!mounted) return;
+      final choice = await showStepAccuracyWarningSheet(context);
+      if (!mounted || choice == null || !choice.proceed) return;
+      if (choice.suppressForToday) {
+        await StepCounterSync.dismissAccuracyWarningForToday(pid);
+      }
+    }
+
     final res = await StepCounterSync.requestAndToggleLiveSteps(pid, wantEnabled);
     if (!mounted) return;
     setState(() => _liveStepsEnabled = res.enabled);
@@ -528,9 +611,13 @@ class _MyProfileState extends State<MyProfile> {
                                 }
                               }
                             },
-                      icon: const Icon(
-                        CupertinoIcons.tray_arrow_down_fill,
+                      icon: const TempoJiggIcon(
+                        'download',
+                        variant: JiggIconVariant.solid,
+                        color: Colors.white,
                         size: 18,
+                        trigger: JiggIconTrigger.appear,
+                        fallbackIcon: CupertinoIcons.tray_arrow_down_fill,
                       ),
                       label: Text(
                         busy ? 'Working...' : 'Create local backup',
@@ -662,13 +749,28 @@ class _MyProfileState extends State<MyProfile> {
                                       ),
                                       borderRadius: BorderRadius.circular(999),
                                     ),
-                                    child: Text(
-                                      'Restore',
-                                      style: TextStyle(
-                                        color: mc.accent,
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w700,
-                                      ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        TempoJiggIcon(
+                                          'upload',
+                                          variant: JiggIconVariant.outline,
+                                          size: 13,
+                                          color: mc.accent,
+                                          trigger: JiggIconTrigger.none,
+                                          fallbackIcon:
+                                              CupertinoIcons.arrow_up_circle,
+                                        ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          'Restore',
+                                          style: TextStyle(
+                                            color: mc.accent,
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -812,233 +914,250 @@ class _MyProfileState extends State<MyProfile> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: () => _editProfileDetails(profile),
-                          child: Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: c.card,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: c.cardBorder),
-                            ),
-                            child: Icon(
-                              CupertinoIcons.pencil,
-                              size: 16,
-                              color: c.textSecondary,
-                            ),
+                        TempoGlassCircleButton(
+                          size: 38,
+                          tooltip: 'Edit profile',
+                          onPressed: () => _editProfileDetails(profile),
+                          icon: Icon(
+                            CupertinoIcons.pencil,
+                            size: 16,
+                            color: c.textPrimary,
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 22),
+                const SizedBox(height: 20),
 
-                // --- Single Unified Settings Card (Mi Fitness / HyperOS 3 Reference) ---
-                AppleCard(
-                  borderRadius: 26,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    children: [
-                      // Dark Mode toggle row
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 11,
-                        ),
-                        child: Row(
-                          children: [
-                            _circleIcon(
-                              c.isDark
-                                  ? CupertinoIcons.moon_fill
-                                  : CupertinoIcons.sun_max_fill,
-                              const Color(0xFF7A6FF0),
-                            ),
-                            const SizedBox(width: 15),
-                            Expanded(
-                              child: Text(
-                                'Dark mode',
-                                style: TextStyle(
-                                  color: c.textPrimary,
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                            CupertinoSwitch(
-                              activeTrackColor: c.accent,
-                              value: themeProvider.isDarkMode,
-                              onChanged: (v) {
-                                HapticFeedback.selectionClick();
-                                themeProvider.toggleTheme(v);
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Live step counter toggle row
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 11,
-                        ),
-                        child: Row(
-                          children: [
-                            _circleIcon(
-                              CupertinoIcons.hare_fill,
-                              const Color(0xFF4CD964),
-                            ),
-                            const SizedBox(width: 15),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Live step counter',
-                                    style: TextStyle(
-                                      color: c.textPrimary,
-                                      fontSize: 15.5,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 1),
-                                  Text(
-                                    _liveStepsEnabled
-                                        ? 'Counting steps offline via motion sensor'
-                                        : 'Off · Enable to count steps as you walk',
-                                    style: TextStyle(
-                                      color: c.textTertiary,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            CupertinoSwitch(
-                              activeTrackColor: c.accent,
-                              value: _liveStepsEnabled,
-                              onChanged: _toggleLiveSteps,
-                            ),
-                          ],
+                // --- 1. Preferences ---
+                _sectionHeader('Preferences', c),
+                _groupedSettingsCard(
+                  c: c,
+                  children: [
+                    _switchTile(
+                      c: c,
+                      icon: c.isDark
+                          ? CupertinoIcons.moon_fill
+                          : CupertinoIcons.sun_max_fill,
+                      jiggIconName: c.isDark ? 'weather-moon' : 'palette',
+                      jiggController: _themeJiggController,
+                      badgeColor: const Color(0xFF7A6FF0),
+                      title: 'Dark mode',
+                      subtitle: c.isDark
+                          ? 'Obsidian OLED appearance active'
+                          : 'Clean light appearance active',
+                      value: themeProvider.isDarkMode,
+                      onChanged: (v) {
+                        HapticFeedback.selectionClick();
+                        _themeJiggController.play();
+                        themeProvider.toggleTheme(v);
+                      },
+                    ),
+                    _switchTile(
+                      c: c,
+                      icon: CupertinoIcons.hare_fill,
+                      badgeColor: const Color(0xFF4CD964),
+                      title: 'Live step counter',
+                      subtitle: _liveStepsEnabled
+                          ? 'Counting steps offline via motion sensor'
+                          : 'Off · Enable to count steps as you walk',
+                      value: _liveStepsEnabled,
+                      onChanged: _toggleLiveSteps,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // --- 2. Data & Media ---
+                _sectionHeader('Data & Media', c),
+                _groupedSettingsCard(
+                  c: c,
+                  children: [
+                    _settingTile(
+                      icon: CupertinoIcons.photo_fill,
+                      jiggIconName: 'camera',
+                      badgeColor: const Color(0xFF4B9EF7),
+                      title: 'Progress photos',
+                      subtitle: 'Private on-device album & comparison',
+                      c: c,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ProgressAlbumScreen(),
                         ),
                       ),
-                      _settingTile(
-                        icon: CupertinoIcons.photo_fill,
-                        badgeColor: const Color(0xFF4B9EF7),
-                        title: 'Progress photos',
-                        c: c,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const ProgressAlbumScreen(),
+                    ),
+                    _settingTile(
+                      icon: CupertinoIcons.tray_arrow_down_fill,
+                      jiggIconName: 'download',
+                      badgeColor: c.accent,
+                      title: 'Backup & restore',
+                      subtitle: 'Export or import local JSON snapshots',
+                      c: c,
+                      onTap: () => _openBackupSheet(profile),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // --- 3. Security & Privacy ---
+                _sectionHeader('Security & Privacy', c),
+                _groupedSettingsCard(
+                  c: c,
+                  children: [
+                    _settingTile(
+                      icon: CupertinoIcons.lock_rotation,
+                      jiggIconName: 'key',
+                      badgeColor: const Color(0xFF4BD166),
+                      title: 'Change 4-digit PIN',
+                      c: c,
+                      onTap: () => _changePin(profile),
+                    ),
+                    _settingTile(
+                      icon: CupertinoIcons.lock_fill,
+                      jiggIconName: 'lock',
+                      badgeColor: const Color(0xFF34C759),
+                      title: 'Lock profile',
+                      c: c,
+                      onTap: () => profileProvider.lockSession(),
+                    ),
+                    _settingTile(
+                      icon: CupertinoIcons.shield_fill,
+                      jiggIconName: 'bell',
+                      badgeColor: const Color(0xFFF4BD3E),
+                      title: 'Device permissions',
+                      subtitle: 'Activity sensors, notifications & camera',
+                      c: c,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PermissionsScreen(),
+                        ),
+                      ),
+                    ),
+                    _settingTile(
+                      icon: CupertinoIcons.doc_text_fill,
+                      badgeColor: const Color(0xFF7A6FF0),
+                      title: 'Privacy & terms',
+                      c: c,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const TermsAndConditionsScreen(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // --- 4. Updates & Support ---
+                _sectionHeader('Updates & Support', c),
+                _groupedSettingsCard(
+                  c: c,
+                  children: [
+                    _switchTile(
+                      c: c,
+                      icon: CupertinoIcons.arrow_up_circle_fill,
+                      jiggIconName: 'rocket',
+                      jiggController: _autoUpdateJiggController,
+                      badgeColor: c.accent,
+                      title: 'Auto-updates',
+                      subtitle: _autoUpdateEnabled
+                          ? 'Checks GitHub releases on launch'
+                          : 'Off · Tap App version to check manually',
+                      value: _autoUpdateEnabled,
+                      onChanged: _toggleAutoUpdates,
+                    ),
+                    ValueListenableBuilder<TempoReleaseInfo?>(
+                      valueListenable: AppUpdateService.availableRelease,
+                      builder: (context, pendingRelease, _) {
+                        final hasUpdate = pendingRelease != null;
+                        return _settingTile(
+                          icon: CupertinoIcons.arrow_up_circle_fill,
+                          jiggIconName: 'download',
+                          badgeColor: const Color(0xFF7A6FF0),
+                          title: 'App version',
+                          trailingText: _checkingUpdates
+                              ? 'Checking...'
+                              : kTempoDisplayVersion,
+                          trailingWidget: _checkingUpdates
+                              ? CupertinoActivityIndicator(
+                                  radius: 9,
+                                  color: c.accent,
+                                )
+                              : (hasUpdate
+                                  ? Container(
+                                      width: 8,
+                                      height: 8,
+                                      margin: const EdgeInsets.only(right: 6),
+                                      decoration: BoxDecoration(
+                                        color: c.accent,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    )
+                                  : null),
+                          showChevron: true,
+                          c: c,
+                          onTap: _checkForUpdatesManually,
+                        );
+                      },
+                    ),
+                    _settingTile(
+                      icon: CupertinoIcons.book_fill,
+                      jiggIconName: 'book',
+                      badgeColor: const Color(0xFF4AC9A5),
+                      title: 'App guide',
+                      c: c,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => IntroWalkthroughScreen(
+                            isReplay: true,
+                            onComplete: () => Navigator.of(context).pop(),
                           ),
                         ),
                       ),
-                      _settingTile(
-                        icon: CupertinoIcons.tray_arrow_down_fill,
-                        badgeColor: c.accent,
-                        title: 'Backup & restore',
-                        c: c,
-                        onTap: () => _openBackupSheet(profile),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.lock_rotation,
-                        badgeColor: const Color(0xFF4BD166),
-                        title: 'Change 4-digit PIN',
-                        c: c,
-                        onTap: () => _changePin(profile),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.lock_fill,
-                        badgeColor: const Color(0xFF4BD166),
-                        title: 'Lock profile',
-                        c: c,
-                        onTap: () => profileProvider.lockSession(),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.shield_fill,
-                        badgeColor: const Color(0xFFF4BD3E),
-                        title: 'Device permissions',
-                        c: c,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const PermissionsScreen(),
-                          ),
+                    ),
+                    _settingTile(
+                      icon: CupertinoIcons.sparkles,
+                      jiggIconName: 'star',
+                      badgeColor: c.accent,
+                      title: 'Replay feature hints',
+                      c: c,
+                      onTap: () => _replayFeatureHints(profile),
+                    ),
+                    _settingTile(
+                      icon: CupertinoIcons.info,
+                      badgeColor: const Color(0xFF3D9CF6),
+                      title: 'About Tempo',
+                      c: c,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const AboutAppScreen(),
                         ),
                       ),
-                      _settingTile(
-                        icon: CupertinoIcons.doc_text_fill,
-                        badgeColor: const Color(0xFF7A6FF0),
-                        title: 'Privacy & terms',
-                        c: c,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const TermsAndConditionsScreen(),
-                          ),
-                        ),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.arrow_up_circle_fill,
-                        badgeColor: const Color(0xFF7A6FF0),
-                        title: 'App version',
-                        trailingText: kTempoDisplayVersion,
-                        showChevron: false,
-                        c: c,
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.book_fill,
-                        badgeColor: const Color(0xFF4AC9A5),
-                        title: 'App guide',
-                        c: c,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => IntroWalkthroughScreen(
-                              isReplay: true,
-                              onComplete: () => Navigator.of(context).pop(),
-                            ),
-                          ),
-                        ),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.sparkles,
-                        badgeColor: c.accent,
-                        title: 'Replay feature hints',
-                        c: c,
-                        onTap: () => _replayFeatureHints(profile),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.info,
-                        badgeColor: const Color(0xFF3D9CF6),
-                        title: 'About Tempo',
-                        c: c,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AboutAppScreen(),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 4,
-                        ),
-                        child: Divider(height: 1, color: c.divider),
-                      ),
-                      _settingTile(
-                        icon: CupertinoIcons.trash_fill,
-                        badgeColor: const Color(0xFFEF5350),
-                        title: 'Delete local profile',
-                        titleColor: c.moveRed,
-                        c: c,
-                        onTap: () => _confirmDeleteProfile(profile),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // --- 5. Account Danger Zone (Safely Separated) ---
+                _groupedSettingsCard(
+                  c: c,
+                  children: [
+                    _settingTile(
+                      icon: CupertinoIcons.trash_fill,
+                      badgeColor: const Color(0xFFEF5350),
+                      title: 'Delete local profile',
+                      subtitle: 'Permanently erase data for this profile',
+                      titleColor: c.moveRed,
+                      c: c,
+                      onTap: () => _confirmDeleteProfile(profile),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1048,45 +1167,200 @@ class _MyProfileState extends State<MyProfile> {
     );
   }
 
-  Widget _circleIcon(IconData icon, Color color) {
+  Widget _sectionHeader(String title, AppColors c) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Text(
+        title.toUpperCase(),
+        style: TextStyle(
+          color: c.textTertiary,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.65,
+        ),
+      ),
+    );
+  }
+
+  Widget _groupedSettingsCard({
+    required AppColors c,
+    required List<Widget> children,
+  }) {
+    final separated = <Widget>[];
+    for (int i = 0; i < children.length; i++) {
+      if (i > 0) {
+        separated.add(
+          Divider(
+            height: 0.6,
+            thickness: 0.6,
+            indent: 62,
+            endIndent: 16,
+            color: c.divider,
+          ),
+        );
+      }
+      separated.add(children[i]);
+    }
+
+    return AppleCard(
+      borderRadius: 24,
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: separated,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _switchTile({
+    required AppColors c,
+    required IconData icon,
+    String? jiggIconName,
+    JiggIconController? jiggController,
+    required Color badgeColor,
+    required String title,
+    String? subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+      child: Row(
+        children: [
+          _circleIcon(
+            icon,
+            badgeColor,
+            jiggIconName: jiggIconName,
+            jiggController: jiggController,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 1.5),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: c.textTertiary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          CupertinoSwitch(
+            activeTrackColor: c.accent,
+            value: value,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _circleIcon(
+    IconData icon,
+    Color color, {
+    String? jiggIconName,
+    JiggIconController? jiggController,
+  }) {
     return Container(
-      width: 30,
-      height: 30,
+      width: 32,
+      height: 32,
       decoration: BoxDecoration(
         color: color,
         shape: BoxShape.circle,
       ),
-      child: Icon(icon, color: Colors.white, size: 16),
+      child: Center(
+        child: jiggIconName != null
+            ? TempoJiggIcon(
+                jiggIconName,
+                variant: JiggIconVariant.solid,
+                color: Colors.white,
+                size: 16,
+                controller: jiggController,
+                trigger: JiggIconTrigger.none,
+                fallbackIcon: icon,
+              )
+            : Icon(icon, color: Colors.white, size: 16),
+      ),
     );
   }
 
   Widget _settingTile({
     required IconData icon,
+    String? jiggIconName,
     required Color badgeColor,
     required String title,
+    String? subtitle,
     required AppColors c,
     VoidCallback? onTap,
     Color? titleColor,
     String? trailingText,
+    Widget? trailingWidget,
     bool showChevron = true,
   }) {
+    final ctrl = jiggIconName != null ? _settingController(title) : null;
     final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      padding: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: subtitle != null ? 11.5 : 13.5,
+      ),
       child: Row(
         children: [
-          _circleIcon(icon, badgeColor),
-          const SizedBox(width: 15),
+          _circleIcon(
+            icon,
+            badgeColor,
+            jiggIconName: jiggIconName,
+            jiggController: ctrl,
+          ),
+          const SizedBox(width: 14),
           Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                color: titleColor ?? c.textPrimary,
-                fontSize: 15.5,
-                fontWeight: FontWeight.w500,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: titleColor ?? c.textPrimary,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 1.5),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: c.textTertiary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          if (trailingText != null)
+          if (trailingWidget != null) trailingWidget,
+          if (trailingText != null) ...[
+            if (trailingWidget != null) const SizedBox(width: 4),
             Text(
               trailingText,
               style: TextStyle(
@@ -1095,12 +1369,16 @@ class _MyProfileState extends State<MyProfile> {
                 fontWeight: FontWeight.w500,
               ),
             ),
-          if (showChevron && onTap != null)
+          ],
+          if (showChevron && onTap != null) ...[
+            if (trailingText != null || trailingWidget != null)
+              const SizedBox(width: 6),
             Icon(
               CupertinoIcons.chevron_right,
               color: c.textTertiary,
               size: 15,
             ),
+          ],
         ],
       ),
     );
@@ -1110,6 +1388,7 @@ class _MyProfileState extends State<MyProfile> {
     return InkWell(
       onTap: () {
         HapticFeedback.selectionClick();
+        ctrl?.play();
         onTap();
       },
       child: content,

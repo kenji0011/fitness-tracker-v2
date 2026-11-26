@@ -19,6 +19,31 @@ class StepCounterSync {
   static String _checkpointKey(String profileId) => 'step_sync_v1_$profileId';
   static String _enabledKey(String profileId) =>
       'live_steps_enabled_$profileId';
+  static String _warningDateKey(String profileId) =>
+      'live_steps_accuracy_notice_date_$profileId';
+
+  /// Returns `true` if the Live Step Counter accuracy notice should be shown
+  /// when toggling ON (returns `false` only if dismissed earlier today).
+  static Future<bool> shouldShowAccuracyWarning(
+    String profileId, {
+    String? todayKeyOverride,
+  }) async {
+    if (profileId.isEmpty) return true;
+    final today = todayKeyOverride ?? TempoRustDb.todayKey();
+    final saved =
+        await TempoRustDb.instance.getSetting(_warningDateKey(profileId));
+    return saved != today;
+  }
+
+  /// Suppresses the Live Step Counter accuracy notice for the rest of today.
+  static Future<void> dismissAccuracyWarningForToday(
+    String profileId, {
+    String? todayKeyOverride,
+  }) async {
+    if (profileId.isEmpty) return;
+    final today = todayKeyOverride ?? TempoRustDb.todayKey();
+    await TempoRustDb.instance.setSetting(_warningDateKey(profileId), today);
+  }
 
   static Future<bool> isLiveEnabled(String profileId) async {
     if (profileId.isEmpty) return false;

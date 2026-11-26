@@ -695,48 +695,34 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                           ),
                         ),
                         const SizedBox(width: 8),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _toggleSearch,
-                          child: AnimatedContainer(
+                        TempoGlassCircleButton(
+                          size: 38,
+                          tooltip: _showSearch ? 'Close search' : 'Search workouts',
+                          tintColor: _showSearch ? c.accent : null,
+                          onPressed: _toggleSearch,
+                          icon: AnimatedSwitcher(
                             duration: const Duration(milliseconds: 220),
-                            curve: Curves.easeOutCubic,
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: _showSearch
-                                  ? c.accent.withValues(
-                                      alpha: c.isDark ? 0.22 : 0.12,
-                                    )
-                                  : Colors.transparent,
-                            ),
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 220),
-                              switchInCurve: Curves.easeOutBack,
-                              switchOutCurve: Curves.easeIn,
-                              transitionBuilder: (child, anim) =>
-                                  RotationTransition(
-                                turns: Tween<double>(begin: 0.78, end: 1.0)
-                                    .animate(anim),
-                                child: ScaleTransition(
-                                  scale: anim,
-                                  child: FadeTransition(
-                                    opacity: anim,
-                                    child: child,
-                                  ),
+                            switchInCurve: Curves.easeOutBack,
+                            switchOutCurve: Curves.easeIn,
+                            transitionBuilder: (child, anim) =>
+                                RotationTransition(
+                              turns: Tween<double>(begin: 0.78, end: 1.0)
+                                  .animate(anim),
+                              child: ScaleTransition(
+                                scale: anim,
+                                child: FadeTransition(
+                                  opacity: anim,
+                                  child: child,
                                 ),
                               ),
-                              child: Icon(
-                                _showSearch
-                                    ? CupertinoIcons.xmark
-                                    : CupertinoIcons.search,
-                                key: ValueKey(_showSearch),
-                                size: _showSearch ? 16 : 19,
-                                color: _showSearch
-                                    ? c.accent
-                                    : c.textSecondary,
-                              ),
+                            ),
+                            child: Icon(
+                              _showSearch
+                                  ? CupertinoIcons.xmark
+                                  : CupertinoIcons.search,
+                              key: ValueKey(_showSearch),
+                              size: _showSearch ? 16 : 18,
+                              color: _showSearch ? c.accent : c.textPrimary,
                             ),
                           ),
                         ),

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import 'tempo_startup_splash.dart';
 
 class TempoSpotlightStep {
   final GlobalKey targetKey;
@@ -71,6 +72,9 @@ class TempoSpotlightTour {
           .getSetting(_settingKey(screenId, profileId));
       if (seen == '1') return;
     }
+
+    await TempoStartupSplash.waitForCompletion();
+    if (!context.mounted) return;
 
     if (delay > Duration.zero) {
       await Future<void>.delayed(delay);
