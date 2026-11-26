@@ -333,7 +333,7 @@ class _TempoUpdateFloatingModalState extends State<_TempoUpdateFloatingModal>
                       TempoGlassCircleButton(
                         size: 36,
                         tooltip: 'Dismiss',
-                        useLiveRefraction: false,
+                        enableBlur: false,
                         onPressed: () {
                           _cancelToken?.cancel();
                           Navigator.of(context).pop();
