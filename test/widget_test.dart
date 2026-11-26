@@ -1237,6 +1237,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('250'), findsOneWidget);
 
+    await tester.tap(find.text('+500 ml'));
+    await tester.pumpAndSettle();
+    expect(find.text('750'), findsOneWidget);
+
+    // Unsupported metric types stay rejected in parity with Rust SQLite
+    await expectLater(
+      () => db.logBodyMetric(
+        profileId: profile.id,
+        metricType: 'unknown_metric',
+        value: 10,
+      ),
+      throwsException,
+    );
+
     await themeProvider.toggleTheme(true);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

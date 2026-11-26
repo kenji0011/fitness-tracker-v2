@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -54,28 +56,35 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool showLoading = true}) async {
     final pid = context.read<ActiveProfileProvider>().activeProfileId;
     if (pid == null) return;
-    setState(() => _loading = true);
+    if (showLoading && _allPoints.isEmpty) {
+      setState(() => _loading = true);
+    }
 
-    final results = await Future.wait([
-      _db.getBodyMetricHistory(pid, 'water', limit: 365),
-      _db.getSetting('water_goal_ml_$pid'),
-    ]);
-    if (!mounted) return;
+    try {
+      final results = await Future.wait([
+        _db.getBodyMetricHistory(pid, 'water', limit: 2000),
+        _db.getSetting('water_goal_ml_$pid'),
+      ]);
+      if (!mounted) return;
 
-    final pts = (results[0] as List<BodyMetricPoint>)
-      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
-    final savedGoal = int.tryParse((results[1] as String?) ?? '');
+      final pts = (results[0] as List<BodyMetricPoint>)
+        ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+      final savedGoal = int.tryParse((results[1] as String?) ?? '');
 
-    setState(() {
-      _allPoints = pts;
-      _goalMl = (savedGoal != null && savedGoal >= 500 && savedGoal <= 10000)
-          ? savedGoal
-          : 2500;
-      _loading = false;
-    });
+      setState(() {
+        _allPoints = pts;
+        _goalMl = (savedGoal != null && savedGoal >= 500 && savedGoal <= 10000)
+            ? savedGoal
+            : 2500;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Failed to load water history: $e');
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   String _dayKey(DateTime dt) => DateFormat('yyyy-MM-dd').format(dt);
@@ -139,17 +148,25 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
       _anchorDate.day,
       now.hour,
       now.minute,
+      now.second,
     );
-    await _db.logBodyMetric(
-      profileId: pid,
-      metricType: 'water',
-      value: ml.toDouble(),
-      recordedAt: recorded,
-    );
-    provider.notifyDataChanged();
-    await _load();
-    if (mounted) {
-      showTempoToast(context, '+$ml ml logged');
+    try {
+      await _db.logBodyMetric(
+        profileId: pid,
+        metricType: 'water',
+        value: ml.toDouble(),
+        recordedAt: recorded,
+      );
+      provider.notifyDataChanged();
+      await _load(showLoading: false);
+      if (mounted) {
+        showTempoToast(context, '+$ml ml logged');
+      }
+    } catch (e) {
+      debugPrint('Failed to log water intake: $e');
+      if (mounted) {
+        showTempoToast(context, 'Could not save water intake', isError: true);
+      }
     }
   }
 
@@ -200,7 +217,11 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
               20,
               12,
               20,
-              MediaQuery.viewInsetsOf(ctx).bottom + 24,
+              math.max(
+                    MediaQuery.viewInsetsOf(ctx).bottom,
+                    MediaQuery.paddingOf(ctx).bottom,
+                  ) +
+                  24,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -317,7 +338,14 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                     ),
                     onPressed: () {
                       final val = int.tryParse(ctrl.text.trim());
-                      if (val == null || val < 50 || val > 5000) return;
+                      if (val == null || val < 50 || val > 5000) {
+                        showTempoToast(
+                          ctx,
+                          'Enter an amount between 50 and 5,000 ml',
+                          isError: true,
+                        );
+                        return;
+                      }
                       Navigator.of(ctx).pop(val);
                     },
                     child: const Text(
@@ -342,22 +370,33 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
       final pid = provider.activeProfileId;
       if (pid == null) return;
       final now = DateTime.now();
-      await _db.logBodyMetric(
-        profileId: pid,
-        metricType: 'water',
-        value: savedMl.toDouble(),
-        recordedAt: DateTime(
-          selectedDate.year,
-          selectedDate.month,
-          selectedDate.day,
-          now.hour,
-          now.minute,
-        ),
-      );
-      provider.notifyDataChanged();
-      await _load();
-      _dropController.play();
-      if (mounted) showTempoToast(context, '+$savedMl ml logged');
+      try {
+        await _db.logBodyMetric(
+          profileId: pid,
+          metricType: 'water',
+          value: savedMl.toDouble(),
+          recordedAt: DateTime(
+            selectedDate.year,
+            selectedDate.month,
+            selectedDate.day,
+            now.hour,
+            now.minute,
+            now.second,
+          ),
+        );
+        provider.notifyDataChanged();
+        if (mounted && _dayKey(selectedDate) != _dayKey(_anchorDate)) {
+          setState(() => _anchorDate = selectedDate);
+        }
+        await _load(showLoading: false);
+        _dropController.play();
+        if (mounted) showTempoToast(context, '+$savedMl ml logged');
+      } catch (e) {
+        debugPrint('Failed to save custom water intake: $e');
+        if (mounted) {
+          showTempoToast(context, 'Could not save water intake', isError: true);
+        }
+      }
     }
   }
 

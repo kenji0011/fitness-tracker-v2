@@ -541,7 +541,7 @@ pub fn log_body_metric(
     input: LogBodyMetricInput,
 ) -> Result<Profile, String> {
     let metric = input.metric_type.trim().to_lowercase();
-    if !["weight", "waist", "sleep", "height"].contains(&metric.as_str()) {
+    if !["weight", "waist", "sleep", "height", "water"].contains(&metric.as_str()) {
         return Err(format!("Unsupported metric type: {}", metric));
     }
     let recorded_at = input.recorded_at.unwrap_or_else(now_iso);

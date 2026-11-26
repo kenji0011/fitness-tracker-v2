@@ -285,6 +285,7 @@ class _AddDataScreenState extends State<AddDataScreen> {
         _selectedDate.day,
         now.hour,
         now.minute,
+        now.second,
       );
 
       switch (_selectedMetric) {
@@ -610,27 +611,40 @@ class _AddDataScreenState extends State<AddDataScreen> {
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
-          child: TempoLiquidButton(
+          child: SizedBox(
             height: 54,
-            borderRadius: 20,
-            onPressed: _saving ? null : _save,
-            child: _saving
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: Colors.white,
+            width: double.infinity,
+            child: TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: c.accent,
+                disabledBackgroundColor: c.accent.withValues(alpha: 0.6),
+                foregroundColor: Colors.white,
+                disabledForegroundColor: Colors.white,
+                elevation: 0,
+                shadowColor: Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      'Save ${meta.label.toLowerCase()}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  )
-                : Text(
-                    'Save ${meta.label.toLowerCase()}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+            ),
           ),
         ),
       ),

@@ -326,7 +326,7 @@ class TempoRustDb {
 
   Future<LocalProfile> logBodyMetric({
     required String profileId,
-    required String metricType, // weight | waist | sleep | height
+    required String metricType, // weight | waist | sleep | height | water
     required double value,
     DateTime? recordedAt,
   }) async {
@@ -702,7 +702,11 @@ class _FallbackLocalStore {
         return list;
       case 'log_body_metric':
         final pid = payload['profileId'];
-        final metric = payload['metricType'].toString();
+        final metric = payload['metricType'].toString().trim().toLowerCase();
+        const supportedMetrics = {'weight', 'waist', 'sleep', 'height', 'water'};
+        if (!supportedMetrics.contains(metric)) {
+          throw Exception('Unsupported metric type: $metric');
+        }
         final val = (payload['value'] as num).toDouble();
         if (metric != 'height') {
           (_db['body_metrics_history'] as List).add({

@@ -138,7 +138,7 @@ pub struct BodyMetricPoint {
 #[serde(rename_all = "camelCase")]
 pub struct LogBodyMetricInput {
     pub profile_id: String,
-    pub metric_type: String, // "weight" | "waist" | "sleep" | "height"
+    pub metric_type: String, // "weight" | "waist" | "sleep" | "height" | "water"
     pub value: f64,
     pub recorded_at: Option<String>,
 }

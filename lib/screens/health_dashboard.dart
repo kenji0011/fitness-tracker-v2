@@ -184,7 +184,7 @@ class _HealthDashboardState extends State<HealthDashboard>
         _db.getDashboardSummary(profileId),
         _db.getSetting('weight_unit_$profileId'),
         _db.getSetting('summary_features_$profileId'),
-        _db.getBodyMetricHistory(profileId, 'water', limit: 60),
+        _db.getBodyMetricHistory(profileId, 'water', limit: 200),
         _db.getSetting('water_goal_ml_$profileId'),
         StepCounterSync.isLiveEnabled(profileId),
       ]);
@@ -377,15 +377,22 @@ class _HealthDashboardState extends State<HealthDashboard>
     if (pid == null) return;
     HapticFeedback.lightImpact();
     _waterDropController.play();
-    await _db.logBodyMetric(
-      profileId: pid,
-      metricType: 'water',
-      value: 250,
-      recordedAt: DateTime.now(),
-    );
-    provider.notifyDataChanged();
-    await _loadDashboard();
-    if (mounted) showTempoToast(context, '+250 ml water logged');
+    try {
+      await _db.logBodyMetric(
+        profileId: pid,
+        metricType: 'water',
+        value: 250,
+        recordedAt: DateTime.now(),
+      );
+      provider.notifyDataChanged();
+      await _loadDashboard();
+      if (mounted) showTempoToast(context, '+250 ml water logged');
+    } catch (e) {
+      debugPrint('Failed to quick-add water: $e');
+      if (mounted) {
+        showTempoToast(context, 'Could not save water intake', isError: true);
+      }
+    }
   }
 
   @override
@@ -1045,6 +1052,7 @@ class _HealthGridTile extends StatelessWidget {
                 const Spacer(),
                 if (trailingPill != null)
                   GestureDetector(
+                    behavior: HitTestBehavior.opaque,
                     onTap: onTrailingPillTap,
                     child: Container(
                       padding: const EdgeInsets.symmetric(

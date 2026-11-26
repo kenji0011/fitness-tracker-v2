@@ -320,6 +320,53 @@ mod tests {
         assert_eq!(sum2["data"]["today"]["calories"], 0);
         assert_eq!(sum2["data"]["totalWorkouts"], 0);
 
+        // Log water intake metrics via FFI dispatch and verify history retrieval
+        let water1 = call(
+            "log_body_metric",
+            json!({
+                "profileId": p1_id,
+                "metricType": "water",
+                "value": 250.0,
+                "recordedAt": "2026-11-19T09:00:00Z"
+            }),
+        );
+        assert_eq!(water1["ok"], true);
+        let water2 = call(
+            "log_body_metric",
+            json!({
+                "profileId": p1_id,
+                "metricType": "water",
+                "value": 500.0,
+                "recordedAt": "2026-11-19T12:30:00Z"
+            }),
+        );
+        assert_eq!(water2["ok"], true);
+
+        let water_hist = call(
+            "get_body_metric_history",
+            json!({
+                "profileId": p1_id,
+                "metricType": "water",
+                "limit": 100
+            }),
+        );
+        assert_eq!(water_hist["ok"], true);
+        let water_pts = water_hist["data"].as_array().unwrap();
+        assert_eq!(water_pts.len(), 2);
+        assert_eq!(water_pts[0]["value"].as_f64().unwrap(), 250.0);
+        assert_eq!(water_pts[1]["value"].as_f64().unwrap(), 500.0);
+
+        // Unsupported metric types must still be rejected
+        let bad_metric = call(
+            "log_body_metric",
+            json!({
+                "profileId": p1_id,
+                "metricType": "unknown_metric",
+                "value": 10.0
+            }),
+        );
+        assert_eq!(bad_metric["ok"], false);
+
         // Cascade delete Profile A
         let del = call("delete_profile", json!({ "profileId": p1_id }));
         assert_eq!(del["data"]["deleted"], true);
