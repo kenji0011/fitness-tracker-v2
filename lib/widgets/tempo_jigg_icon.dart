@@ -9,21 +9,22 @@ import 'package:jiggicons/jiggicons.dart';
 class TempoJiggicons {
   TempoJiggicons._();
 
-  static const List<String> _usedIconIds = <String>[
-    // Floating Liquid Glass Navbar
+  static const List<String> _criticalIconIds = <String>[
+    // Painted immediately on Frame 0 (Floating Navbar + Summary Cards)
     'heart',
     'dumbbell',
     'trophy',
-    // Summary & Detail Cards
     'drop',
     'weather-moon',
     'flash',
+  ];
+
+  static const List<String> _deferredIconIds = <String>[
+    // Loaded asynchronously after first frame during the startup splash
     'calendar',
     'clock',
-    // Celebrations & Progress Album
     'confetti',
     'camera',
-    // Profile Settings & Local Backup
     'bell',
     'lock',
     'key',
@@ -36,7 +37,8 @@ class TempoJiggicons {
   ];
 
   static final Map<String, JiggiconData> _syncCache = <String, JiggiconData>{};
-  static Future<void>? _prewarmFuture;
+  static Future<void>? _criticalFuture;
+  static Future<void>? _deferredFuture;
 
   /// Returns synchronously cached icon data if already loaded.
   static JiggiconData? cached(String name) => _syncCache[name];
@@ -54,11 +56,23 @@ class TempoJiggicons {
     }
   }
 
-  /// Pre-loads all Tempo Jiggicons in parallel during startup (<10ms).
-  static Future<void> prewarm() {
-    return _prewarmFuture ??= Future.wait(
-      _usedIconIds.map(load),
+  /// Pre-loads only Frame-0 critical Jiggicons before `runApp()` for fast startup.
+  static Future<void> prewarmCritical() {
+    return _criticalFuture ??= Future.wait(
+      _criticalIconIds.map(load),
     ).then((_) {});
+  }
+
+  /// Pre-loads secondary screen Jiggicons in the background after first frame.
+  static Future<void> prewarmDeferred() {
+    return _deferredFuture ??= Future.wait(
+      _deferredIconIds.map(load),
+    ).then((_) {});
+  }
+
+  /// Pre-loads all Tempo Jiggicons (kept for tests and callers expecting full warm).
+  static Future<void> prewarm() async {
+    await Future.wait([prewarmCritical(), prewarmDeferred()]);
   }
 }
 
@@ -198,16 +212,18 @@ class _TempoJiggIconState extends State<TempoJiggIcon>
 
     Widget child;
     if (icon != null) {
-      child = RepaintBoundary(
-        child: AnimatedBuilder(
-          animation: _motion,
-          builder: (context, _) => JiggIconFrame(
-            icon: icon,
-            variant: widget.variant,
-            size: widget.size,
-            color: resolvedColor,
-            seconds: _playing ? _motion.value * icon.ms / 1000 : null,
-          ),
+      // Do NOT wrap JiggIconFrame in a tight RepaintBoundary sized to widget.size:
+      // JiggiconPainter intentionally animates slightly outside [0, 24] (jumps,
+      // tilts, squash-and-stretch up to bounds [-12, -12, 48, 48]), and a tight
+      // RepaintBoundary clips the top of jumps and scale peaks on Impeller.
+      child = AnimatedBuilder(
+        animation: _motion,
+        builder: (context, _) => JiggIconFrame(
+          icon: icon,
+          variant: widget.variant,
+          size: widget.size,
+          color: resolvedColor,
+          seconds: _playing ? _motion.value * icon.ms / 1000 : null,
         ),
       );
     } else if (widget.fallbackIcon != null) {

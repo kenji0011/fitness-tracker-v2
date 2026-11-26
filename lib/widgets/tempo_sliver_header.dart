@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../theme/app_colors.dart';
+import 'ios_popover_menu.dart';
 import 'liquid_glass_surface.dart';
+import 'tempo_morph_route.dart';
 
 /// Optically centered thin `<` chevron matching the iOS 26 / HyperOS 3 back button.
 class TempoBackChevron extends StatelessWidget {
@@ -65,11 +67,13 @@ class TempoHeaderAction {
   final Widget icon;
   final VoidCallback onPressed;
   final String? tooltip;
+  final Key? buttonKey;
 
   const TempoHeaderAction({
     required this.icon,
     required this.onPressed,
     this.tooltip,
+    this.buttonKey,
   });
 }
 
@@ -227,7 +231,29 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
     if (widget.tooltip != null) {
       btn = Tooltip(message: widget.tooltip!, child: btn);
     }
-    return btn;
+
+    // Wrap in RepaintBoundary for crisp circle-only morph snapshots, and replace
+    // the entire button with an empty sized slot (zero ghost circle, zero
+    // Opacity around BackdropFilter) while its detached HyperOS 4 popover OR
+    // circular page morph droplet is active.
+    if (widget.key != null) {
+      return AnimatedBuilder(
+        animation: Listenable.merge([
+          activeTempoPopoverAnchorKey,
+          activeTempoMorphAnchorKey,
+        ]),
+        builder: (_, __) {
+          final isHidden =
+              identical(activeTempoPopoverAnchorKey.value, widget.key) ||
+                  identical(activeTempoMorphAnchorKey.value, widget.key);
+          if (isHidden) {
+            return SizedBox.square(dimension: widget.size);
+          }
+          return RepaintBoundary(child: btn);
+        },
+      );
+    }
+    return RepaintBoundary(child: btn);
   }
 }
 
@@ -411,6 +437,7 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
                 for (int i = 0; i < actions.length; i++) ...[
                   if (i > 0) const SizedBox(width: 8),
                   TempoGlassCircleButton(
+                    key: actions[i].buttonKey,
                     glassOpacity: glassOpacity,
                     tooltip: actions[i].tooltip,
                     onPressed: actions[i].onPressed,

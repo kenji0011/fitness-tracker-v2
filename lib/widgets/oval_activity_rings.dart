@@ -19,6 +19,9 @@ class OvalActivityRings extends StatefulWidget {
   final double size;
   final int? highlightedRing; // 0 = calories, 1 = steps, 2 = minutes
   final ValueChanged<int>? onRingTap;
+  final bool? darkModeOverride;
+  final bool showPinstripes;
+  final bool showCapIcons;
 
   const OvalActivityRings({
     super.key,
@@ -28,6 +31,9 @@ class OvalActivityRings extends StatefulWidget {
     this.size = 252,
     this.highlightedRing,
     this.onRingTap,
+    this.darkModeOverride,
+    this.showPinstripes = true,
+    this.showCapIcons = true,
   });
 
   @override
@@ -115,6 +121,7 @@ class _OvalActivityRingsState extends State<OvalActivityRings>
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final isDark = widget.darkModeOverride ?? c.isDark;
     return GestureDetector(
       onTapDown: _handleTapDown,
       child: SizedBox(
@@ -129,8 +136,10 @@ class _OvalActivityRingsState extends State<OvalActivityRings>
                 calProgress: _calAnim.value,
                 stepProgress: _stepAnim.value,
                 minProgress: _minAnim.value,
-                isDark: c.isDark,
+                isDark: isDark,
                 highlightedRing: widget.highlightedRing,
+                showPinstripes: widget.showPinstripes,
+                showCapIcons: widget.showCapIcons,
               ),
             );
           },
@@ -146,6 +155,8 @@ class _OvalRingsPainter extends CustomPainter {
   final double minProgress;
   final bool isDark;
   final int? highlightedRing;
+  final bool showPinstripes;
+  final bool showCapIcons;
 
   static const Color calColor = Color(0xFFF36432); // Flame Orange
   static const Color stepColor = Color(0xFFA6EB3C); // Lime Green
@@ -157,6 +168,8 @@ class _OvalRingsPainter extends CustomPainter {
     required this.minProgress,
     required this.isDark,
     this.highlightedRing,
+    this.showPinstripes = true,
+    this.showCapIcons = true,
   });
 
   /// Builds a clockwise stadium path centered at (0, 0).
@@ -261,26 +274,28 @@ class _OvalRingsPainter extends CustomPainter {
       // 1. Subtle tinted base track behind pinstripes so the oval contour is super clean
       final trackBasePaint = Paint()
         ..color = ring.color.withValues(
-          alpha: (isDark ? 0.08 : 0.08) * dimFactor,
+          alpha: (showPinstripes ? 0.08 : (isDark ? 0.24 : 0.18)) * dimFactor,
         )
         ..style = PaintingStyle.fill;
       canvas.drawPath(bandClip, trackBasePaint);
 
       // 2. Crisp Vertical Pinstripes cleanly clipped to the exact tilted oval band!
-      canvas.save();
-      canvas.clipPath(bandClip);
-      final stripePaint = Paint()
-        ..color = ring.color.withValues(
-          alpha: (isDark ? 0.36 : 0.28) * dimFactor,
-        )
-        ..strokeWidth = 1.65 * unit
-        ..style = PaintingStyle.stroke;
+      if (showPinstripes) {
+        canvas.save();
+        canvas.clipPath(bandClip);
+        final stripePaint = Paint()
+          ..color = ring.color.withValues(
+            alpha: (isDark ? 0.36 : 0.28) * dimFactor,
+          )
+          ..strokeWidth = 1.65 * unit
+          ..style = PaintingStyle.stroke;
 
-      final spacing = 5.0 * unit;
-      for (double x = 0; x <= size.width; x += spacing) {
-        canvas.drawLine(Offset(x, 0), Offset(x, size.height), stripePaint);
+        final spacing = 5.0 * unit;
+        for (double x = 0; x <= size.width; x += spacing) {
+          canvas.drawLine(Offset(x, 0), Offset(x, size.height), stripePaint);
+        }
+        canvas.restore();
       }
-      canvas.restore();
 
       // 3. Vibrant Filled Progress Arc following the exact tilted oval perimeter
       final metrics = centerline.computeMetrics().toList();
@@ -325,13 +340,15 @@ class _OvalRingsPainter extends CustomPainter {
       }
 
       // 4. Starting cap icon seated right at the arc origin
-      _drawCapIcon(
-        canvas: canvas,
-        center: startPos,
-        icon: ring.icon,
-        iconSize: stroke * 0.56,
-        color: isDark ? const Color(0xFF121214) : Colors.white,
-      );
+      if (showCapIcons) {
+        _drawCapIcon(
+          canvas: canvas,
+          center: startPos,
+          icon: ring.icon,
+          iconSize: stroke * 0.56,
+          color: isDark ? const Color(0xFF121214) : Colors.white,
+        );
+      }
     }
   }
 
@@ -367,5 +384,147 @@ class _OvalRingsPainter extends CustomPainter {
       oldDelegate.stepProgress != stepProgress ||
       oldDelegate.minProgress != minProgress ||
       oldDelegate.isDark != isDark ||
-      oldDelegate.highlightedRing != highlightedRing;
+      oldDelegate.highlightedRing != highlightedRing ||
+      oldDelegate.showPinstripes != showPinstripes ||
+      oldDelegate.showCapIcons != showCapIcons;
+}
+
+/// Ultra-lightweight tilted concentric oval ring glyph for weekly strips
+/// and monthly calendar grids (zero ticker overhead, crisp at 24-44px).
+class MiniOvalActivityRings extends StatelessWidget {
+  final double caloriesProgress;
+  final double stepsProgress;
+  final double minutesProgress;
+  final double size;
+  final bool? darkModeOverride;
+  final bool muted;
+
+  const MiniOvalActivityRings({
+    super.key,
+    required this.caloriesProgress,
+    required this.stepsProgress,
+    required this.minutesProgress,
+    this.size = 30,
+    this.darkModeOverride,
+    this.muted = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = darkModeOverride ?? AppColors.of(context).isDark;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        size: Size.square(size),
+        painter: _MiniOvalRingsPainter(
+          calProgress: caloriesProgress.clamp(0.0, 1.0),
+          stepProgress: stepsProgress.clamp(0.0, 1.0),
+          minProgress: minutesProgress.clamp(0.0, 1.0),
+          isDark: isDark,
+          muted: muted,
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniOvalRingsPainter extends CustomPainter {
+  final double calProgress;
+  final double stepProgress;
+  final double minProgress;
+  final bool isDark;
+  final bool muted;
+
+  const _MiniOvalRingsPainter({
+    required this.calProgress,
+    required this.stepProgress,
+    required this.minProgress,
+    required this.isDark,
+    required this.muted,
+  });
+
+  Path _tiltedStadium(Offset center, double straightLen, double radius) {
+    final halfS = straightLen / 2;
+    final r = radius.clamp(1.0, 200.0);
+    final raw = Path()
+      ..moveTo(-halfS, -r)
+      ..lineTo(halfS, -r)
+      ..arcTo(
+        Rect.fromCircle(center: Offset(halfS, 0), radius: r),
+        -math.pi / 2,
+        math.pi,
+        false,
+      )
+      ..lineTo(-halfS, r)
+      ..arcTo(
+        Rect.fromCircle(center: Offset(-halfS, 0), radius: r),
+        math.pi / 2,
+        math.pi,
+        false,
+      )
+      ..close();
+    final m = Matrix4.identity()
+      ..translateByDouble(center.dx, center.dy, 0, 1)
+      ..rotateZ(-math.pi / 4);
+    return raw.transform(m.storage);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final unit = size.width / 32.0;
+
+    final stroke = 2.9 * unit;
+    final gap = 0.85 * unit;
+    final straightLen = 5.4 * unit;
+    final rOuter = 11.2 * unit;
+    final rMid = rOuter - stroke - gap;
+    final rInner = rMid - stroke - gap;
+
+    final rings = [
+      (radius: rOuter, progress: calProgress, color: _OvalRingsPainter.calColor),
+      (radius: rMid, progress: stepProgress, color: _OvalRingsPainter.stepColor),
+      (radius: rInner, progress: minProgress, color: _OvalRingsPainter.minColor),
+    ];
+
+    final opacityScale = muted ? 0.42 : 1.0;
+
+    for (final ring in rings) {
+      final path = _tiltedStadium(center, straightLen, ring.radius);
+      final trackPaint = Paint()
+        ..color = ring.color.withValues(
+          alpha: (isDark ? 0.24 : 0.20) * opacityScale,
+        )
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..strokeCap = StrokeCap.round
+        ..isAntiAlias = true;
+      canvas.drawPath(path, trackPaint);
+
+      if (ring.progress > 0.01) {
+        final metrics = path.computeMetrics().toList();
+        if (metrics.isEmpty) continue;
+        final metric = metrics.first;
+        final drawLen = (metric.length * ring.progress).clamp(1.2, metric.length);
+        final activePath = metric.extractPath(0, drawLen);
+        final activePaint = Paint()
+          ..color = ring.color.withValues(alpha: opacityScale)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..isAntiAlias = true;
+        canvas.drawPath(activePath, activePaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniOvalRingsPainter oldDelegate) =>
+      oldDelegate.calProgress != calProgress ||
+      oldDelegate.stepProgress != stepProgress ||
+      oldDelegate.minProgress != minProgress ||
+      oldDelegate.isDark != isDark ||
+      oldDelegate.muted != muted;
 }

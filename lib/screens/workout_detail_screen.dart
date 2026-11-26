@@ -13,10 +13,12 @@ import '../services/active_profile_provider.dart';
 import '../services/journey_progress_service.dart';
 import '../services/live_workout_service.dart';
 import '../services/tempo_rust_db.dart';
+import '../services/workout_sound_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_jigg_icon.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_toast.dart';
 import 'exercise_detail_screen.dart';
@@ -645,31 +647,33 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                                 final isLast = idx == exercises.length - 1;
                                 return Column(
                                   children: [
-                                    InkWell(
-                                      onTap: () async {
-                                        HapticFeedback.selectionClick();
-                                        final logged =
-                                            await Navigator.push<bool>(
-                                          context,
-                                          MaterialPageRoute(
+                                    Builder(
+                                      builder: (rowCtx) => InkWell(
+                                        onTap: () async {
+                                          HapticFeedback.selectionClick();
+                                          final logged =
+                                              await pushTempoMorphRoute<bool>(
+                                            context: context,
+                                            sourceContext: rowCtx,
+                                            sourceBorderRadius: 18,
                                             builder: (_) =>
                                                 ExerciseDetailScreen(
                                               exercise: ex,
                                               workout: widget.workout,
                                             ),
-                                          ),
-                                        );
-                                        if (logged == true && mounted) {
-                                          setState(
-                                            () => _checkedExercises.add(idx),
                                           );
-                                          if (_isRunning || _elapsedSeconds > 0) {
-                                            _syncLiveUpdate(
-                                              isPaused: !_isRunning,
+                                          if (logged == true && mounted) {
+                                            setState(
+                                              () => _checkedExercises.add(idx),
                                             );
+                                            if (_isRunning ||
+                                                _elapsedSeconds > 0) {
+                                              _syncLiveUpdate(
+                                                isPaused: !_isRunning,
+                                              );
+                                            }
                                           }
-                                        }
-                                      },
+                                        },
                                       child: Padding(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 16,
@@ -779,6 +783,7 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                                           ],
                                         ),
                                       ),
+                                    ),
                                     ),
                                     if (!isLast)
                                       Padding(
@@ -1008,6 +1013,7 @@ class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
     )..addStatusListener(_onBeatStatus);
 
     HapticFeedback.mediumImpact();
+    WorkoutSoundService.instance.playCountdownTick();
     _beatController.forward(from: 0);
   }
 
@@ -1017,10 +1023,12 @@ class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
     if (_step > 1) {
       setState(() => _step--);
       HapticFeedback.mediumImpact();
+      WorkoutSoundService.instance.playCountdownTick();
       _beatController.forward(from: 0);
     } else if (_step == 1) {
       setState(() => _step = 0); // "GO"
       HapticFeedback.heavyImpact();
+      WorkoutSoundService.instance.playCountdownGo();
       _beatController.duration = const Duration(milliseconds: 520);
       _beatController.forward(from: 0);
     } else {
@@ -1039,12 +1047,14 @@ class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
     if (_finished) return;
     _finished = true;
     HapticFeedback.selectionClick();
+    WorkoutSoundService.instance.stop();
     await _fadeController.reverse();
     if (mounted) widget.onCancel();
   }
 
   @override
   void dispose() {
+    WorkoutSoundService.instance.stop();
     _beatController.dispose();
     _fadeController.dispose();
     super.dispose();

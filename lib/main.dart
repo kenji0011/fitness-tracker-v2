@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
@@ -8,6 +9,7 @@ import 'screens/intro_walkthrough_screen.dart';
 import 'screens/profile_switcher_screen.dart';
 import 'screens/tempo_shell_screen.dart';
 import 'services/active_profile_provider.dart';
+import 'services/animation_speed_service.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_provider.dart';
 import 'widgets/liquid_glass_surface.dart';
@@ -17,19 +19,23 @@ import 'widgets/tempo_startup_splash.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Keep decoded thumbnails and avatars warm in memory during smooth scrolling.
+  // Keep decoded thumbnails and avatars warm while keeping peak RAM lightweight.
   PaintingBinding.instance.imageCache
-    ..maximumSize = 200
-    ..maximumSizeBytes = 120 << 20;
+    ..maximumSize = 140
+    ..maximumSizeBytes = 64 << 20;
 
   final activeProfileProvider = ActiveProfileProvider();
   final themeProvider = ThemeProvider(autoLoad: false);
   await Future.wait([
     activeProfileProvider.initialize(),
     themeProvider.initialize(),
-    TempoJiggicons.prewarm(),
+    TempoAnimationSpeedService.instance.initialize(),
+    TempoJiggicons.prewarmCritical(),
     TempoLiquidShaderCache.load(),
   ]);
+
+  // Prewarm secondary tab icons silently during the startup splash without blocking Frame 0.
+  unawaited(TempoJiggicons.prewarmDeferred());
 
   runApp(
     MultiProvider(

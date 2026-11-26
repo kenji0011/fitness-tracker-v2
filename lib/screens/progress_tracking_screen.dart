@@ -20,6 +20,7 @@ import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/streak_heatmap_card.dart';
 import '../widgets/tempo_jigg_icon.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_spotlight_tour.dart';
 import 'progress_album_screen.dart';
@@ -60,6 +61,8 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
 
   late final AnimationController _entranceController;
   bool _wasTickerEnabled = false;
+  bool _needsRefresh = false;
+  bool _hasPlayedEntrance = false;
   final GlobalKey _albumHintKey = GlobalKey();
   final GlobalKey _trendCardHintKey = GlobalKey();
 
@@ -90,8 +93,13 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final enabled = TickerMode.of(context);
-    if (enabled && !_wasTickerEnabled && !_loading) {
-      _maybeShowSpotlight();
+    if (enabled && !_wasTickerEnabled) {
+      if (_needsRefresh) {
+        _needsRefresh = false;
+        _load();
+      } else if (!_loading) {
+        _maybeShowSpotlight();
+      }
     }
     _wasTickerEnabled = enabled;
   }
@@ -127,7 +135,12 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
   void didUpdateWidget(covariant ProgressTrackingScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.refreshVersion != oldWidget.refreshVersion) {
-      _load();
+      if (TickerMode.of(context)) {
+        _needsRefresh = false;
+        _load();
+      } else {
+        _needsRefresh = true;
+      }
     }
   }
 
@@ -178,7 +191,10 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
       _workoutDayKeys = dayKeys;
       _loading = false;
     });
-    _entranceController.forward(from: 0);
+    if (!_hasPlayedEntrance) {
+      _hasPlayedEntrance = true;
+      _entranceController.forward(from: 0);
+    }
     if (mounted && TickerMode.of(context)) {
       _maybeShowSpotlight();
     }
@@ -245,10 +261,10 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                     showBackButton: !widget.embedded,
                     actions: [
                       TempoHeaderAction(
+                        buttonKey: _albumHintKey,
                         tooltip: 'Progress Album',
                         icon: TempoJiggIcon(
                           'camera',
-                          key: _albumHintKey,
                           variant: JiggIconVariant.outline,
                           size: 20,
                           color: c.textPrimary,
@@ -256,11 +272,11 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                           fallbackIcon: CupertinoIcons.photo_on_rectangle,
                         ),
                         onPressed: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const ProgressAlbumScreen(),
-                            ),
+                          await pushTempoMorphRoute<void>(
+                            context: context,
+                            sourceKey: _albumHintKey,
+                            sourceBorderRadius: 999,
+                            builder: (_) => const ProgressAlbumScreen(),
                           );
                           if (mounted) _load();
                         },
@@ -349,20 +365,22 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                               ),
                               const SizedBox(width: 12),
                               Expanded(
-                                child: _PhotoAlbumBentoCard(
-                                  photoCount: _photoCount,
-                                  latestPhotoPath: _latestPhotoPath,
-                                  onTap: () async {
-                                    HapticFeedback.selectionClick();
-                                    await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
+                                child: Builder(
+                                  builder: (cardCtx) => _PhotoAlbumBentoCard(
+                                    photoCount: _photoCount,
+                                    latestPhotoPath: _latestPhotoPath,
+                                    onTap: () async {
+                                      HapticFeedback.selectionClick();
+                                      await pushTempoMorphRoute<void>(
+                                        context: context,
+                                        sourceContext: cardCtx,
+                                        sourceBorderRadius: 22,
                                         builder: (_) =>
                                             const ProgressAlbumScreen(),
-                                      ),
-                                    );
-                                    if (mounted) _load();
-                                  },
+                                      );
+                                      if (mounted) _load();
+                                    },
+                                  ),
                                 ),
                               ),
                             ],

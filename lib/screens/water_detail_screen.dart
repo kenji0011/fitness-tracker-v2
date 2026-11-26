@@ -16,6 +16,7 @@ import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_jigg_icon.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_toast.dart';
 import 'history_calendar_screen.dart';
@@ -175,14 +176,13 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
     final recordedKeys = _allPoints
         .map((p) => _dayKey(p.recordedAt.toLocal()))
         .toSet();
-    final result = await Navigator.push<HistoryCalendarSelection>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => HistoryCalendarScreen(
-          initialDate: _anchorDate,
-          initialModeIndex: _selectedTab,
-          recordedDateKeys: recordedKeys,
-        ),
+    final result = await pushTempoMorphRoute<HistoryCalendarSelection>(
+      context: context,
+      sourceBorderRadius: 16,
+      builder: (_) => HistoryCalendarScreen(
+        initialDate: _anchorDate,
+        initialModeIndex: _selectedTab,
+        recordedDateKeys: recordedKeys,
       ),
     );
     if (result != null && mounted) {
@@ -508,26 +508,13 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-                child: Row(
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: mc.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      'Local on-device',
-                      style: TextStyle(
-                        color: mc.textSecondary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               Divider(height: 1, color: mc.divider),
@@ -543,7 +530,12 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                         ),
                       )
                     : ListView.separated(
-                        padding: const EdgeInsets.all(20),
+                        padding: EdgeInsets.fromLTRB(
+                          20,
+                          16,
+                          20,
+                          MediaQuery.paddingOf(ctx).bottom + 20,
+                        ),
                         itemCount: history.length,
                         separatorBuilder: (_, __) => Padding(
                           padding: const EdgeInsets.symmetric(vertical: 10),
@@ -558,7 +550,7 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      DateFormat('MM/dd/yyyy')
+                                      DateFormat('MMMM d, yyyy')
                                           .format(pt.recordedAt.toLocal()),
                                       style: TextStyle(
                                         color: mc.textPrimary,
@@ -605,11 +597,8 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
     showTempoPopoverMenu(
       context: context,
       anchorKey: _moreButtonKey,
+      anchorIcon: CupertinoIcons.add,
       actions: [
-        TempoPopoverAction(
-          label: 'All data',
-          onTap: () => _openHistorySheet(title: 'All data'),
-        ),
         TempoPopoverAction(
           label: 'Add data',
           onTap: _openAddCustomWaterSheet,
@@ -622,12 +611,109 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
     );
   }
 
+  void _openAboutSheet() {
+    HapticFeedback.selectionClick();
+    showTempoSheet<void>(
+      context: context,
+      backgroundColor: AppColors.of(context, listen: false).card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) {
+        final mc = AppColors.of(ctx);
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            22,
+            8,
+            22,
+            MediaQuery.paddingOf(ctx).bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: const BoxDecoration(
+                      color: _waterBlue,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      CupertinoIcons.drop_fill,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'About',
+                      style: TextStyle(
+                        color: mc.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Daily hydration tracks the water you drink throughout the day in milliliters so you can stay consistently hydrated.',
+                style: TextStyle(
+                  color: mc.textSecondary,
+                  fontSize: 14.5,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Adequate fluid intake supports temperature regulation, joint comfort, focus, and workout recovery.',
+                style: TextStyle(
+                  color: mc.textSecondary,
+                  fontSize: 14.5,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                height: 50,
+                child: TextButton(
+                  style: TextButton.styleFrom(
+                    backgroundColor: mc.searchBg,
+                    foregroundColor: mc.textPrimary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text(
+                    'Close',
+                    style: TextStyle(
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final todayMl = _anchorDayTotalMl.round();
     final progress = (_goalMl > 0 ? todayMl / _goalMl : 0.0).clamp(0.0, 1.0);
     final pct = (_goalMl > 0 ? (todayMl / _goalMl) * 100 : 0).round();
+    final remainingMl = math.max(0, _goalMl - todayMl);
+    final goalReached = _goalMl > 0 && todayMl >= _goalMl;
     final windowPts = _windowDailyTotals;
 
     return Scaffold(
@@ -636,68 +722,84 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
         bottom: false,
         child: Column(
           children: [
-            // Top bar matching Weight & Sleep
+            // Centered top bar aligned across all metric pages
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-              child: Row(
-                children: [
-                  TempoGlassCircleButton(
-                    icon: TempoBackChevron(color: c.textPrimary, size: 22),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Water',
-                          style: TextStyle(
-                            color: c.textPrimary,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.3,
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TempoGlassCircleButton(
+                        icon: TempoBackChevron(color: c.textPrimary, size: 22),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 58),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Water',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 1),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _pickAnchorDate,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                DateFormat('MM/dd/yyyy').format(_anchorDate),
-                                style: TextStyle(
-                                  color: c.textSecondary,
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w500,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
+                          const SizedBox(height: 1),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _pickAnchorDate,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    DateFormat('MMMM d, yyyy')
+                                        .format(_anchorDate),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: c.textSecondary,
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 3),
-                              Icon(
-                                Icons.arrow_drop_down_rounded,
-                                size: 18,
-                                color: c.textSecondary,
-                              ),
-                            ],
+                                const SizedBox(width: 2),
+                                Icon(
+                                  Icons.arrow_drop_down_rounded,
+                                  size: 18,
+                                  color: c.textSecondary,
+                                ),
+                              ],
+                            ),
                           ),
+                        ],
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TempoGlassCircleButton(
+                        key: _moreButtonKey,
+                        tooltip: 'Quick actions',
+                        icon: Icon(
+                          CupertinoIcons.add,
+                          size: 22,
+                          color: c.textPrimary,
                         ),
-                      ],
+                        onPressed: _openMoreMenu,
+                      ),
                     ),
-                  ),
-                  TempoGlassCircleButton(
-                    key: _moreButtonKey,
-                    icon: Icon(
-                      CupertinoIcons.ellipsis_vertical,
-                      size: 20,
-                      color: c.textPrimary,
-                    ),
-                    onPressed: _openMoreMenu,
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
 
@@ -720,8 +822,15 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                       color: _waterBlue,
                       onRefresh: _load,
                       child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 40),
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        ),
+                        padding: EdgeInsets.fromLTRB(
+                          18,
+                          0,
+                          18,
+                          MediaQuery.paddingOf(context).bottom + 32,
+                        ),
                         children: [
                           // Card 1: Daily Hydration + Quick Cup Buttons
                           AppleCard(
@@ -752,24 +861,39 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-                                    Text(
-                                      'Daily hydration',
-                                      style: TextStyle(
-                                        color: c.textPrimary,
-                                        fontSize: 16.5,
-                                        fontWeight: FontWeight.w600,
+                                    Expanded(
+                                      child: Text(
+                                        'Daily hydration',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16.5,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.2,
+                                        ),
                                       ),
                                     ),
-                                    const Spacer(),
-                                    Text(
-                                      '$pct%',
-                                      style: TextStyle(
-                                        color: _waterBlue,
-                                        fontSize: 14.5,
-                                        fontWeight: FontWeight.w700,
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
-                                        ],
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _waterBlue.withValues(
+                                          alpha: c.isDark ? 0.18 : 0.13,
+                                        ),
+                                        borderRadius:
+                                            BorderRadius.circular(999),
+                                      ),
+                                      child: Text(
+                                        '$pct%',
+                                        style: const TextStyle(
+                                          color: _waterBlue,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          fontFeatures: [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -802,7 +926,7 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 14),
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(99),
                                   child: TweenAnimationBuilder<double>(
@@ -815,7 +939,7 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                                     builder: (_, v, __) =>
                                         LinearProgressIndicator(
                                       value: v,
-                                      minHeight: 8,
+                                      minHeight: 7,
                                       backgroundColor: c.divider,
                                       valueColor:
                                           const AlwaysStoppedAnimation<Color>(
@@ -877,163 +1001,253 @@ class _WaterDetailScreenState extends State<WaterDetailScreen> {
                           ),
                           const SizedBox(height: 14),
 
-                          // Card 2: Daily Target
+                          // Card 2: Daily Target (unified 2-column target card)
                           AppleCard(
                             borderRadius: 24,
                             padding: const EdgeInsets.all(20),
                             onTap: _openGoalSheet,
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: const BoxDecoration(
-                                    color: _waterBlue,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    CupertinoIcons.scope,
-                                    color: Colors.white,
-                                    size: 17,
-                                  ),
-                                ),
-                                const SizedBox(width: 14),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Daily goal',
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 32,
+                                      height: 32,
+                                      decoration: const BoxDecoration(
+                                        color: _waterBlue,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        CupertinoIcons.scope,
+                                        color: Colors.white,
+                                        size: 17,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        'Daily target',
                                         style: TextStyle(
                                           color: c.textPrimary,
-                                          fontSize: 16,
+                                          fontSize: 16.5,
                                           fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.2,
                                         ),
                                       ),
-                                      Text(
-                                        '${NumberFormat('#,###').format(_goalMl)} ml per day',
-                                        style: TextStyle(
-                                          color: c.textTertiary,
-                                          fontSize: 13,
-                                        ),
+                                    ),
+                                    Text(
+                                      'Edit',
+                                      style: TextStyle(
+                                        color: c.textTertiary,
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w500,
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      CupertinoIcons.chevron_right,
+                                      size: 15,
+                                      color: c.textTertiary,
+                                    ),
+                                  ],
                                 ),
-                                Icon(
-                                  CupertinoIcons.chevron_right,
-                                  size: 16,
-                                  color: c.textTertiary,
+                                const SizedBox(height: 16),
+                                Divider(height: 1, color: c.divider),
+                                const SizedBox(height: 16),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${NumberFormat('#,###').format(_goalMl)} ml',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: c.textPrimary,
+                                              fontSize: 21,
+                                              fontWeight: FontWeight.w600,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Daily goal',
+                                            style: TextStyle(
+                                              color: c.textTertiary,
+                                              fontSize: 12.5,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      width: 1,
+                                      height: 36,
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                      ),
+                                      color: c.divider,
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            goalReached
+                                                ? 'Reached'
+                                                : '${NumberFormat('#,###').format(remainingMl)} ml',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: goalReached
+                                                  ? _waterBlue
+                                                  : c.textPrimary,
+                                              fontSize: 21,
+                                              fontWeight: FontWeight.w600,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            goalReached
+                                                ? 'Target status'
+                                                : 'To reach goal',
+                                            style: TextStyle(
+                                              color: c.textTertiary,
+                                              fontSize: 12.5,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
                           ),
                           const SizedBox(height: 14),
 
-                          // Card 3: Data source + Add data
+                          // Card 3: Data source (standalone card)
                           AppleCard(
                             borderRadius: 24,
                             padding: EdgeInsets.zero,
-                            child: Column(
-                              children: [
-                                InkWell(
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(24),
-                                  ),
-                                  onTap: _openHistorySheet,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 17,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 32,
-                                          height: 32,
-                                          decoration: const BoxDecoration(
-                                            color: _waterBlue,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.workspaces_rounded,
-                                            color: Colors.white,
-                                            size: 17,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Text(
-                                            'Data source',
-                                            style: TextStyle(
-                                              color: c.textPrimary,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                        if (_allPoints.isNotEmpty)
-                                          Text(
-                                            '${_allPoints.length}',
-                                            style: TextStyle(
-                                              color: c.textTertiary,
-                                              fontSize: 13.5,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(24),
+                              onTap: _openHistorySheet,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
                                 ),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                  ),
-                                  child: Divider(height: 1, color: c.divider),
-                                ),
-                                InkWell(
-                                  borderRadius: const BorderRadius.vertical(
-                                    bottom: Radius.circular(24),
-                                  ),
-                                  onTap: _openAddCustomWaterSheet,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 17,
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 32,
+                                      height: 32,
+                                      decoration: const BoxDecoration(
+                                        color: _waterBlue,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        CupertinoIcons.layers_alt_fill,
+                                        color: Colors.white,
+                                        size: 17,
+                                      ),
                                     ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 32,
-                                          height: 32,
-                                          decoration: BoxDecoration(
-                                            color: c.isDark
-                                                ? const Color(0xFF0A0A0C)
-                                                : const Color(0xFF1C1C1E),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.edit_rounded,
-                                            color: Colors.white,
-                                            size: 16,
-                                          ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Text(
+                                        'Data source',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.15,
                                         ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Text(
-                                            'Add data',
-                                            style: TextStyle(
-                                              color: c.textPrimary,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                                      ),
                                     ),
-                                  ),
+                                    if (_allPoints.isNotEmpty) ...[
+                                      Text(
+                                        '${_allPoints.length}',
+                                        style: TextStyle(
+                                          color: c.textTertiary,
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w500,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                    ],
+                                    Icon(
+                                      CupertinoIcons.chevron_right,
+                                      size: 16,
+                                      color: c.textTertiary,
+                                    ),
+                                  ],
                                 ),
-                              ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Card 4: About (standalone card)
+                          AppleCard(
+                            borderRadius: 24,
+                            padding: EdgeInsets.zero,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(24),
+                              onTap: _openAboutSheet,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 32,
+                                      height: 32,
+                                      decoration: const BoxDecoration(
+                                        color: _waterBlue,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(
+                                        CupertinoIcons.info,
+                                        color: Colors.white,
+                                        size: 17,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Text(
+                                        'About',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.15,
+                                        ),
+                                      ),
+                                    ),
+                                    Icon(
+                                      CupertinoIcons.chevron_right,
+                                      size: 16,
+                                      color: c.textTertiary,
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ],

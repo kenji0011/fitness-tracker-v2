@@ -61,7 +61,7 @@ class VideoMappingService {
     'Skater Jumps':
         'assets/Fitness_Journey/Cardio/Workout_3_Bodyweight_Cardio_Blast/Skater_Jumps.mp4',
     '5K Row':
-        'assets/Fitness_Journey/Cardio/Workout_4_Endurance_Cardio_Circuit/Rowing_Machine_at_Moderate_Pace_.mp4',
+        'assets/Fitness_Journey/Cardio/Workout_2_Steady-State_Cardio/Rowing_Machine_at_Moderate_Pace.mp4',
     'Assault Bike':
         'assets/Fitness_Journey/Cardio/Workout_4_Endurance_Cardio_Circuit/Assault_Bike.mp4',
     'Brisk Walking Cooldown':

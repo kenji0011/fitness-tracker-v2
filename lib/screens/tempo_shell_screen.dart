@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../services/active_profile_provider.dart';
+import '../services/animation_speed_service.dart';
 import '../services/app_update_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_nav_bar.dart';
@@ -238,7 +239,7 @@ class _TempoShellScreenState extends State<TempoShellScreen> {
   }
 }
 
-class _AnimatedTabPane extends StatelessWidget {
+class _AnimatedTabPane extends StatefulWidget {
   final bool active;
   final bool mounted;
   final Widget child;
@@ -250,23 +251,54 @@ class _AnimatedTabPane extends StatelessWidget {
   });
 
   @override
+  State<_AnimatedTabPane> createState() => _AnimatedTabPaneState();
+}
+
+class _AnimatedTabPaneState extends State<_AnimatedTabPane> {
+  late bool _offstage;
+
+  @override
+  void initState() {
+    super.initState();
+    _offstage = !widget.active;
+  }
+
+  @override
+  void didUpdateWidget(covariant _AnimatedTabPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && _offstage) {
+      _offstage = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (!mounted) return const SizedBox.shrink();
-    return IgnorePointer(
-      ignoring: !active,
-      child: ExcludeSemantics(
-        excluding: !active,
-        child: AnimatedOpacity(
-          opacity: active ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          child: AnimatedScale(
-            scale: active ? 1.0 : 0.985,
-            duration: const Duration(milliseconds: 180),
+    if (!widget.mounted) return const SizedBox.shrink();
+    final tabDuration = TempoAnimationSpeedService.instance
+        .scale(const Duration(milliseconds: 180));
+    return Offstage(
+      offstage: _offstage && !widget.active,
+      child: IgnorePointer(
+        ignoring: !widget.active,
+        child: ExcludeSemantics(
+          excluding: !widget.active,
+          child: AnimatedOpacity(
+            opacity: widget.active ? 1.0 : 0.0,
+            duration: tabDuration,
             curve: Curves.easeOutCubic,
-            child: TickerMode(
-              enabled: active,
-              child: child,
+            onEnd: () {
+              if (!widget.active && !_offstage && mounted) {
+                setState(() => _offstage = true);
+              }
+            },
+            child: AnimatedScale(
+              scale: widget.active ? 1.0 : 0.985,
+              duration: tabDuration,
+              curve: Curves.easeOutCubic,
+              child: TickerMode(
+                enabled: widget.active,
+                child: widget.child,
+              ),
             ),
           ),
         ),

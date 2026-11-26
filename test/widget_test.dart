@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tempo_fitness/config/app_version.dart';
 import 'package:tempo_fitness/data/fitness_journey_workouts.dart';
 import 'package:tempo_fitness/screens/about_app_screen.dart';
+import 'package:tempo_fitness/screens/activity_stats_screen.dart';
 import 'package:tempo_fitness/screens/add_data_screen.dart';
 import 'package:tempo_fitness/screens/avatar_crop_screen.dart';
 import 'package:tempo_fitness/screens/custom_workout_builder_screen.dart';
@@ -20,6 +21,7 @@ import 'package:tempo_fitness/screens/photo_compare_screen.dart';
 import 'package:tempo_fitness/screens/photo_editing_screen.dart';
 import 'package:tempo_fitness/screens/profile_switcher_screen.dart';
 import 'package:tempo_fitness/screens/progress_album_screen.dart';
+import 'package:tempo_fitness/screens/progress_share_screen.dart';
 import 'package:tempo_fitness/screens/progress_tracking_screen.dart';
 import 'package:tempo_fitness/screens/sleep_detail_screen.dart';
 import 'package:tempo_fitness/screens/tempo_shell_screen.dart';
@@ -30,10 +32,13 @@ import 'package:tempo_fitness/screens/workout_detail_screen.dart';
 import 'package:tempo_fitness/screens/workout_screen.dart';
 import 'package:tempo_fitness/models/local_profile.dart';
 import 'package:tempo_fitness/services/active_profile_provider.dart';
+import 'package:tempo_fitness/services/animation_speed_service.dart';
 import 'package:tempo_fitness/services/app_update_service.dart';
+import 'package:tempo_fitness/services/share_template_service.dart';
 import 'package:tempo_fitness/services/step_counter_sync.dart';
 import 'package:tempo_fitness/services/tempo_rust_db.dart';
 import 'package:tempo_fitness/theme/theme_provider.dart';
+import 'package:tempo_fitness/widgets/ios_popover_menu.dart';
 import 'package:tempo_fitness/widgets/ios_stretch_sheet.dart';
 import 'package:tempo_fitness/widgets/liquid_glass_nav_bar.dart';
 import 'package:tempo_fitness/widgets/liquid_glass_surface.dart';
@@ -43,6 +48,7 @@ import 'package:tempo_fitness/widgets/step_accuracy_warning_sheet.dart';
 import 'package:tempo_fitness/widgets/streak_heatmap_card.dart';
 import 'package:tempo_fitness/widgets/tempo_jigg_icon.dart';
 import 'package:tempo_fitness/widgets/tempo_sliver_header.dart';
+import 'package:tempo_fitness/widgets/tempo_morph_route.dart';
 import 'package:tempo_fitness/widgets/tempo_spotlight_tour.dart';
 import 'package:tempo_fitness/widgets/tempo_startup_splash.dart';
 import 'package:tempo_fitness/widgets/tempo_update_sheet.dart';
@@ -550,6 +556,9 @@ void main() {
     expect(find.text('DATA & MEDIA'), findsOneWidget);
     expect(find.text('Dark mode'), findsOneWidget);
     expect(find.text('Live step counter'), findsOneWidget);
+    expect(find.text('Clean light appearance active'), findsNothing);
+    expect(find.text('Private on-device album & comparison'), findsNothing);
+    expect(find.text('Export or import local JSON snapshots'), findsNothing);
     expect(find.text('Switch profile'), findsNothing);
     expect(find.text('Add profile'), findsNothing);
     expect(find.text('Competition'), findsNothing);
@@ -575,6 +584,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(TermsAndConditionsScreen), findsOneWidget);
     expect(find.text('On-Device Privacy'), findsOneWidget);
+    expect(find.text('Permissions & Network Access'), findsOneWidget);
     expect(find.textContaining('100%'), findsNothing);
     expect(find.textContaining('•'), findsNothing);
     await tester.tap(find.byType(TempoBackChevron));
@@ -588,6 +598,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('UPDATES & SUPPORT'), findsOneWidget);
     expect(find.text('Auto-updates'), findsOneWidget);
+    expect(find.text('Checks GitHub releases on launch'), findsNothing);
+    expect(find.text('Permanently erase data for this profile'), findsNothing);
 
     await tester.scrollUntilVisible(
       find.text('About Tempo'),
@@ -602,6 +614,8 @@ void main() {
     await tester.tap(find.text('About Tempo'));
     await tester.pumpAndSettle();
     expect(find.byType(AboutAppScreen), findsOneWidget);
+    expect(find.text('Tempo'), findsNothing); // no redundant Tempo heading below About Tempo
+    expect(find.text('Your personal offline fitness companion'), findsOneWidget);
     expect(find.textContaining('Rust Native'), findsNothing);
     expect(find.textContaining(kTempoDisplayVersion), findsOneWidget);
     await tester.tap(find.byType(TempoBackChevron));
@@ -648,11 +662,15 @@ void main() {
     expect(find.text('Session timer'), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
 
-    // Tap Start -> 3-2-1 countdown overlay appears
+    // Tap Start -> 3-2-1 countdown overlay appears and plays countdown beats cleanly
     await tester.tap(find.text('Start'));
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.text('Get ready'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
+
+    // Advance one beat to verify 2 appears cleanly with sound trigger
+    await tester.pump(const Duration(milliseconds: 950));
+    expect(find.text('2'), findsOneWidget);
 
     // Skip countdown -> live timer starts running
     await tester.tap(find.text('Skip'));
@@ -777,17 +795,34 @@ void main() {
     expect(find.text('+0.20 kg'), findsOneWidget);
     expect(find.text('Body composition'), findsOneWidget);
     expect(find.text('Data source'), findsOneWidget);
-    expect(find.text('Add data'), findsOneWidget);
+    expect(find.text('Add data'), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('About'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('About'), findsOneWidget);
+
+    // Data source sheet should not show "Local on-device"
+    await tester.tap(find.text('Data source'));
+    await tester.pumpAndSettle();
+    expect(find.text('Local on-device'), findsNothing);
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
 
     // Switch to M tab -> shows trend chart cleanly
     await tester.tap(find.text('M'));
     await tester.pumpAndSettle();
 
-    // Scroll down to reveal Add data card below expanded chart
-    await tester.drag(find.byType(ListView), const Offset(0, -260));
+    // Open + popover -> shows Add data and Unit (no All data)
+    await tester.tap(find.byIcon(CupertinoIcons.add));
     await tester.pumpAndSettle();
+    expect(find.text('All data'), findsNothing);
+    expect(find.text('Add data'), findsOneWidget);
+    expect(find.text('Unit'), findsOneWidget);
 
-    // Open Add data sheet -> save a new weight entry
+    // Open Add data sheet from + popover -> save a new weight entry
     await tester.tap(find.text('Add data'));
     await tester.pumpAndSettle();
     expect(find.text('Add weight'), findsOneWidget);
@@ -812,14 +847,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Weight'), findsOneWidget);
 
-    // Tap three-dots button -> iOS popover shows All data, Add data, Unit
-    await tester.tap(find.byIcon(CupertinoIcons.ellipsis_vertical));
+    // Tap + button -> open Unit page -> switch from kg to lb
+    await tester.tap(find.byIcon(CupertinoIcons.add));
     await tester.pumpAndSettle();
-    expect(find.text('All data'), findsOneWidget);
-    expect(find.text('Add data'), findsWidgets);
-    expect(find.text('Unit'), findsOneWidget);
-
-    // Open Unit page -> switch from kg to lb
     await tester.tap(find.text('Unit'));
     await tester.pumpAndSettle();
     expect(find.text('Unit'), findsOneWidget);
@@ -969,7 +999,14 @@ void main() {
     expect(find.text('Sleep quality'), findsOneWidget);
     expect(find.text('Optimal'), findsOneWidget);
     expect(find.text('Data source'), findsOneWidget);
-    expect(find.text('Add data'), findsOneWidget);
+    expect(find.text('Add data'), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('About'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('About'), findsOneWidget);
 
     // Open History Calendar via top date tap
     await tester.tap(find.byIcon(Icons.arrow_drop_down_rounded));
@@ -978,10 +1015,11 @@ void main() {
     await tester.tap(find.byType(TempoBackChevron));
     await tester.pumpAndSettle();
 
-    // Open iOS popover menu on three dots
-    await tester.tap(find.byIcon(CupertinoIcons.ellipsis_vertical));
+    // Open iOS popover menu on + button (no All data)
+    await tester.tap(find.byIcon(CupertinoIcons.add));
     await tester.pumpAndSettle();
-    expect(find.text('All data'), findsOneWidget);
+    expect(find.text('All data'), findsNothing);
+    expect(find.text('Add data'), findsOneWidget);
     expect(find.text('Sleep goal'), findsOneWidget);
     await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
@@ -1143,9 +1181,27 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Week 4 check-in'));
+    // Sample mid-flight open morph frames
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump(const Duration(milliseconds: 160));
     await tester.pumpAndSettle();
     expect(find.text('61.8 kg'), findsOneWidget);
     expect(find.byIcon(CupertinoIcons.trash), findsOneWidget);
+
+    // Close viewer and sample mid-flight closing morph frames back to the tile
+    await tester.tap(find.byType(TempoBackChevron).last);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pumpAndSettle();
+    expect(find.text('Week 4 check-in'), findsOneWidget);
+    // Ensure grid tile is fully visible (never stuck at Opacity 0.0 after dismiss!)
+    final tileOpacity = tester.widget<Opacity>(
+      find.ancestor(
+        of: find.text('Week 4 check-in'),
+        matching: find.byType(Opacity),
+      ).first,
+    );
+    expect(tileOpacity.opacity, 1.0);
 
     await themeProvider.toggleTheme(true);
     await tester.pumpAndSettle();
@@ -1154,7 +1210,7 @@ void main() {
     await db.deleteProfile(profile.id);
   });
 
-  testWidgets('MetricDetailScreen renders unified Weight-style layout for Steps', (tester) async {
+  testWidgets('MetricDetailScreen renders unified layout and bottom About row for Steps, Calories, and Activity', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final db = TempoRustDb.instance;
     await db.init();
@@ -1187,13 +1243,80 @@ void main() {
     expect(find.text('Latest'), findsOneWidget);
     expect(find.text('Week'), findsOneWidget);
     expect(find.text('Live step counter'), findsOneWidget);
-    expect(find.text('Add data'), findsOneWidget);
+    expect(find.text('Data source'), findsOneWidget);
+    expect(find.text('Local on-device history'), findsNothing);
+    expect(find.text('Add data'), findsNothing);
+    expect(find.text('About Steps'), findsNothing);
 
-    await tester.tap(find.byIcon(CupertinoIcons.ellipsis_vertical));
+    await tester.scrollUntilVisible(
+      find.text('About'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('About'), findsOneWidget);
+
+    // Popover menu on + button holds Add data & Daily goal (no All data or About).
+    await tester.tap(find.byIcon(CupertinoIcons.add));
     await tester.pumpAndSettle();
-    expect(find.text('Daily goal'), findsOneWidget);
+    expect(find.text('All data'), findsNothing);
+    expect(find.text('Add data'), findsOneWidget);
+    expect(find.text('Daily goal'), findsWidgets);
     await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
+
+    // Tapping About opens the minimal About sheet explaining what Steps is.
+    await tester.tap(find.text('About'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Steps count the total strides'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
+    // Verify Calories and Activity pages also render separate minimal About cards cleanly.
+    for (final entry in const [
+      (
+        kind: TempoMetricKind.calories,
+        snippet: 'Active calories measure the energy',
+      ),
+      (
+        kind: TempoMetricKind.minutes,
+        snippet: 'Activity time measures the minutes',
+      ),
+    ]) {
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: themeProvider),
+            ChangeNotifierProvider.value(value: activeProfileProvider),
+          ],
+          child: MaterialApp(
+            home: MetricDetailScreen(kind: entry.kind),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Local on-device history'), findsNothing);
+      expect(find.text('Add data'), findsNothing);
+      expect(find.text('About Calories'), findsNothing);
+      expect(find.text('About Activity'), findsNothing);
+
+      await tester.scrollUntilVisible(
+        find.text('About'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('About'), findsOneWidget);
+      await tester.tap(find.text('About'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining(entry.snippet), findsOneWidget);
+      expect(find.text('Active vs. resting burn'), findsNothing);
+      expect(find.text('Flexible daily goal'), findsNothing);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+    }
 
     await themeProvider.toggleTheme(true);
     await tester.pumpAndSettle();
@@ -1240,6 +1363,23 @@ void main() {
     await tester.tap(find.text('+500 ml'));
     await tester.pumpAndSettle();
     expect(find.text('750'), findsOneWidget);
+
+    // Verify unified Water UI: + popover without All data, separate Data source & About cards
+    await tester.tap(find.byIcon(CupertinoIcons.add));
+    await tester.pumpAndSettle();
+    expect(find.text('All data'), findsNothing);
+    expect(find.text('Add data'), findsOneWidget);
+    expect(find.text('Daily goal'), findsWidgets);
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('About'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('About'), findsOneWidget);
+    expect(find.text('Data source'), findsOneWidget);
 
     // Unsupported metric types stay rejected in parity with Rust SQLite
     await expectLater(
@@ -1388,39 +1528,55 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Dark mode'), findsOneWidget);
 
-    // Navigate back to Summary -> Profile AnimatedOpacity AND its FadeTransition must reach 0.0
+    // Navigate back to Summary -> Profile AnimatedOpacity reaches 0.0 AND moves Offstage
     await tester.tap(find.text('Summary').last);
     await tester.pumpAndSettle();
 
     final summaryPane = find.ancestor(
-      of: find.byType(HealthDashboard),
-      matching: find.byType(AnimatedOpacity),
+      of: find.byType(HealthDashboard, skipOffstage: false),
+      matching: find.byType(AnimatedOpacity, skipOffstage: false),
     );
     final profilePane = find.ancestor(
-      of: find.byType(MyProfile),
-      matching: find.byType(AnimatedOpacity),
+      of: find.byType(MyProfile, skipOffstage: false),
+      matching: find.byType(AnimatedOpacity, skipOffstage: false),
     );
     final summaryFade = tester.widget<FadeTransition>(
-      find.descendant(of: summaryPane, matching: find.byType(FadeTransition)).first,
+      find.descendant(of: summaryPane, matching: find.byType(FadeTransition, skipOffstage: false), skipOffstage: false).first,
     );
     final profileFade = tester.widget<FadeTransition>(
-      find.descendant(of: profilePane, matching: find.byType(FadeTransition)).first,
+      find.descendant(of: profilePane, matching: find.byType(FadeTransition, skipOffstage: false), skipOffstage: false).first,
+    );
+    final summaryOffstage = tester.widget<Offstage>(
+      find.ancestor(of: summaryPane, matching: find.byType(Offstage, skipOffstage: false)).first,
+    );
+    final profileOffstage = tester.widget<Offstage>(
+      find.ancestor(of: profilePane, matching: find.byType(Offstage, skipOffstage: false)).first,
     );
     expect(summaryFade.opacity.value, 1.0);
+    expect(summaryOffstage.offstage, isFalse);
     expect(profileFade.opacity.value, 0.0);
+    expect(profileOffstage.offstage, isTrue);
 
-    // Navigate to Workout -> Workout active (1.0), Summary & Profile faded to 0.0
+    // Navigate to Workout -> Workout active (1.0, onstage), Summary & Profile faded to 0.0 & offstage
     await tester.tap(find.text('Workout').last);
     await tester.pumpAndSettle();
     final workoutPane = find.ancestor(
-      of: find.byType(WorkoutScreen),
-      matching: find.byType(AnimatedOpacity),
+      of: find.byType(WorkoutScreen, skipOffstage: false),
+      matching: find.byType(AnimatedOpacity, skipOffstage: false),
     );
     final workoutFade = tester.widget<FadeTransition>(
-      find.descendant(of: workoutPane, matching: find.byType(FadeTransition)).first,
+      find.descendant(of: workoutPane, matching: find.byType(FadeTransition, skipOffstage: false), skipOffstage: false).first,
+    );
+    final workoutOffstage = tester.widget<Offstage>(
+      find.ancestor(of: workoutPane, matching: find.byType(Offstage, skipOffstage: false)).first,
+    );
+    final summaryOffstageAfter = tester.widget<Offstage>(
+      find.ancestor(of: summaryPane, matching: find.byType(Offstage, skipOffstage: false)).first,
     );
     expect(summaryFade.opacity.value, 0.0);
+    expect(summaryOffstageAfter.offstage, isTrue);
     expect(workoutFade.opacity.value, 1.0);
+    expect(workoutOffstage.offstage, isFalse);
     expect(profileFade.opacity.value, 0.0);
     expect(tester.takeException(), isNull);
 
@@ -1858,8 +2014,9 @@ void main() {
       find.byWidgetPredicate(
         (w) => w is CustomPaint && w.foregroundPainter is LiquidGlassRimPainter,
       ),
-      findsAtLeastNWidgets(3), // outer dock + active pill + circle button
+      findsAtLeastNWidgets(2), // frosted outer dock + circle button
     );
+    expect(find.byType(BackdropFilter), findsAtLeastNWidgets(2));
     await tester.tap(find.byType(TempoGlassCircleButton));
     await tester.pumpAndSettle();
     expect(plusTaps, 1);
@@ -2086,6 +2243,471 @@ void main() {
     expect(result?.proceed, true);
     expect(result?.suppressForToday, true);
 
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets(
+      'ActivityStatsScreen renders weekly rings, charts, and opens ProgressShareScreen',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      dailyCaloriesGoal: 600,
+      dailyStepsGoal: 7000,
+      dailyMinutesGoal: 60,
+    );
+    await db.upsertDailyActivity(
+      profileId: profile.id,
+      calories: 320,
+      steps: 4500,
+      minutes: 35,
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: ActivityStatsScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stats'), findsOneWidget);
+    expect(find.byType(OvalActivityRings), findsOneWidget);
+    expect(find.byType(MiniOvalActivityRings), findsNWidgets(7));
+    expect(find.text('Calories (kcal)'), findsAtLeastNWidgets(1));
+    expect(find.text('Steps'), findsAtLeastNWidgets(1));
+    expect(find.text('320'), findsAtLeastNWidgets(1));
+
+    // Scroll down to reveal Steps and Activity time cards
+    await tester.scrollUntilVisible(
+      find.text('Current steps'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('4,500'), findsAtLeastNWidgets(1));
+
+    // Tap Share icon at top right to open ProgressShareScreen
+    await tester.tap(find.byIcon(CupertinoIcons.share));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProgressShareScreen), findsOneWidget);
+    expect(find.text('Share'), findsAtLeastNWidgets(1));
+    expect(find.text('Day'), findsOneWidget);
+    expect(find.text('Month'), findsOneWidget);
+
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets(
+      'ProgressShareScreen switches Day/Month, customizes metrics, and saves local templates',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      dailyCaloriesGoal: 600,
+      dailyStepsGoal: 7000,
+      dailyMinutesGoal: 60,
+    );
+    await db.upsertDailyActivity(
+      profileId: profile.id,
+      calories: 410,
+      steps: 6120,
+      minutes: 42,
+    );
+    await db.logBodyMetric(
+      profileId: profile.id,
+      metricType: 'water',
+      value: 750,
+    );
+
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: ProgressShareScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('410'), findsOneWidget);
+    expect(find.text('6,120'), findsOneWidget);
+
+    // Switch to Month view and verify monthly ring calendar renders
+    await tester.tap(find.text('Month'));
+    await tester.pumpAndSettle();
+    expect(find.text('Goals met'), findsOneWidget);
+    expect(find.byType(MiniOvalActivityRings), findsAtLeastNWidgets(28));
+
+    // Switch back to Day and customize metrics (add Water) + layout (Centered)
+    await tester.tap(find.text('Day'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Customize'));
+    await tester.pumpAndSettle();
+    expect(find.text('Customize Template'), findsOneWidget);
+
+    await tester.tap(find.text('Centered'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Water'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+
+    // Save custom template locally and verify persistence via ShareTemplateService
+    await tester.tap(find.text('Template'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save Template Locally'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Morning Run');
+    await tester.tap(find.text('Save template'));
+    await tester.pumpAndSettle();
+
+    final stored = await ShareTemplateService.loadTemplates(profile.id);
+    expect(stored.length, 1);
+    expect(stored.first.name, 'Morning Run');
+    expect(stored.first.layout, 'centered');
+    expect(stored.first.metrics, contains('water'));
+
+    await tester.scrollUntilVisible(
+      find.text('Morning Run'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Morning Run'), findsOneWidget);
+
+    await db.deleteProfile(profile.id);
+  });
+
+  testWidgets('TempoMorphPageRoute morphs smoothly open and closed with card snapshot', (tester) async {
+    final themeProvider = ThemeProvider();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: RepaintBoundary(
+                child: Builder(
+                  builder: (cardCtx) => GestureDetector(
+                    onTap: () => pushTempoMorphRoute<void>(
+                      context: cardCtx,
+                      sourceContext: cardCtx,
+                      sourceBorderRadius: 20,
+                      builder: (pageCtx) => Scaffold(
+                        body: Center(
+                          child: TextButton(
+                            onPressed: () => Navigator.of(pageCtx).pop(),
+                            child: const Text('Close Morph Page'),
+                          ),
+                        ),
+                      ),
+                    ),
+                    child: Container(
+                      width: 160,
+                      height: 160,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(CupertinoIcons.gauge, color: Color(0xFF4CD964)),
+                          SizedBox(height: 8),
+                          Text('Open Weight Card'),
+                          Text('61.5 kg'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Open Weight Card'));
+    // Sample early lift + mid-flight open morph frames
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pumpAndSettle();
+    expect(find.text('Close Morph Page'), findsOneWidget);
+
+    // Sample Stage 1 (page -> card snapshot) + Stage 2 (pure card snapshot landing)
+    await tester.tap(find.text('Close Morph Page'));
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(find.text('Open Weight Card'), findsOneWidget);
+    expect(find.text('Close Morph Page'), findsNothing);
+
+    // Repeat in Dark Mode to verify themed snapshot capture and clean disposal
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open Weight Card'));
+    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close Morph Page'));
+    await tester.pump(const Duration(milliseconds: 220));
+    await tester.pumpAndSettle();
+    expect(find.text('Open Weight Card'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('showTempoPopoverMenu plays HyperOS 4 decoupled 2-spring detached arc and blur morph', (tester) async {
+    final themeProvider = ThemeProvider();
+    final anchorKey = GlobalKey();
+    var selectedAction = '';
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Builder(
+                    builder: (btnCtx) => TempoGlassCircleButton(
+                      key: anchorKey,
+                      icon: const Icon(CupertinoIcons.ellipsis_vertical, size: 20),
+                      onPressed: () => showTempoPopoverMenu(
+                        context: btnCtx,
+                        anchorKey: anchorKey,
+                        actions: [
+                          TempoPopoverAction(
+                            label: 'Add data',
+                            onTap: () => selectedAction = 'add',
+                          ),
+                          TempoPopoverAction(
+                            label: 'Daily goal',
+                            onTap: () => selectedAction = 'goal',
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(activeTempoPopoverAnchorKey.value, isNull);
+
+    // Open popover -> verify anchor glyph suppresses immediately & mid-flight frames stay clean
+    await tester.tap(find.byKey(anchorKey));
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(activeTempoPopoverAnchorKey.value, same(anchorKey));
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pumpAndSettle();
+    expect(find.text('Add data'), findsOneWidget);
+    expect(find.text('Daily goal'), findsOneWidget);
+
+    // Tap an action -> verify close droplet glide & synchronous anchor restoration
+    await tester.tap(find.text('Add data'));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(selectedAction, 'add');
+    expect(activeTempoPopoverAnchorKey.value, isNull);
+
+    // Repeat in Dark Mode and dismiss via barrier tap
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(anchorKey));
+    await tester.pump(const Duration(milliseconds: 110));
+    await tester.pumpAndSettle();
+    expect(find.text('Daily goal'), findsOneWidget);
+    await tester.tapAt(const Offset(20, 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(activeTempoPopoverAnchorKey.value, isNull);
+    expect(find.text('Daily goal'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Circular header TempoMorphPageRoute hides anchor and closes as a true circle', (tester) async {
+    final themeProvider = ThemeProvider();
+    final circleKey = GlobalKey();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: themeProvider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Builder(
+                    builder: (btnCtx) => TempoGlassCircleButton(
+                      key: circleKey,
+                      icon: const Icon(CupertinoIcons.add, size: 22),
+                      onPressed: () => pushTempoMorphRoute<void>(
+                        context: btnCtx,
+                        sourceKey: circleKey,
+                        sourceBorderRadius: 999,
+                        builder: (pageCtx) => Scaffold(
+                          body: Center(
+                            child: TextButton(
+                              onPressed: () => Navigator.of(pageCtx).pop(),
+                              child: const Text('Close Circular Morph'),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(activeTempoMorphAnchorKey.value, isNull);
+
+    // Open from 42x42 circle button -> underlying anchor suppresses cleanly (zero ghost circle)
+    await tester.tap(find.byKey(circleKey));
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(activeTempoMorphAnchorKey.value, same(circleKey));
+    await tester.pumpAndSettle();
+    expect(activeTempoMorphAnchorKey.value, isNull);
+    expect(find.text('Close Circular Morph'), findsOneWidget);
+
+    // Close -> verify anchor suppresses during flight and morph container becomes a 1:1 circle
+    await tester.tap(find.text('Close Circular Morph'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(activeTempoMorphAnchorKey.value, same(circleKey));
+    final morphPos = tester.widgetList<Positioned>(find.byType(Positioned)).where(
+          (p) => p.width != null && p.height != null && p.width! >= 40 && p.width! <= 200,
+        );
+    expect(morphPos, isNotEmpty);
+    final circlePos = morphPos.last;
+    expect((circlePos.width! - circlePos.height!).abs(), lessThan(2.0));
+
+    await tester.pumpAndSettle();
+    expect(activeTempoMorphAnchorKey.value, isNull);
+    expect(find.byKey(circleKey), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Animation speed preference uses HyperOS dropdown and scales durations across Relaxed, Balanced, Fast', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final speedService = TempoAnimationSpeedService.instance;
+    speedService.resetForTest();
+    await speedService.initialize();
+
+    // Verify default Balanced (1.0x) and scaling math
+    expect(speedService.speed, TempoAnimationSpeed.balanced);
+    expect(speedService.scale(const Duration(milliseconds: 500)).inMilliseconds, 500);
+
+    final db = TempoRustDb.instance;
+    await db.init();
+    final profile = await db.createProfile(
+      displayName: 'Kenji',
+      pin: '1234',
+      heightCm: 173,
+      weightKg: 62,
+    );
+    final activeProfileProvider = ActiveProfileProvider();
+    await activeProfileProvider.initialize();
+    await activeProfileProvider.switchProfileWithPin(profile.id, '1234');
+    final themeProvider = ThemeProvider();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: themeProvider),
+          ChangeNotifierProvider.value(value: activeProfileProvider),
+        ],
+        child: const MaterialApp(
+          home: MyProfile(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Animation speed'), findsOneWidget);
+    expect(find.text('Balanced'), findsOneWidget);
+    expect(find.byIcon(CupertinoIcons.chevron_up_chevron_down), findsOneWidget);
+
+    // Open HyperOS dropdown -> select Relaxed
+    await tester.tap(find.text('Animation speed'));
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pumpAndSettle();
+    expect(find.text('Relaxed'), findsOneWidget);
+    expect(find.text('Fast'), findsOneWidget);
+
+    await tester.tap(find.text('Relaxed'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(speedService.speed, TempoAnimationSpeed.relaxed);
+    expect(find.text('Relaxed'), findsOneWidget);
+    expect(speedService.scale(const Duration(milliseconds: 500)).inMilliseconds, 660);
+
+    // Switch to Dark Mode, reopen dropdown -> select Fast
+    await themeProvider.toggleTheme(true);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Animation speed'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fast'));
+    await tester.pumpAndSettle();
+    expect(speedService.speed, TempoAnimationSpeed.fast);
+    expect(find.text('Fast'), findsOneWidget);
+    expect(speedService.scale(const Duration(milliseconds: 500)).inMilliseconds, 325);
+
+    // Verify persistence on reload
+    speedService.resetForTest();
+    await speedService.initialize(forceReload: true);
+    expect(speedService.speed, TempoAnimationSpeed.fast);
+    speedService.resetForTest();
+
+    expect(tester.takeException(), isNull);
     await db.deleteProfile(profile.id);
   });
 }

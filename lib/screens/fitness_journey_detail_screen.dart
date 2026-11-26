@@ -10,6 +10,7 @@ import '../services/journey_progress_service.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import 'workout_detail_screen.dart';
 
@@ -114,11 +115,10 @@ class _FitnessJourneyDetailScreenState extends State<FitnessJourneyDetailScreen>
       (w) => w.id == snapshot.nextWorkoutId,
       orElse: () => _workouts.first,
     );
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => WorkoutDetailScreen(workout: nextWorkout),
-      ),
+    await pushTempoMorphRoute<void>(
+      context: context,
+      sourceBorderRadius: 24,
+      builder: (_) => WorkoutDetailScreen(workout: nextWorkout),
     );
     if (mounted) _load();
   }
@@ -337,22 +337,24 @@ class _FitnessJourneyDetailScreenState extends State<FitnessJourneyDetailScreen>
 
                             return Column(
                               children: [
-                                _JourneyWorkoutRow(
-                                  index: idx + 1,
-                                  workout: w,
-                                  isCompleted: done,
-                                  isNext: isNext,
-                                  onTap: () async {
-                                    HapticFeedback.selectionClick();
-                                    await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
+                                Builder(
+                                  builder: (rowCtx) => _JourneyWorkoutRow(
+                                    index: idx + 1,
+                                    workout: w,
+                                    isCompleted: done,
+                                    isNext: isNext,
+                                    onTap: () async {
+                                      HapticFeedback.selectionClick();
+                                      await pushTempoMorphRoute<void>(
+                                        context: context,
+                                        sourceContext: rowCtx,
+                                        sourceBorderRadius: 20,
                                         builder: (_) =>
                                             WorkoutDetailScreen(workout: w),
-                                      ),
-                                    );
-                                    if (mounted) _load();
-                                  },
+                                      );
+                                      if (mounted) _load();
+                                    },
+                                  ),
                                 ),
                                 if (!isLast)
                                   Padding(

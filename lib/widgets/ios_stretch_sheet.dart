@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
+import '../services/animation_speed_service.dart';
 import '../theme/app_colors.dart';
 
 /// Shows an iOS 26/27-inspired modal bottom sheet with:
@@ -86,10 +87,12 @@ class _TempoSpringSheetRoute<T> extends PopupRoute<T> {
   String? get barrierLabel => 'Dismiss';
 
   @override
-  Duration get transitionDuration => const Duration(milliseconds: 440);
+  Duration get transitionDuration =>
+      TempoAnimationSpeedService.instance.scale(const Duration(milliseconds: 440));
 
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 260);
+  Duration get reverseTransitionDuration =>
+      TempoAnimationSpeedService.instance.scale(const Duration(milliseconds: 260));
 
   @override
   void dispose() {

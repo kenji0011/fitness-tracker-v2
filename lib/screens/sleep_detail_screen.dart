@@ -14,6 +14,7 @@ import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_jigg_icon.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import 'history_calendar_screen.dart';
 
@@ -159,14 +160,13 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
     final recordedKeys = _allPoints
         .map((p) => DateFormat('yyyy-MM-dd').format(p.recordedAt.toLocal()))
         .toSet();
-    final result = await Navigator.push<HistoryCalendarSelection>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => HistoryCalendarScreen(
-          initialDate: _anchorDate,
-          initialModeIndex: _selectedTab,
-          recordedDateKeys: recordedKeys,
-        ),
+    final result = await pushTempoMorphRoute<HistoryCalendarSelection>(
+      context: context,
+      sourceBorderRadius: 16,
+      builder: (_) => HistoryCalendarScreen(
+        initialDate: _anchorDate,
+        initialModeIndex: _selectedTab,
+        recordedDateKeys: recordedKeys,
       ),
     );
     if (result != null && mounted) {
@@ -523,11 +523,8 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
     showTempoPopoverMenu(
       context: context,
       anchorKey: _moreButtonKey,
+      anchorIcon: CupertinoIcons.add,
       actions: [
-        TempoPopoverAction(
-          label: 'All data',
-          onTap: () => _openDataSourceSheet(title: 'All data'),
-        ),
         TempoPopoverAction(
           label: 'Add data',
           onTap: _openAddSleepSheet,
@@ -538,6 +535,100 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
         ),
       ],
     );
+  }
+
+  void _openAboutSheet() {
+    HapticFeedback.selectionClick();
+    showTempoSheet<void>(
+      context: context,
+      backgroundColor: AppColors.of(context, listen: false).card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) {
+        final mc = AppColors.of(ctx);
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            22,
+            8,
+            22,
+            MediaQuery.paddingOf(ctx).bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const _PurpleCircleBadge(
+                    icon: CupertinoIcons.bed_double_fill,
+                    color: _sleepPurple,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'About',
+                      style: TextStyle(
+                        color: mc.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Sleep duration tracks how many hours of rest you get each night so you can spot patterns in your recovery and energy.',
+                style: TextStyle(
+                  color: mc.textSecondary,
+                  fontSize: 14.5,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Most adults recover best with 7 to 9 hours of consistent sleep per night, supporting muscle repair, focus, and workout performance.',
+                style: TextStyle(
+                  color: mc.textSecondary,
+                  fontSize: 14.5,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                height: 50,
+                child: TextButton(
+                  style: TextButton.styleFrom(
+                    backgroundColor: mc.searchBg,
+                    foregroundColor: mc.textPrimary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text(
+                    'Close',
+                    style: TextStyle(
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _formatDateLabel(DateTime dt) {
+    final now = DateTime.now();
+    if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+      return 'Today';
+    }
+    return DateFormat('MMM d, yyyy').format(dt);
   }
 
   void _openSleepQualityPopup(double currentHours) {
@@ -804,26 +895,13 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-                child: Row(
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: mc.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      'Local on-device',
-                      style: TextStyle(
-                        color: mc.textSecondary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               Divider(height: 1, color: mc.divider),
@@ -831,7 +909,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                 child: history.isEmpty
                     ? Center(
                         child: Text(
-                          'No sleep records yet. Tap Add data to log one.',
+                          'No sleep records yet. Tap + to add an entry.',
                           style: TextStyle(
                             color: mc.textSecondary,
                             fontSize: 14,
@@ -839,7 +917,12 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                         ),
                       )
                     : ListView.separated(
-                        padding: const EdgeInsets.all(20),
+                        padding: EdgeInsets.fromLTRB(
+                          20,
+                          16,
+                          20,
+                          MediaQuery.paddingOf(ctx).bottom + 20,
+                        ),
                         itemCount: history.length,
                         separatorBuilder: (_, __) => Padding(
                           padding: const EdgeInsets.symmetric(vertical: 10),
@@ -854,7 +937,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      DateFormat('MM/dd/yyyy')
+                                      DateFormat('MMMM d, yyyy')
                                           .format(pt.recordedAt.toLocal()),
                                       style: TextStyle(
                                         color: mc.textPrimary,
@@ -867,7 +950,8 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'Tempo · ${DateFormat('h:mm a').format(pt.recordedAt.toLocal())}',
+                                      DateFormat('h:mm a')
+                                          .format(pt.recordedAt.toLocal()),
                                       style: TextStyle(
                                         color: mc.textTertiary,
                                         fontSize: 12.5,
@@ -911,74 +995,93 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
         ? ((currentHrs / _goalHours) * 100).round().clamp(0, 150)
         : 0;
 
+    final sleepProgress =
+        (currentHrs > 0 && _goalHours > 0) ? (currentHrs / _goalHours).clamp(0.0, 1.0) : 0.0;
+
     return Scaffold(
       backgroundColor: c.scaffold,
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            // Top bar: Back | Centered Sleep + Calendar Date Picker | iOS Popover Menu
+            // Centered top bar aligned across all metric pages
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-              child: Row(
-                children: [
-                  TempoGlassCircleButton(
-                    icon: TempoBackChevron(color: c.textPrimary, size: 22),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Sleep',
-                          style: TextStyle(
-                            color: c.textPrimary,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.3,
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TempoGlassCircleButton(
+                        icon: TempoBackChevron(color: c.textPrimary, size: 22),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 58),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Sleep',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 1),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _pickAnchorDate,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                DateFormat('MM/dd/yyyy').format(_anchorDate),
-                                style: TextStyle(
-                                  color: c.textSecondary,
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w500,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
+                          const SizedBox(height: 1),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _pickAnchorDate,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    DateFormat('MMMM d, yyyy')
+                                        .format(_anchorDate),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: c.textSecondary,
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 3),
-                              Icon(
-                                Icons.arrow_drop_down_rounded,
-                                size: 18,
-                                color: c.textSecondary,
-                              ),
-                            ],
+                                const SizedBox(width: 2),
+                                Icon(
+                                  Icons.arrow_drop_down_rounded,
+                                  size: 18,
+                                  color: c.textSecondary,
+                                ),
+                              ],
+                            ),
                           ),
+                        ],
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TempoGlassCircleButton(
+                        key: _moreButtonKey,
+                        tooltip: 'Quick actions',
+                        icon: Icon(
+                          CupertinoIcons.add,
+                          size: 22,
+                          color: c.textPrimary,
                         ),
-                      ],
+                        onPressed: _openMoreMenu,
+                      ),
                     ),
-                  ),
-                  TempoGlassCircleButton(
-                    key: _moreButtonKey,
-                    icon: Icon(
-                      CupertinoIcons.ellipsis_vertical,
-                      size: 20,
-                      color: c.textPrimary,
-                    ),
-                    onPressed: _openMoreMenu,
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
 
@@ -1003,10 +1106,17 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                       color: _sleepPurple,
                       onRefresh: _load,
                       child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 40),
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        ),
+                        padding: EdgeInsets.fromLTRB(
+                          18,
+                          0,
+                          18,
+                          MediaQuery.paddingOf(context).bottom + 32,
+                        ),
                         children: [
-                          // Card 1: Sleep duration (+ animated trend chart on Week/M/Y)
+                          // Card 1: Sleep duration (+ progress bar + animated trend chart on Week/M/Y)
                           AppleCard(
                             borderRadius: 24,
                             padding: const EdgeInsets.all(20),
@@ -1021,18 +1131,45 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                       color: _sleepPurple,
                                     ),
                                     const SizedBox(width: 12),
-                                    Text(
-                                      'Sleep duration',
-                                      style: TextStyle(
-                                        color: c.textPrimary,
-                                        fontSize: 16.5,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: -0.2,
+                                    Expanded(
+                                      child: Text(
+                                        'Sleep duration',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16.5,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.2,
+                                        ),
                                       ),
                                     ),
+                                    if (_goalHours > 0)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: _sleepPurple.withValues(
+                                            alpha: c.isDark ? 0.18 : 0.13,
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          '$goalPct%',
+                                          style: const TextStyle(
+                                            color: _sleepPurple,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                            fontFeatures: [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
-                                const SizedBox(height: 22),
+                                const SizedBox(height: 20),
                                 Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -1068,22 +1205,21 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                                   ),
                                                 ),
                                               ),
-                                              const SizedBox(width: 4),
+                                              const SizedBox(width: 5),
                                               Text(
                                                 'hrs',
                                                 style: TextStyle(
-                                                  color: c.textPrimary,
-                                                  fontSize: 16,
+                                                  color: c.textSecondary,
+                                                  fontSize: 15,
                                                   fontWeight: FontWeight.w600,
                                                 ),
                                               ),
                                             ],
                                           ),
-                                          const SizedBox(height: 6),
+                                          const SizedBox(height: 5),
                                           Text(
                                             latestDate != null
-                                                ? DateFormat('MM/dd/yyyy')
-                                                    .format(latestDate)
+                                                ? _formatDateLabel(latestDate)
                                                 : 'No entries yet',
                                             style: TextStyle(
                                               color: c.textTertiary,
@@ -1096,13 +1232,13 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                         ],
                                       ),
                                     ),
-                                    const SizedBox(width: 16),
+                                    const SizedBox(width: 14),
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          const SizedBox(height: 5),
+                                          const SizedBox(height: 6),
                                           Text(
                                             comparison.delta != null
                                                 ? '${comparison.delta! > 0 ? '+' : ''}${comparison.delta!.toStringAsFixed(1)} hrs'
@@ -1111,7 +1247,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               color: c.textPrimary,
-                                              fontSize: 22,
+                                              fontSize: 21,
                                               fontWeight: FontWeight.w600,
                                               letterSpacing: -0.4,
                                               fontFeatures: const [
@@ -1132,6 +1268,28 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                       ),
                                     ),
                                   ],
+                                ),
+                                const SizedBox(height: 16),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(99),
+                                  child: TweenAnimationBuilder<double>(
+                                    tween: Tween<double>(
+                                      begin: 0,
+                                      end: sleepProgress,
+                                    ),
+                                    duration: const Duration(milliseconds: 420),
+                                    curve: Curves.easeOutCubic,
+                                    builder: (_, v, __) =>
+                                        LinearProgressIndicator(
+                                      value: v,
+                                      minHeight: 7,
+                                      backgroundColor: c.divider,
+                                      valueColor:
+                                          const AlwaysStoppedAnimation<Color>(
+                                        _sleepPurple,
+                                      ),
+                                    ),
+                                  ),
                                 ),
 
                                 AnimatedSize(
@@ -1154,7 +1312,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                           ),
                           const SizedBox(height: 14),
 
-                          // Card 2: Sleep quality & target (matching Weight's Body composition card)
+                          // Card 2: Sleep quality & target
                           AppleCard(
                             borderRadius: 24,
                             padding: const EdgeInsets.all(20),
@@ -1169,14 +1327,30 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                       color: _sleepPurple,
                                     ),
                                     const SizedBox(width: 12),
-                                    Text(
-                                      'Sleep quality',
-                                      style: TextStyle(
-                                        color: c.textPrimary,
-                                        fontSize: 16.5,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: -0.2,
+                                    Expanded(
+                                      child: Text(
+                                        'Sleep quality',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16.5,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.2,
+                                        ),
                                       ),
+                                    ),
+                                    Text(
+                                      'Details',
+                                      style: TextStyle(
+                                        color: c.textTertiary,
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      CupertinoIcons.chevron_right,
+                                      size: 15,
+                                      color: c.textTertiary,
                                     ),
                                   ],
                                 ),
@@ -1240,44 +1414,32 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                                       color: c.divider,
                                     ),
                                     Expanded(
-                                      child: Row(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  currentHrs > 0
-                                                      ? _sleepLevel(currentHrs)
-                                                      : '--',
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    color: c.textPrimary,
-                                                    fontSize: 22,
-                                                    fontWeight: FontWeight.w600,
-                                                    letterSpacing: -0.4,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  currentHrs > 0
-                                                      ? '$goalPct% of goal'
-                                                      : 'Recovery',
-                                                  style: TextStyle(
-                                                    color: c.textTertiary,
-                                                    fontSize: 12.5,
-                                                  ),
-                                                ),
-                                              ],
+                                          Text(
+                                            currentHrs > 0
+                                                ? _sleepLevel(currentHrs)
+                                                : '--',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: c.textPrimary,
+                                              fontSize: 21,
+                                              fontWeight: FontWeight.w600,
+                                              letterSpacing: -0.4,
                                             ),
                                           ),
-                                          Icon(
-                                            CupertinoIcons.chevron_right,
-                                            size: 16,
-                                            color: c.textTertiary,
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            currentHrs > 0
+                                                ? '$goalPct% of goal'
+                                                : 'Recovery',
+                                            style: TextStyle(
+                                              color: c.textTertiary,
+                                              fontSize: 12.5,
+                                            ),
                                           ),
                                         ],
                                       ),
@@ -1289,103 +1451,100 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                           ),
                           const SizedBox(height: 14),
 
-                          // Card 3: Data source + Add data (matching Weight)
+                          // Card 3: Data source (standalone card)
                           AppleCard(
                             borderRadius: 24,
                             padding: EdgeInsets.zero,
-                            child: Column(
-                              children: [
-                                InkWell(
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(24),
-                                  ),
-                                  onTap: _openDataSourceSheet,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 17,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        const _PurpleCircleBadge(
-                                          icon: Icons.workspaces_rounded,
-                                          color: _sleepPurple,
-                                        ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Text(
-                                            'Data source',
-                                            style: TextStyle(
-                                              color: c.textPrimary,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                        if (_allPoints.isNotEmpty)
-                                          Text(
-                                            '${_allPoints.length}',
-                                            style: TextStyle(
-                                              color: c.textTertiary,
-                                              fontSize: 13.5,
-                                              fontFeatures: const [
-                                                FontFeature.tabularFigures(),
-                                              ],
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(24),
+                              onTap: _openDataSourceSheet,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
                                 ),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                  ),
-                                  child: Divider(height: 1, color: c.divider),
-                                ),
-                                InkWell(
-                                  borderRadius: const BorderRadius.vertical(
-                                    bottom: Radius.circular(24),
-                                  ),
-                                  onTap: _openAddSleepSheet,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 17,
+                                child: Row(
+                                  children: [
+                                    const _PurpleCircleBadge(
+                                      icon: CupertinoIcons.layers_alt_fill,
+                                      color: _sleepPurple,
                                     ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 32,
-                                          height: 32,
-                                          decoration: BoxDecoration(
-                                            color: c.isDark
-                                                ? const Color(0xFF0A0A0C)
-                                                : const Color(0xFF1C1C1E),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.edit_rounded,
-                                            color: Colors.white,
-                                            size: 16,
-                                          ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Text(
+                                        'Data source',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.15,
                                         ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Text(
-                                            'Add data',
-                                            style: TextStyle(
-                                              color: c.textPrimary,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                                      ),
                                     ),
-                                  ),
+                                    if (_allPoints.isNotEmpty) ...[
+                                      Text(
+                                        '${_allPoints.length}',
+                                        style: TextStyle(
+                                          color: c.textTertiary,
+                                          fontSize: 13.5,
+                                          fontWeight: FontWeight.w500,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                    ],
+                                    Icon(
+                                      CupertinoIcons.chevron_right,
+                                      size: 16,
+                                      color: c.textTertiary,
+                                    ),
+                                  ],
                                 ),
-                              ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Card 4: About (standalone card)
+                          AppleCard(
+                            borderRadius: 24,
+                            padding: EdgeInsets.zero,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(24),
+                              onTap: _openAboutSheet,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
+                                ),
+                                child: Row(
+                                  children: [
+                                    const _PurpleCircleBadge(
+                                      icon: CupertinoIcons.info,
+                                      color: _sleepPurple,
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Text(
+                                        'About',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.15,
+                                        ),
+                                      ),
+                                    ),
+                                    Icon(
+                                      CupertinoIcons.chevron_right,
+                                      size: 16,
+                                      color: c.textTertiary,
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ],

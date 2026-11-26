@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../config/app_version.dart';
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/animation_speed_service.dart';
 import '../services/app_update_service.dart';
 import '../services/local_backup_service.dart';
 import '../services/local_media_service.dart';
@@ -18,11 +19,13 @@ import '../services/tempo_rust_db.dart';
 import '../services/weight_unit_helper.dart';
 import '../theme/app_colors.dart';
 import '../theme/theme_provider.dart';
+import '../widgets/hyperos_dropdown_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/pin_pad_sheet.dart';
 import '../widgets/step_accuracy_warning_sheet.dart';
 import '../widgets/tempo_jigg_icon.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_spotlight_tour.dart';
 import '../widgets/tempo_toast.dart';
@@ -57,8 +60,11 @@ class _MyProfileState extends State<MyProfile> {
   bool _autoUpdateEnabled = true;
   bool _checkingUpdates = false;
   bool _wasTickerEnabled = false;
+  bool _needsRefresh = false;
+  bool _animSpeedMenuOpen = false;
   final GlobalKey _avatarHintKey = GlobalKey();
   final GlobalKey _identityHintKey = GlobalKey();
+  final GlobalKey _animSpeedRowKey = GlobalKey();
   final JiggIconController _themeJiggController = JiggIconController();
   final JiggIconController _autoUpdateJiggController = JiggIconController();
   final Map<String, JiggIconController> _settingJiggControllers = {};
@@ -87,6 +93,10 @@ class _MyProfileState extends State<MyProfile> {
     super.didChangeDependencies();
     final enabled = TickerMode.of(context);
     if (enabled && !_wasTickerEnabled) {
+      if (_needsRefresh) {
+        _needsRefresh = false;
+        _loadProfilePrefs();
+      }
       _maybeShowSpotlight();
     }
     _wasTickerEnabled = enabled;
@@ -137,7 +147,12 @@ class _MyProfileState extends State<MyProfile> {
   void didUpdateWidget(covariant MyProfile oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.refreshVersion != oldWidget.refreshVersion) {
-      _loadProfilePrefs();
+      if (TickerMode.of(context)) {
+        _needsRefresh = false;
+        _loadProfilePrefs();
+      } else {
+        _needsRefresh = true;
+      }
     }
   }
 
@@ -944,9 +959,6 @@ class _MyProfileState extends State<MyProfile> {
                       jiggController: _themeJiggController,
                       badgeColor: const Color(0xFF7A6FF0),
                       title: 'Dark mode',
-                      subtitle: c.isDark
-                          ? 'Obsidian OLED appearance active'
-                          : 'Clean light appearance active',
                       value: themeProvider.isDarkMode,
                       onChanged: (v) {
                         HapticFeedback.selectionClick();
@@ -956,15 +968,13 @@ class _MyProfileState extends State<MyProfile> {
                     ),
                     _switchTile(
                       c: c,
-                      icon: CupertinoIcons.hare_fill,
+                      icon: Icons.directions_walk_rounded,
                       badgeColor: const Color(0xFF4CD964),
                       title: 'Live step counter',
-                      subtitle: _liveStepsEnabled
-                          ? 'Counting steps offline via motion sensor'
-                          : 'Off · Enable to count steps as you walk',
                       value: _liveStepsEnabled,
                       onChanged: _toggleLiveSteps,
                     ),
+                    _animationSpeedTile(c),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -979,13 +989,12 @@ class _MyProfileState extends State<MyProfile> {
                       jiggIconName: 'camera',
                       badgeColor: const Color(0xFF4B9EF7),
                       title: 'Progress photos',
-                      subtitle: 'Private on-device album & comparison',
                       c: c,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const ProgressAlbumScreen(),
-                        ),
+                      onTapWithContext: (rowCtx) => pushTempoMorphRoute<void>(
+                        context: context,
+                        sourceContext: rowCtx,
+                        sourceBorderRadius: 18,
+                        builder: (_) => const ProgressAlbumScreen(),
                       ),
                     ),
                     _settingTile(
@@ -993,7 +1002,6 @@ class _MyProfileState extends State<MyProfile> {
                       jiggIconName: 'download',
                       badgeColor: c.accent,
                       title: 'Backup & restore',
-                      subtitle: 'Export or import local JSON snapshots',
                       c: c,
                       onTap: () => _openBackupSheet(profile),
                     ),
@@ -1027,13 +1035,12 @@ class _MyProfileState extends State<MyProfile> {
                       jiggIconName: 'bell',
                       badgeColor: const Color(0xFFF4BD3E),
                       title: 'Device permissions',
-                      subtitle: 'Activity sensors, notifications & camera',
                       c: c,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const PermissionsScreen(),
-                        ),
+                      onTapWithContext: (rowCtx) => pushTempoMorphRoute<void>(
+                        context: context,
+                        sourceContext: rowCtx,
+                        sourceBorderRadius: 18,
+                        builder: (_) => const PermissionsScreen(),
                       ),
                     ),
                     _settingTile(
@@ -1041,11 +1048,11 @@ class _MyProfileState extends State<MyProfile> {
                       badgeColor: const Color(0xFF7A6FF0),
                       title: 'Privacy & terms',
                       c: c,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const TermsAndConditionsScreen(),
-                        ),
+                      onTapWithContext: (rowCtx) => pushTempoMorphRoute<void>(
+                        context: context,
+                        sourceContext: rowCtx,
+                        sourceBorderRadius: 18,
+                        builder: (_) => const TermsAndConditionsScreen(),
                       ),
                     ),
                   ],
@@ -1064,9 +1071,6 @@ class _MyProfileState extends State<MyProfile> {
                       jiggController: _autoUpdateJiggController,
                       badgeColor: c.accent,
                       title: 'Auto-updates',
-                      subtitle: _autoUpdateEnabled
-                          ? 'Checks GitHub releases on launch'
-                          : 'Off · Tap App version to check manually',
                       value: _autoUpdateEnabled,
                       onChanged: _toggleAutoUpdates,
                     ),
@@ -1110,13 +1114,13 @@ class _MyProfileState extends State<MyProfile> {
                       badgeColor: const Color(0xFF4AC9A5),
                       title: 'App guide',
                       c: c,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => IntroWalkthroughScreen(
-                            isReplay: true,
-                            onComplete: () => Navigator.of(context).pop(),
-                          ),
+                      onTapWithContext: (rowCtx) => pushTempoMorphRoute<void>(
+                        context: context,
+                        sourceContext: rowCtx,
+                        sourceBorderRadius: 18,
+                        builder: (_) => IntroWalkthroughScreen(
+                          isReplay: true,
+                          onComplete: () => Navigator.of(context).pop(),
                         ),
                       ),
                     ),
@@ -1133,11 +1137,11 @@ class _MyProfileState extends State<MyProfile> {
                       badgeColor: const Color(0xFF3D9CF6),
                       title: 'About Tempo',
                       c: c,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const AboutAppScreen(),
-                        ),
+                      onTapWithContext: (rowCtx) => pushTempoMorphRoute<void>(
+                        context: context,
+                        sourceContext: rowCtx,
+                        sourceBorderRadius: 18,
+                        builder: (_) => const AboutAppScreen(),
                       ),
                     ),
                   ],
@@ -1152,7 +1156,6 @@ class _MyProfileState extends State<MyProfile> {
                       icon: CupertinoIcons.trash_fill,
                       badgeColor: const Color(0xFFEF5350),
                       title: 'Delete local profile',
-                      subtitle: 'Permanently erase data for this profile',
                       titleColor: c.moveRed,
                       c: c,
                       onTap: () => _confirmDeleteProfile(profile),
@@ -1225,12 +1228,11 @@ class _MyProfileState extends State<MyProfile> {
     JiggIconController? jiggController,
     required Color badgeColor,
     required String title,
-    String? subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10.5),
       child: Row(
         children: [
           _circleIcon(
@@ -1241,28 +1243,13 @@ class _MyProfileState extends State<MyProfile> {
           ),
           const SizedBox(width: 14),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 1.5),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: c.textTertiary,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ],
+            child: Text(
+              title,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
           const SizedBox(width: 10),
@@ -1273,6 +1260,112 @@ class _MyProfileState extends State<MyProfile> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _openAnimationSpeedMenu() async {
+    final speedService = TempoAnimationSpeedService.instance;
+    final ctrl = _settingController('Animation speed');
+    HapticFeedback.selectionClick();
+    ctrl.play();
+    setState(() => _animSpeedMenuOpen = true);
+    final picked = await showHyperOsDropdownMenu<TempoAnimationSpeed>(
+      context: context,
+      rowKey: _animSpeedRowKey,
+      selectedValue: speedService.speed,
+      options: const [
+        HyperOsDropdownOption(
+          value: TempoAnimationSpeed.relaxed,
+          label: 'Relaxed',
+        ),
+        HyperOsDropdownOption(
+          value: TempoAnimationSpeed.balanced,
+          label: 'Balanced',
+        ),
+        HyperOsDropdownOption(
+          value: TempoAnimationSpeed.fast,
+          label: 'Fast',
+        ),
+      ],
+    );
+    if (picked != null) {
+      await speedService.setSpeed(picked);
+    }
+    if (mounted) {
+      setState(() => _animSpeedMenuOpen = false);
+    }
+  }
+
+  Widget _animationSpeedTile(AppColors c) {
+    final ctrl = _settingController('Animation speed');
+    return ValueListenableBuilder<TempoAnimationSpeed>(
+      valueListenable: TempoAnimationSpeedService.instance.notifier,
+      builder: (context, currentSpeed, _) {
+        return AnimatedContainer(
+          key: _animSpeedRowKey,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          color: _animSpeedMenuOpen
+              ? (c.isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.black.withValues(alpha: 0.045))
+              : Colors.transparent,
+          child: InkWell(
+            onTap: _openAnimationSpeedMenu,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 13.5,
+              ),
+              child: Row(
+                children: [
+                  _circleIcon(
+                    CupertinoIcons.speedometer,
+                    c.accent,
+                    jiggIconName: 'flash',
+                    jiggController: ctrl,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      'Animation speed',
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  AnimatedOpacity(
+                    opacity: _animSpeedMenuOpen ? 0.0 : 1.0,
+                    duration: const Duration(milliseconds: 150),
+                    curve: Curves.easeOutCubic,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          currentSpeed.label,
+                          style: TextStyle(
+                            color: c.textSecondary,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Icon(
+                          CupertinoIcons.chevron_up_chevron_down,
+                          color: c.textTertiary,
+                          size: 13.5,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1310,19 +1403,20 @@ class _MyProfileState extends State<MyProfile> {
     String? jiggIconName,
     required Color badgeColor,
     required String title,
-    String? subtitle,
     required AppColors c,
     VoidCallback? onTap,
+    void Function(BuildContext rowContext)? onTapWithContext,
     Color? titleColor,
     String? trailingText,
     Widget? trailingWidget,
     bool showChevron = true,
   }) {
     final ctrl = jiggIconName != null ? _settingController(title) : null;
+    final hasTap = onTap != null || onTapWithContext != null;
     final content = Padding(
-      padding: EdgeInsets.symmetric(
+      padding: const EdgeInsets.symmetric(
         horizontal: 16,
-        vertical: subtitle != null ? 11.5 : 13.5,
+        vertical: 13.5,
       ),
       child: Row(
         children: [
@@ -1334,28 +1428,13 @@ class _MyProfileState extends State<MyProfile> {
           ),
           const SizedBox(width: 14),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: titleColor ?? c.textPrimary,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 1.5),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: c.textTertiary,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ],
+            child: Text(
+              title,
+              style: TextStyle(
+                color: titleColor ?? c.textPrimary,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
           if (trailingWidget != null) trailingWidget,
@@ -1370,7 +1449,7 @@ class _MyProfileState extends State<MyProfile> {
               ),
             ),
           ],
-          if (showChevron && onTap != null) ...[
+          if (showChevron && hasTap) ...[
             if (trailingText != null || trailingWidget != null)
               const SizedBox(width: 6),
             Icon(
@@ -1383,15 +1462,21 @@ class _MyProfileState extends State<MyProfile> {
       ),
     );
 
-    if (onTap == null) return content;
+    if (!hasTap) return content;
 
-    return InkWell(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        ctrl?.play();
-        onTap();
-      },
-      child: content,
+    return Builder(
+      builder: (rowCtx) => InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          ctrl?.play();
+          if (onTapWithContext != null) {
+            onTapWithContext(rowCtx);
+          } else {
+            onTap?.call();
+          }
+        },
+        child: content,
+      ),
     );
   }
 }

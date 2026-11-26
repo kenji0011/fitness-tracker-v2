@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +17,7 @@ import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/step_accuracy_warning_sheet.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_toast.dart';
 import 'history_calendar_screen.dart';
@@ -34,14 +37,20 @@ class _MetricPoint {
   const _MetricPoint({required this.date, required this.value});
 }
 
-/// Unified Weight/Sleep-grade detail page for Waist, Calories, Steps,
-/// Activity Minutes, and 7-Day Burn — featuring History Calendar, sliding
-/// Latest | Week | M | Y tabs, iOS spring popover, editable daily goal,
-/// animated trend chart, Data source, and Add data.
+/// Unified detail page for Calories, Steps, Activity, Waist, and 7-Day Burn,
+/// aligned with Activity Stats, Water, Weight, and Sleep:
+/// centered header + calendar picker, Latest | Week | M | Y segmented switcher,
+/// goal progress bar, animated trend chart, editable daily target, and separate
+/// Data source and About cards.
 class MetricDetailScreen extends StatefulWidget {
   final TempoMetricKind kind;
+  final DateTime? initialDate;
 
-  const MetricDetailScreen({super.key, required this.kind});
+  const MetricDetailScreen({
+    super.key,
+    required this.kind,
+    this.initialDate,
+  });
 
   @override
   State<MetricDetailScreen> createState() => _MetricDetailScreenState();
@@ -52,9 +61,10 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
 
   final TempoRustDb _db = TempoRustDb.instance;
   final GlobalKey _moreButtonKey = GlobalKey();
+  final GlobalKey _dateButtonKey = GlobalKey();
 
   int _selectedTab = 0; // 0 = Latest, 1 = Week, 2 = M, 3 = Y
-  DateTime _anchorDate = DateTime.now();
+  late DateTime _anchorDate;
   List<_MetricPoint> _allPoints = [];
   double? _customWaistTargetCm;
   bool _liveStepsEnabled = false;
@@ -84,7 +94,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       case TempoMetricKind.steps:
         return 'Daily steps';
       case TempoMetricKind.minutes:
-        return 'Activity minutes';
+        return 'Activity time';
       case TempoMetricKind.burn:
         return 'Energy burn';
     }
@@ -126,7 +136,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       case TempoMetricKind.calories:
         return CupertinoIcons.flame_fill;
       case TempoMetricKind.steps:
-        return CupertinoIcons.hare_fill;
+        return Icons.directions_walk_rounded;
       case TempoMetricKind.minutes:
         return CupertinoIcons.clock_fill;
       case TempoMetricKind.burn:
@@ -135,6 +145,8 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   }
 
   bool get _isInteger => widget.kind != TempoMetricKind.waist;
+
+  bool get _showProgressBar => widget.kind != TempoMetricKind.waist;
 
   double get _stepSize {
     switch (widget.kind) {
@@ -151,6 +163,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
   }
 
   double get _minVal => widget.kind == TempoMetricKind.waist ? 40 : 1;
+
   double get _maxVal {
     switch (widget.kind) {
       case TempoMetricKind.waist:
@@ -165,23 +178,50 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     }
   }
 
-  String _aboutCopy() {
+  String get _averageCaption {
+    switch (_selectedTab) {
+      case 1:
+        return '7-day average';
+      case 2:
+        return '30-day average';
+      case 3:
+        return '12-month average';
+      default:
+        return 'Overall average';
+    }
+  }
+
+  List<String> _aboutParagraphs() {
     switch (widget.kind) {
       case TempoMetricKind.waist:
-        return 'Waist circumference tracks core composition over time independently of scale fluctuations. Measure around the narrowest part of your midsection at the same time of day.';
+        return const [
+          'Waist circumference measures the distance around the narrowest part of your midsection.',
+          'Tracking it over time helps show changes in body composition beyond what scale weight alone reflects.',
+        ];
       case TempoMetricKind.calories:
       case TempoMetricKind.burn:
-        return 'Active calories measure energy burned through workouts and daily movement. Customize your daily target anytime to match your current training block.';
+        return const [
+          'Active calories measure the energy your body burns through physical movement, including workouts, walking, and everyday activity.',
+          'Tracking active calories helps you understand your daily energy output and stay consistent with your training.',
+        ];
       case TempoMetricKind.steps:
-        return 'Steps track daily walking activity using your phone\'s motion sensor offline. Aiming for 7,000–10,000 steps per day supports cardiovascular health and recovery.';
+        return const [
+          'Steps count the total strides you take throughout the day using your phone motion sensor or manual entries.',
+          'Steady daily walking supports cardiovascular health, boosts energy, and aids recovery between workouts.',
+        ];
       case TempoMetricKind.minutes:
-        return 'Activity minutes record moderate-to-vigorous training time. Most adults benefit from 30–60 active minutes per day or at least 150 minutes per week.';
+        return const [
+          'Activity time measures the minutes you spend in moderate to vigorous movement, such as brisk walking, running, cycling, or strength training.',
+          'Building regular active minutes each day improves endurance, strength, and overall fitness.',
+        ];
     }
   }
 
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialDate ?? DateTime.now();
+    _anchorDate = DateTime(initial.year, initial.month, initial.day);
     if (widget.kind == TempoMetricKind.burn) {
       _selectedTab = 1; // Default to Week view for 7-Day Burn
     }
@@ -227,51 +267,61 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     }
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool showSpinner = true}) async {
     final pid = context.read<ActiveProfileProvider>().activeProfileId;
-    if (pid == null) return;
-    setState(() => _loading = true);
-
-    if (widget.kind == TempoMetricKind.steps) {
-      final live = await StepCounterSync.isLiveEnabled(pid);
-      if (mounted) _liveStepsEnabled = live;
+    if (pid == null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+    if (showSpinner && _allPoints.isEmpty) {
+      setState(() => _loading = true);
     }
 
-    if (widget.kind == TempoMetricKind.waist) {
-      final results = await Future.wait([
-        _db.getBodyMetricHistory(pid, 'waist', limit: 365),
-        _db.getSetting('waist_target_cm_$pid'),
-      ]);
-      if (!mounted) return;
-      final pts = (results[0] as List<BodyMetricPoint>)
-        ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
-      setState(() {
-        _allPoints = pts
-            .map((p) => _MetricPoint(date: p.recordedAt.toLocal(), value: p.value))
-            .toList();
-        _customWaistTargetCm = double.tryParse((results[1] as String?) ?? '');
-        _loading = false;
-      });
-    } else {
-      final list = await _db.getDailyActivityHistory(pid, limit: 365);
-      if (!mounted) return;
-      list.sort((a, b) => a.dateKey.compareTo(b.dateKey));
-      final mapped = <_MetricPoint>[];
-      for (final d in list) {
-        final v = switch (widget.kind) {
-          TempoMetricKind.steps => d.steps.toDouble(),
-          TempoMetricKind.minutes => d.minutes.toDouble(),
-          TempoMetricKind.calories || TempoMetricKind.burn => d.calories.toDouble(),
-          TempoMetricKind.waist => 0.0,
-        };
-        if (v > 0) {
-          mapped.add(_MetricPoint(date: d.date, value: v));
-        }
+    try {
+      if (widget.kind == TempoMetricKind.steps) {
+        final live = await StepCounterSync.isLiveEnabled(pid);
+        if (mounted) _liveStepsEnabled = live;
       }
-      setState(() {
-        _allPoints = mapped;
-        _loading = false;
-      });
+
+      if (widget.kind == TempoMetricKind.waist) {
+        final results = await Future.wait([
+          _db.getBodyMetricHistory(pid, 'waist', limit: 365),
+          _db.getSetting('waist_target_cm_$pid'),
+        ]);
+        if (!mounted) return;
+        final pts = (results[0] as List<BodyMetricPoint>)
+          ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+        setState(() {
+          _allPoints = pts
+              .map((p) => _MetricPoint(date: p.recordedAt.toLocal(), value: p.value))
+              .toList();
+          _customWaistTargetCm = double.tryParse((results[1] as String?) ?? '');
+          _loading = false;
+        });
+      } else {
+        final list = await _db.getDailyActivityHistory(pid, limit: 365);
+        if (!mounted) return;
+        list.sort((a, b) => a.dateKey.compareTo(b.dateKey));
+        final mapped = <_MetricPoint>[];
+        for (final d in list) {
+          final v = switch (widget.kind) {
+            TempoMetricKind.steps => d.steps.toDouble(),
+            TempoMetricKind.minutes => d.minutes.toDouble(),
+            TempoMetricKind.calories || TempoMetricKind.burn => d.calories.toDouble(),
+            TempoMetricKind.waist => 0.0,
+          };
+          if (v > 0) {
+            mapped.add(_MetricPoint(date: d.date, value: v));
+          }
+        }
+        setState(() {
+          _allPoints = mapped;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load MetricDetailScreen (${widget.kind}): $e');
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -327,24 +377,36 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     return v.toStringAsFixed(1);
   }
 
+  String _formatDateLabel(DateTime dt) {
+    final now = DateTime.now();
+    if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+      return 'Today';
+    }
+    return DateFormat('MMM d, yyyy').format(dt);
+  }
+
   Future<void> _pickAnchorDate() async {
     HapticFeedback.selectionClick();
     final recordedKeys = _allPoints
         .map((p) => DateFormat('yyyy-MM-dd').format(p.date))
         .toSet();
-    final result = await Navigator.push<HistoryCalendarSelection>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => HistoryCalendarScreen(
-          initialDate: _anchorDate,
-          initialModeIndex: _selectedTab,
-          recordedDateKeys: recordedKeys,
-        ),
+    final result = await pushTempoMorphRoute<HistoryCalendarSelection>(
+      context: context,
+      sourceKey: _dateButtonKey,
+      sourceBorderRadius: 14,
+      builder: (_) => HistoryCalendarScreen(
+        initialDate: _anchorDate,
+        initialModeIndex: _selectedTab,
+        recordedDateKeys: recordedKeys,
       ),
     );
     if (result != null && mounted) {
       setState(() {
-        _anchorDate = result.date;
+        _anchorDate = DateTime(
+          result.date.year,
+          result.date.month,
+          result.date.day,
+        );
         _selectedTab = result.modeIndex;
       });
     }
@@ -366,216 +428,73 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       };
     }
 
-    final ctrl = TextEditingController(
-      text: _isInteger ? initVal.round().toString() : initVal.toStringAsFixed(1),
-    );
-    DateTime selectedDate = _anchorDate;
-
-    final saved = await showTempoSheet<bool>(
+    final result = await showTempoSheet<({double value, DateTime date})>(
       context: context,
       backgroundColor: AppColors.of(context, listen: false).card,
       borderRadius: 28,
       showDragHandle: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) {
-          final mc = AppColors.of(ctx);
-          void adjust(double delta) {
-            HapticFeedback.selectionClick();
-            final cur = double.tryParse(ctrl.text.trim()) ?? initVal;
-            final next = (cur + delta).clamp(_minVal, _maxVal);
-            ctrl.text =
-                _isInteger ? next.round().toString() : next.toStringAsFixed(1);
-            setModalState(() {});
-          }
-
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              12,
-              20,
-              MediaQuery.viewInsetsOf(ctx).bottom + 24,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Add ${_title.toLowerCase()}',
-                  style: TextStyle(
-                    color: mc.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    _MetricStepperCircle(
-                      icon: CupertinoIcons.minus,
-                      onTap: () => adjust(-_stepSize),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: ctrl,
-                        textAlign: TextAlign.center,
-                        keyboardType: TextInputType.numberWithOptions(
-                          decimal: !_isInteger,
-                        ),
-                        style: TextStyle(
-                          color: mc.textPrimary,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w700,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                        decoration: InputDecoration(
-                          suffixText: _unit,
-                          suffixStyle: TextStyle(
-                            color: mc.textSecondary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          filled: true,
-                          fillColor: mc.searchBg,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide.none,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    _MetricStepperCircle(
-                      icon: CupertinoIcons.add,
-                      onTap: () => adjust(_stepSize),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                GestureDetector(
-                  onTap: () async {
-                    final now = DateTime.now();
-                    final d = await showDatePicker(
-                      context: ctx,
-                      initialDate:
-                          selectedDate.isAfter(now) ? now : selectedDate,
-                      firstDate: DateTime(2020),
-                      lastDate: now,
-                    );
-                    if (d != null) setModalState(() => selectedDate = d);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: mc.searchBg,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          CupertinoIcons.calendar,
-                          size: 18,
-                          color: mc.textSecondary,
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Date',
-                          style: TextStyle(
-                            color: mc.textSecondary,
-                            fontSize: 14.5,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          DateFormat('MM/dd/yyyy').format(selectedDate),
-                          style: TextStyle(
-                            color: mc.textPrimary,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w600,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  height: 50,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: mc.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () async {
-                      final val = double.tryParse(ctrl.text.trim());
-                      if (val == null || val < _minVal || val > _maxVal) return;
-                      final now = DateTime.now();
-                      final recorded = DateTime(
-                        selectedDate.year,
-                        selectedDate.month,
-                        selectedDate.day,
-                        now.hour,
-                        now.minute,
-                      );
-                      final dateKey =
-                          DateFormat('yyyy-MM-dd').format(selectedDate);
-                      if (widget.kind == TempoMetricKind.waist) {
-                        await _db.logBodyMetric(
-                          profileId: pid,
-                          metricType: 'waist',
-                          value: val,
-                          recordedAt: recorded,
-                        );
-                      } else if (widget.kind == TempoMetricKind.steps) {
-                        await _db.upsertDailyActivity(
-                          profileId: pid,
-                          dateKey: dateKey,
-                          steps: val.round(),
-                        );
-                      } else if (widget.kind == TempoMetricKind.minutes) {
-                        await _db.upsertDailyActivity(
-                          profileId: pid,
-                          dateKey: dateKey,
-                          minutes: val.round(),
-                        );
-                      } else {
-                        await _db.upsertDailyActivity(
-                          profileId: pid,
-                          dateKey: dateKey,
-                          calories: val.round(),
-                        );
-                      }
-                      if (ctx.mounted) Navigator.of(ctx).pop(true);
-                    },
-                    child: Text(
-                      'Save ${_title.toLowerCase()}',
-                      style: const TextStyle(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+      builder: (_) => _AddMetricSheetBody(
+        title: 'Add ${_title.toLowerCase()}',
+        saveLabel: 'Save ${_title.toLowerCase()}',
+        unit: _unit,
+        initialValue: initVal,
+        initialDate: _anchorDate,
+        minVal: _minVal,
+        maxVal: _maxVal,
+        stepSize: _stepSize,
+        isInteger: _isInteger,
       ),
     );
 
-    ctrl.dispose();
-    if (saved == true && mounted) {
+    if (result == null || !mounted) return;
+    final val = result.value;
+    final selectedDate = result.date;
+    final now = DateTime.now();
+    final recorded = DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+      now.hour,
+      now.minute,
+    );
+    final dateKey = DateFormat('yyyy-MM-dd').format(selectedDate);
+
+    try {
+      if (widget.kind == TempoMetricKind.waist) {
+        await _db.logBodyMetric(
+          profileId: pid,
+          metricType: 'waist',
+          value: val,
+          recordedAt: recorded,
+        );
+      } else if (widget.kind == TempoMetricKind.steps) {
+        await _db.upsertDailyActivity(
+          profileId: pid,
+          dateKey: dateKey,
+          steps: val.round(),
+        );
+      } else if (widget.kind == TempoMetricKind.minutes) {
+        await _db.upsertDailyActivity(
+          profileId: pid,
+          dateKey: dateKey,
+          minutes: val.round(),
+        );
+      } else {
+        await _db.upsertDailyActivity(
+          profileId: pid,
+          dateKey: dateKey,
+          calories: val.round(),
+        );
+      }
+      if (!mounted) return;
       await profileProvider.refreshProfiles();
-      await _load();
+      await _load(showSpinner: false);
       if (mounted) showTempoToast(context, '$_title saved');
+    } catch (e) {
+      debugPrint('Failed to save metric (${widget.kind}): $e');
+      if (mounted) {
+        showTempoToast(context, 'Could not save $_title', isError: true);
+      }
     }
   }
 
@@ -586,118 +505,49 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     if (pid == null) return;
 
     final currentGoal = _goalValue(profile);
-    final ctrl = TextEditingController(
-      text: _isInteger
-          ? currentGoal.round().toString()
-          : currentGoal.toStringAsFixed(1),
-    );
 
     final savedVal = await showTempoSheet<double>(
       context: context,
       backgroundColor: AppColors.of(context, listen: false).card,
       borderRadius: 28,
       showDragHandle: true,
-      builder: (ctx) {
-        final mc = AppColors.of(ctx);
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            12,
-            20,
-            MediaQuery.viewInsetsOf(ctx).bottom + 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                widget.kind == TempoMetricKind.waist
-                    ? 'Target waist'
-                    : 'Daily ${_title.toLowerCase()} goal',
-                style: TextStyle(
-                  color: mc.textPrimary,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: ctrl,
-                textAlign: TextAlign.center,
-                keyboardType:
-                    TextInputType.numberWithOptions(decimal: !_isInteger),
-                style: TextStyle(
-                  color: mc.textPrimary,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-                decoration: InputDecoration(
-                  suffixText: _unit,
-                  filled: true,
-                  fillColor: mc.searchBg,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              SizedBox(
-                height: 50,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: mc.accent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: () {
-                    final parsed = double.tryParse(ctrl.text.trim());
-                    if (parsed == null || parsed <= 0) return;
-                    Navigator.of(ctx).pop(parsed);
-                  },
-                  child: const Text(
-                    'Save goal',
-                    style: TextStyle(
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (_) => _GoalMetricSheetBody(
+        title: widget.kind == TempoMetricKind.waist
+            ? 'Target waist'
+            : 'Daily ${_title.toLowerCase()} goal',
+        unit: _unit,
+        initialGoal: currentGoal,
+        minVal: _minVal,
+        maxVal: _maxVal,
+        stepSize: _stepSize,
+        isInteger: _isInteger,
+      ),
     );
 
-    ctrl.dispose();
-    if (savedVal != null && mounted) {
-      if (widget.kind == TempoMetricKind.waist) {
-        await _db.setSetting('waist_target_cm_$pid', savedVal.toStringAsFixed(1));
-        if (!mounted) return;
-        setState(() => _customWaistTargetCm = savedVal);
-      } else if (widget.kind == TempoMetricKind.steps) {
-        await profileProvider.updateActiveProfile(
-          dailyStepsGoal: savedVal.round(),
-        );
-      } else if (widget.kind == TempoMetricKind.minutes) {
-        await profileProvider.updateActiveProfile(
-          dailyMinutesGoal: savedVal.round(),
-        );
-      } else {
-        await profileProvider.updateActiveProfile(
-          dailyCaloriesGoal: savedVal.round(),
-        );
-      }
-      if (mounted) showTempoToast(context, 'Goal updated');
+    if (savedVal == null || !mounted) return;
+    if (widget.kind == TempoMetricKind.waist) {
+      await _db.setSetting('waist_target_cm_$pid', savedVal.toStringAsFixed(1));
+      if (!mounted) return;
+      setState(() => _customWaistTargetCm = savedVal);
+    } else if (widget.kind == TempoMetricKind.steps) {
+      await profileProvider.updateActiveProfile(
+        dailyStepsGoal: savedVal.round(),
+      );
+    } else if (widget.kind == TempoMetricKind.minutes) {
+      await profileProvider.updateActiveProfile(
+        dailyMinutesGoal: savedVal.round(),
+      );
+    } else {
+      await profileProvider.updateActiveProfile(
+        dailyCaloriesGoal: savedVal.round(),
+      );
     }
+    if (mounted) showTempoToast(context, 'Goal updated');
   }
 
   void _openAboutSheet() {
     HapticFeedback.selectionClick();
+    final paragraphs = _aboutParagraphs();
     showTempoSheet<void>(
       context: context,
       backgroundColor: AppColors.of(context, listen: false).card,
@@ -705,35 +555,59 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
       showDragHandle: true,
       builder: (ctx) {
         final mc = AppColors.of(ctx);
-        return Padding(
+        return SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
             22,
-            10,
+            8,
             22,
-            MediaQuery.paddingOf(ctx).bottom + 22,
+            MediaQuery.paddingOf(ctx).bottom + 24,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'About $_title',
-                style: TextStyle(
-                  color: mc.textPrimary,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: _badgeColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _badgeIcon,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'About',
+                      style: TextStyle(
+                        color: mc.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 10),
-              Text(
-                _aboutCopy(),
-                style: TextStyle(
-                  color: mc.textSecondary,
-                  fontSize: 14,
-                  height: 1.5,
+              const SizedBox(height: 14),
+              for (int i = 0; i < paragraphs.length; i++) ...[
+                if (i > 0) const SizedBox(height: 10),
+                Text(
+                  paragraphs[i],
+                  style: TextStyle(
+                    color: mc.textSecondary,
+                    fontSize: 14.5,
+                    height: 1.55,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
+              ],
+              const SizedBox(height: 22),
               SizedBox(
                 height: 50,
                 child: TextButton(
@@ -779,26 +653,13 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-                child: Row(
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: mc.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      'Local on-device',
-                      style: TextStyle(
-                        color: mc.textSecondary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               Divider(height: 1, color: mc.divider),
@@ -806,7 +667,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                 child: history.isEmpty
                     ? Center(
                         child: Text(
-                          'No records yet. Tap Add data to log one.',
+                          'No records yet. Tap + to add an entry.',
                           style: TextStyle(
                             color: mc.textSecondary,
                             fontSize: 14,
@@ -814,7 +675,12 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                         ),
                       )
                     : ListView.separated(
-                        padding: const EdgeInsets.all(20),
+                        padding: EdgeInsets.fromLTRB(
+                          20,
+                          16,
+                          20,
+                          MediaQuery.paddingOf(ctx).bottom + 20,
+                        ),
                         itemCount: history.length,
                         separatorBuilder: (_, __) => Padding(
                           padding: const EdgeInsets.symmetric(vertical: 10),
@@ -826,7 +692,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  DateFormat('MM/dd/yyyy').format(pt.date),
+                                  DateFormat('MMMM d, yyyy').format(pt.date),
                                   style: TextStyle(
                                     color: mc.textPrimary,
                                     fontSize: 15,
@@ -865,11 +731,8 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     showTempoPopoverMenu(
       context: context,
       anchorKey: _moreButtonKey,
+      anchorIcon: CupertinoIcons.add,
       actions: [
-        TempoPopoverAction(
-          label: 'All data',
-          onTap: () => _openDataSourceSheet(title: 'All data'),
-        ),
         TempoPopoverAction(
           label: 'Add data',
           onTap: _openAddSheet,
@@ -877,10 +740,6 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
         TempoPopoverAction(
           label: 'Daily goal',
           onTap: _openGoalSheet,
-        ),
-        TempoPopoverAction(
-          label: 'About',
-          onTap: _openAboutSheet,
         ),
       ],
     );
@@ -898,9 +757,13 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
     final avgVal = windowPts.isNotEmpty
         ? windowPts.fold<double>(0, (s, p) => s + p.value) / windowPts.length
         : 0.0;
+    final goalProgress =
+        (currentVal > 0 && goalVal > 0) ? (currentVal / goalVal).clamp(0.0, 1.0) : 0.0;
     final goalPct = (currentVal > 0 && goalVal > 0)
         ? ((currentVal / goalVal) * 100).round().clamp(0, 999)
         : 0;
+    final remainingVal = math.max(0.0, goalVal - currentVal);
+    final goalReached = _showProgressBar && goalVal > 0 && currentVal >= goalVal;
 
     return Scaffold(
       backgroundColor: c.scaffold,
@@ -908,68 +771,85 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
         bottom: false,
         child: Column(
           children: [
-            // Top bar matching Weight & Sleep
+            // Centered top bar aligned with ActivityStatsScreen
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-              child: Row(
-                children: [
-                  TempoGlassCircleButton(
-                    icon: TempoBackChevron(color: c.textPrimary, size: 22),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _title,
-                          style: TextStyle(
-                            color: c.textPrimary,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.3,
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TempoGlassCircleButton(
+                        icon: TempoBackChevron(color: c.textPrimary, size: 22),
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 58),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.3,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 1),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _pickAnchorDate,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                DateFormat('MM/dd/yyyy').format(_anchorDate),
-                                style: TextStyle(
-                                  color: c.textSecondary,
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w500,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
+                          const SizedBox(height: 1),
+                          GestureDetector(
+                            key: _dateButtonKey,
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _pickAnchorDate,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    DateFormat('MMMM d, yyyy')
+                                        .format(_anchorDate),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: c.textSecondary,
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 3),
-                              Icon(
-                                Icons.arrow_drop_down_rounded,
-                                size: 18,
-                                color: c.textSecondary,
-                              ),
-                            ],
+                                const SizedBox(width: 2),
+                                Icon(
+                                  Icons.arrow_drop_down_rounded,
+                                  size: 18,
+                                  color: c.textSecondary,
+                                ),
+                              ],
+                            ),
                           ),
+                        ],
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TempoGlassCircleButton(
+                        key: _moreButtonKey,
+                        tooltip: 'Quick actions',
+                        icon: Icon(
+                          CupertinoIcons.add,
+                          size: 22,
+                          color: c.textPrimary,
                         ),
-                      ],
+                        onPressed: _openMoreMenu,
+                      ),
                     ),
-                  ),
-                  TempoGlassCircleButton(
-                    key: _moreButtonKey,
-                    icon: Icon(
-                      CupertinoIcons.ellipsis_vertical,
-                      size: 20,
-                      color: c.textPrimary,
-                    ),
-                    onPressed: _openMoreMenu,
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
 
@@ -991,12 +871,19 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                   ? Center(child: CupertinoActivityIndicator(color: c.accent))
                   : RefreshIndicator(
                       color: _badgeColor,
-                      onRefresh: _load,
+                      onRefresh: () => _load(showSpinner: false),
                       child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 40),
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
+                        ),
+                        padding: EdgeInsets.fromLTRB(
+                          18,
+                          0,
+                          18,
+                          MediaQuery.paddingOf(context).bottom + 32,
+                        ),
                         children: [
-                          // Card 1: Primary Metric + Animated Trend Graph
+                          // Card 1: Primary Metric + Goal Progress + Animated Trend Graph
                           AppleCard(
                             borderRadius: 24,
                             padding: const EdgeInsets.all(20),
@@ -1019,18 +906,45 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-                                    Text(
-                                      _cardTitle,
-                                      style: TextStyle(
-                                        color: c.textPrimary,
-                                        fontSize: 16.5,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: -0.2,
+                                    Expanded(
+                                      child: Text(
+                                        _cardTitle,
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16.5,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.2,
+                                        ),
                                       ),
                                     ),
+                                    if (_showProgressBar && goalVal > 0)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: _badgeColor.withValues(
+                                            alpha: c.isDark ? 0.18 : 0.13,
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          '$goalPct%',
+                                          style: TextStyle(
+                                            color: _badgeColor,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
-                                const SizedBox(height: 22),
+                                const SizedBox(height: 20),
                                 Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -1065,7 +979,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                                         TextOverflow.ellipsis,
                                                     style: TextStyle(
                                                       color: c.textPrimary,
-                                                      fontSize: 32,
+                                                      fontSize: 34,
                                                       fontWeight:
                                                           FontWeight.w700,
                                                       letterSpacing: -1.0,
@@ -1077,22 +991,21 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                                   ),
                                                 ),
                                               ),
-                                              const SizedBox(width: 4),
+                                              const SizedBox(width: 5),
                                               Text(
                                                 _unit,
                                                 style: TextStyle(
-                                                  color: c.textPrimary,
+                                                  color: c.textSecondary,
                                                   fontSize: 15,
                                                   fontWeight: FontWeight.w600,
                                                 ),
                                               ),
                                             ],
                                           ),
-                                          const SizedBox(height: 6),
+                                          const SizedBox(height: 5),
                                           Text(
                                             latestDate != null
-                                                ? DateFormat('MM/dd/yyyy')
-                                                    .format(latestDate)
+                                                ? _formatDateLabel(latestDate)
                                                 : 'No entries yet',
                                             style: TextStyle(
                                               color: c.textTertiary,
@@ -1111,7 +1024,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          const SizedBox(height: 5),
+                                          const SizedBox(height: 6),
                                           Text(
                                             avgVal > 0
                                                 ? '${_formatVal(avgVal)} $_unit'
@@ -1130,9 +1043,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                           ),
                                           const SizedBox(height: 6),
                                           Text(
-                                            _selectedTab == 0
-                                                ? 'Overall average'
-                                                : '${_tabs[_selectedTab]} average',
+                                            _averageCaption,
                                             style: TextStyle(
                                               color: c.textTertiary,
                                               fontSize: 13,
@@ -1143,6 +1054,31 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                     ),
                                   ],
                                 ),
+                                if (_showProgressBar && goalVal > 0) ...[
+                                  const SizedBox(height: 16),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(99),
+                                    child: TweenAnimationBuilder<double>(
+                                      tween: Tween<double>(
+                                        begin: 0,
+                                        end: goalProgress,
+                                      ),
+                                      duration:
+                                          const Duration(milliseconds: 420),
+                                      curve: Curves.easeOutCubic,
+                                      builder: (_, v, __) =>
+                                          LinearProgressIndicator(
+                                        value: v,
+                                        minHeight: 7,
+                                        backgroundColor: c.divider,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          _badgeColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                                 AnimatedSize(
                                   duration: const Duration(milliseconds: 280),
                                   curve: Curves.easeOutCubic,
@@ -1167,7 +1103,7 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                           ),
                           const SizedBox(height: 14),
 
-                          // Card 2: Daily Target / Goal (tappable to edit!)
+                          // Card 2: Daily Target / Goal (tappable to edit)
                           AppleCard(
                             borderRadius: 24,
                             padding: const EdgeInsets.all(20),
@@ -1191,16 +1127,32 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-                                    Text(
-                                      widget.kind == TempoMetricKind.waist
-                                          ? 'Target goal'
-                                          : 'Daily target',
-                                      style: TextStyle(
-                                        color: c.textPrimary,
-                                        fontSize: 16.5,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: -0.2,
+                                    Expanded(
+                                      child: Text(
+                                        widget.kind == TempoMetricKind.waist
+                                            ? 'Target goal'
+                                            : 'Daily target',
+                                        style: TextStyle(
+                                          color: c.textPrimary,
+                                          fontSize: 16.5,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: -0.2,
+                                        ),
                                       ),
+                                    ),
+                                    Text(
+                                      'Edit',
+                                      style: TextStyle(
+                                        color: c.textTertiary,
+                                        fontSize: 13.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      CupertinoIcons.chevron_right,
+                                      size: 15,
+                                      color: c.textTertiary,
                                     ),
                                   ],
                                 ),
@@ -1216,6 +1168,8 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                         children: [
                                           Text(
                                             '${_formatVal(goalVal)} $_unit',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               color: c.textPrimary,
                                               fontSize: 21,
@@ -1227,7 +1181,9 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                           ),
                                           const SizedBox(height: 4),
                                           Text(
-                                            'Tap to edit goal',
+                                            widget.kind == TempoMetricKind.waist
+                                                ? 'Target waist'
+                                                : 'Daily goal',
                                             style: TextStyle(
                                               color: c.textTertiary,
                                               fontSize: 12.5,
@@ -1245,42 +1201,42 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                                       color: c.divider,
                                     ),
                                     Expanded(
-                                      child: Row(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  currentVal > 0
-                                                      ? '$goalPct%'
-                                                      : '--',
-                                                  style: TextStyle(
-                                                    color: c.textPrimary,
-                                                    fontSize: 21,
-                                                    fontWeight: FontWeight.w600,
-                                                    fontFeatures: const [
-                                                      FontFeature
-                                                          .tabularFigures(),
-                                                    ],
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 4),
-                                                Text(
-                                                  'Of target',
-                                                  style: TextStyle(
-                                                    color: c.textTertiary,
-                                                    fontSize: 12.5,
-                                                  ),
-                                                ),
+                                          Text(
+                                            _showProgressBar
+                                                ? (goalReached
+                                                    ? 'Reached'
+                                                    : '${_formatVal(remainingVal)} $_unit')
+                                                : (currentVal > 0
+                                                    ? '$goalPct%'
+                                                    : '--'),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: goalReached
+                                                  ? _badgeColor
+                                                  : c.textPrimary,
+                                              fontSize: 21,
+                                              fontWeight: FontWeight.w600,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
                                               ],
                                             ),
                                           ),
-                                          Icon(
-                                            CupertinoIcons.chevron_right,
-                                            size: 16,
-                                            color: c.textTertiary,
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            _showProgressBar
+                                                ? (goalReached
+                                                    ? 'Target status'
+                                                    : 'To reach goal')
+                                                : 'Of target',
+                                            style: TextStyle(
+                                              color: c.textTertiary,
+                                              fontSize: 12.5,
+                                            ),
                                           ),
                                         ],
                                       ),
@@ -1297,48 +1253,33 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                               borderRadius: 24,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
-                                vertical: 16,
+                                vertical: 14,
                               ),
                               child: Row(
                                 children: [
                                   Container(
-                                    width: 34,
-                                    height: 34,
+                                    width: 32,
+                                    height: 32,
                                     decoration: BoxDecoration(
                                       color: _badgeColor,
                                       shape: BoxShape.circle,
                                     ),
                                     child: const Icon(
-                                      CupertinoIcons.hare_fill,
+                                      Icons.directions_walk_rounded,
                                       color: Colors.white,
                                       size: 17,
                                     ),
                                   ),
                                   const SizedBox(width: 14),
                                   Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'Live step counter',
-                                          style: TextStyle(
-                                            color: c.textPrimary,
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _liveStepsEnabled
-                                              ? 'Active · Syncs automatically with phone sensor'
-                                              : 'Off · Enable to count steps while walking',
-                                          style: TextStyle(
-                                            color: c.textSecondary,
-                                            fontSize: 12.5,
-                                          ),
-                                        ),
-                                      ],
+                                    child: Text(
+                                      'Live step counter',
+                                      style: TextStyle(
+                                        color: c.textPrimary,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: -0.15,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 10),
@@ -1353,112 +1294,35 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
                             const SizedBox(height: 14),
                           ],
 
-                          // Card 3: Data source + Add data
+                          // Card 3: Data source (standalone card)
                           AppleCard(
                             borderRadius: 24,
                             padding: EdgeInsets.zero,
-                            child: Column(
-                              children: [
-                                InkWell(
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(24),
-                                  ),
-                                  onTap: _openDataSourceSheet,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 17,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 32,
-                                          height: 32,
-                                          decoration: BoxDecoration(
-                                            color: _badgeColor,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.workspaces_rounded,
-                                            color: Colors.white,
-                                            size: 17,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Text(
-                                            'Data source',
-                                            style: TextStyle(
-                                              color: c.textPrimary,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                        if (_allPoints.isNotEmpty)
-                                          Text(
-                                            '${_allPoints.length}',
-                                            style: TextStyle(
-                                              color: c.textTertiary,
-                                              fontSize: 13.5,
-                                              fontFeatures: const [
-                                                FontFeature.tabularFigures(),
-                                              ],
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                  ),
-                                  child: Divider(height: 1, color: c.divider),
-                                ),
-                                InkWell(
-                                  borderRadius: const BorderRadius.vertical(
-                                    bottom: Radius.circular(24),
-                                  ),
-                                  onTap: _openAddSheet,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 17,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 32,
-                                          height: 32,
-                                          decoration: BoxDecoration(
-                                            color: c.isDark
-                                                ? const Color(0xFF0A0A0C)
-                                                : const Color(0xFF1C1C1E),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.edit_rounded,
-                                            color: Colors.white,
-                                            size: 16,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          child: Text(
-                                            'Add data',
-                                            style: TextStyle(
-                                              color: c.textPrimary,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
+                            child: _MetricActionRow(
+                              borderRadius: BorderRadius.circular(24),
+                              icon: CupertinoIcons.layers_alt_fill,
+                              iconBackground: _badgeColor,
+                              iconColor: Colors.white,
+                              title: 'Data source',
+                              trailingText: _allPoints.isNotEmpty
+                                  ? '${_allPoints.length}'
+                                  : null,
+                              onTap: _openDataSourceSheet,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Card 4: About (standalone card)
+                          AppleCard(
+                            borderRadius: 24,
+                            padding: EdgeInsets.zero,
+                            child: _MetricActionRow(
+                              borderRadius: BorderRadius.circular(24),
+                              icon: CupertinoIcons.info,
+                              iconBackground: _badgeColor,
+                              iconColor: Colors.white,
+                              title: 'About',
+                              onTap: _openAboutSheet,
                             ),
                           ),
                         ],
@@ -1467,6 +1331,450 @@ class _MetricDetailScreenState extends State<MetricDetailScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MetricActionRow extends StatelessWidget {
+  final BorderRadius borderRadius;
+  final IconData icon;
+  final Color iconBackground;
+  final Color iconColor;
+  final String title;
+  final String? trailingText;
+  final VoidCallback onTap;
+
+  const _MetricActionRow({
+    required this.borderRadius,
+    required this.icon,
+    required this.iconBackground,
+    required this.iconColor,
+    required this.title,
+    this.trailingText,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return InkWell(
+      borderRadius: borderRadius,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: iconBackground,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 17),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.15,
+                ),
+              ),
+            ),
+            if (trailingText != null) ...[
+              Text(
+                trailingText!,
+                style: TextStyle(
+                  color: c.textTertiary,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Icon(
+              CupertinoIcons.chevron_right,
+              size: 16,
+              color: c.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AddMetricSheetBody extends StatefulWidget {
+  final String title;
+  final String saveLabel;
+  final String unit;
+  final double initialValue;
+  final DateTime initialDate;
+  final double minVal;
+  final double maxVal;
+  final double stepSize;
+  final bool isInteger;
+
+  const _AddMetricSheetBody({
+    required this.title,
+    required this.saveLabel,
+    required this.unit,
+    required this.initialValue,
+    required this.initialDate,
+    required this.minVal,
+    required this.maxVal,
+    required this.stepSize,
+    required this.isInteger,
+  });
+
+  @override
+  State<_AddMetricSheetBody> createState() => _AddMetricSheetBodyState();
+}
+
+class _AddMetricSheetBodyState extends State<_AddMetricSheetBody> {
+  late final TextEditingController _ctrl;
+  late DateTime _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(
+      text: widget.isInteger
+          ? widget.initialValue.round().toString()
+          : widget.initialValue.toStringAsFixed(1),
+    );
+    _selectedDate = widget.initialDate;
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _adjust(double delta) {
+    HapticFeedback.selectionClick();
+    final cur = double.tryParse(_ctrl.text.trim()) ?? widget.initialValue;
+    final next = (cur + delta).clamp(widget.minVal, widget.maxVal);
+    _ctrl.text =
+        widget.isInteger ? next.round().toString() : next.toStringAsFixed(1);
+    setState(() {});
+  }
+
+  void _submit() {
+    final val = double.tryParse(_ctrl.text.trim());
+    if (val == null || val < widget.minVal || val > widget.maxVal) {
+      showTempoToast(
+        context,
+        'Enter a valid value in ${widget.unit}',
+        isError: true,
+      );
+      return;
+    }
+    Navigator.of(context).pop((value: val, date: _selectedDate));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mc = AppColors.of(context);
+    final bottomInset = math.max(
+      MediaQuery.viewInsetsOf(context).bottom,
+      MediaQuery.paddingOf(context).bottom,
+    );
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottomInset + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.title,
+            style: TextStyle(
+              color: mc.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _MetricStepperCircle(
+                icon: CupertinoIcons.minus,
+                onTap: () => _adjust(-widget.stepSize),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _ctrl,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.numberWithOptions(
+                    decimal: !widget.isInteger,
+                  ),
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                  decoration: InputDecoration(
+                    suffixText: widget.unit,
+                    suffixStyle: TextStyle(
+                      color: mc.textSecondary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    filled: true,
+                    fillColor: mc.searchBg,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              _MetricStepperCircle(
+                icon: CupertinoIcons.add,
+                onTap: () => _adjust(widget.stepSize),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          GestureDetector(
+            onTap: () async {
+              final now = DateTime.now();
+              final d = await showDatePicker(
+                context: context,
+                initialDate: _selectedDate.isAfter(now) ? now : _selectedDate,
+                firstDate: DateTime(2020),
+                lastDate: now,
+              );
+              if (d != null && mounted) {
+                setState(() => _selectedDate = d);
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: mc.searchBg,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    CupertinoIcons.calendar,
+                    size: 18,
+                    color: mc.textSecondary,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Date',
+                    style: TextStyle(
+                      color: mc.textSecondary,
+                      fontSize: 14.5,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    DateFormat('MMMM d, yyyy').format(_selectedDate),
+                    style: TextStyle(
+                      color: mc.textPrimary,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 50,
+            child: TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: mc.accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: _submit,
+              child: Text(
+                widget.saveLabel,
+                style: const TextStyle(
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GoalMetricSheetBody extends StatefulWidget {
+  final String title;
+  final String unit;
+  final double initialGoal;
+  final double minVal;
+  final double maxVal;
+  final double stepSize;
+  final bool isInteger;
+
+  const _GoalMetricSheetBody({
+    required this.title,
+    required this.unit,
+    required this.initialGoal,
+    required this.minVal,
+    required this.maxVal,
+    required this.stepSize,
+    required this.isInteger,
+  });
+
+  @override
+  State<_GoalMetricSheetBody> createState() => _GoalMetricSheetBodyState();
+}
+
+class _GoalMetricSheetBodyState extends State<_GoalMetricSheetBody> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(
+      text: widget.isInteger
+          ? widget.initialGoal.round().toString()
+          : widget.initialGoal.toStringAsFixed(1),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _adjust(double delta) {
+    HapticFeedback.selectionClick();
+    final cur = double.tryParse(_ctrl.text.trim()) ?? widget.initialGoal;
+    final next = (cur + delta).clamp(widget.minVal, widget.maxVal);
+    _ctrl.text =
+        widget.isInteger ? next.round().toString() : next.toStringAsFixed(1);
+    setState(() {});
+  }
+
+  void _submit() {
+    final parsed = double.tryParse(_ctrl.text.trim());
+    if (parsed == null || parsed <= 0 || parsed > widget.maxVal) {
+      showTempoToast(
+        context,
+        'Enter a valid goal in ${widget.unit}',
+        isError: true,
+      );
+      return;
+    }
+    Navigator.of(context).pop(parsed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mc = AppColors.of(context);
+    final bottomInset = math.max(
+      MediaQuery.viewInsetsOf(context).bottom,
+      MediaQuery.paddingOf(context).bottom,
+    );
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, bottomInset + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.title,
+            style: TextStyle(
+              color: mc.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _MetricStepperCircle(
+                icon: CupertinoIcons.minus,
+                onTap: () => _adjust(-widget.stepSize),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _ctrl,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.numberWithOptions(
+                    decimal: !widget.isInteger,
+                  ),
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                  decoration: InputDecoration(
+                    suffixText: widget.unit,
+                    suffixStyle: TextStyle(
+                      color: mc.textSecondary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    filled: true,
+                    fillColor: mc.searchBg,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              _MetricStepperCircle(
+                icon: CupertinoIcons.add,
+                onTap: () => _adjust(widget.stepSize),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 50,
+            child: TextButton(
+              style: TextButton.styleFrom(
+                backgroundColor: mc.accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: _submit,
+              child: const Text(
+                'Save goal',
+                style: TextStyle(
+                  fontSize: 15.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1567,6 +1875,9 @@ class _MetricTrendChart extends StatelessWidget {
     this.goalLine,
   });
 
+  String _fmt(double v) =>
+      isInteger ? NumberFormat('#,###').format(v.round()) : v.toStringAsFixed(1);
+
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
@@ -1574,6 +1885,7 @@ class _MetricTrendChart extends StatelessWidget {
       return Container(
         height: 132,
         alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
         decoration: BoxDecoration(
           color: c.searchBg.withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(16),
@@ -1591,7 +1903,8 @@ class _MetricTrendChart extends StatelessWidget {
     final vals = points.map((p) => p.value).toList();
     final minV = vals.reduce((a, b) => a < b ? a : b);
     final maxV = vals.reduce((a, b) => a > b ? a : b);
-    final pad = ((maxV - minV) * 0.25).clamp(1.0, maxV * 0.3 + 5.0);
+    final ceilingV = goalLine != null ? math.max(maxV, goalLine!) : maxV;
+    final pad = ((ceilingV - minV) * 0.22).clamp(1.0, ceilingV * 0.25 + 5.0);
 
     return Column(
       children: [
@@ -1600,13 +1913,13 @@ class _MetricTrendChart extends StatelessWidget {
           child: LineChart(
             LineChartData(
               minY: (minV - pad).clamp(0.0, double.infinity),
-              maxY: maxV + pad,
+              maxY: ceilingV + pad,
               extraLinesData: goalLine != null
                   ? ExtraLinesData(
                       horizontalLines: [
                         HorizontalLine(
                           y: goalLine!,
-                          color: lineColor.withValues(alpha: 0.35),
+                          color: lineColor.withValues(alpha: 0.42),
                           strokeWidth: 1.2,
                           dashArray: const [4, 4],
                         ),
@@ -1630,7 +1943,7 @@ class _MetricTrendChart extends StatelessWidget {
                   getTooltipItems: (spots) => spots
                       .map(
                         (s) => LineTooltipItem(
-                          '${isInteger ? s.y.round() : s.y.toStringAsFixed(1)} $unit',
+                          '${_fmt(s.y)} $unit',
                           const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
@@ -1674,11 +1987,11 @@ class _MetricTrendChart extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              DateFormat('MM/dd').format(points.first.date),
+              DateFormat('MMM d').format(points.first.date),
               style: TextStyle(color: c.textTertiary, fontSize: 11.5),
             ),
             Text(
-              'Min ${isInteger ? minV.round() : minV.toStringAsFixed(1)} · Max ${isInteger ? maxV.round() : maxV.toStringAsFixed(1)} $unit',
+              'Min ${_fmt(minV)}  Max ${_fmt(maxV)} $unit',
               style: TextStyle(
                 color: c.textSecondary,
                 fontSize: 11.5,
@@ -1687,7 +2000,7 @@ class _MetricTrendChart extends StatelessWidget {
               ),
             ),
             Text(
-              DateFormat('MM/dd').format(points.last.date),
+              DateFormat('MMM d').format(points.last.date),
               style: TextStyle(color: c.textTertiary, fontSize: 11.5),
             ),
           ],

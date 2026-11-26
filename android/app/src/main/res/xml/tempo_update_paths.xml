@@ -4,4 +4,8 @@
     <cache-path
         name="tempo_updates"
         path="updates/" />
+    <!-- Scoped to Tempo's exported progress share posters -->
+    <cache-path
+        name="tempo_shares"
+        path="shares/" />
 </paths>

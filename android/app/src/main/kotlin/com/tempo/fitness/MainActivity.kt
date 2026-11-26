@@ -7,9 +7,13 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val LIVE_UPDATES_CHANNEL = "com.tempo.fitness/live_updates"
     private val APP_UPDATER_CHANNEL = "com.tempo.fitness/app_updater"
+    private val PROGRESS_SHARE_CHANNEL = "com.tempo.fitness/progress_share"
+    private val WORKOUT_SOUND_CHANNEL = "com.tempo.fitness/workout_sound"
 
     private lateinit var liveUpdateManager: WorkoutLiveUpdateManager
     private lateinit var appUpdateInstaller: AppUpdateInstaller
+    private lateinit var shareImageHelper: ShareImageHelper
+    private lateinit var workoutSoundHelper: WorkoutSoundHelper
     private var liveChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -40,6 +44,39 @@ class MainActivity : FlutterActivity() {
                     "installApk" -> {
                         val filePath = call.argument<String>("filePath") ?: ""
                         result.success(appUpdateInstaller.installApk(filePath))
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        shareImageHelper = ShareImageHelper(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PROGRESS_SHARE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "saveToGallery" -> {
+                        val filePath = call.argument<String>("filePath") ?: ""
+                        val displayName = call.argument<String>("displayName") ?: "Tempo_Progress.png"
+                        result.success(shareImageHelper.saveImageToGallery(filePath, displayName))
+                    }
+                    "shareImage" -> {
+                        val filePath = call.argument<String>("filePath") ?: ""
+                        val text = call.argument<String>("text")
+                        result.success(shareImageHelper.shareImage(filePath, text))
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        workoutSoundHelper = WorkoutSoundHelper(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WORKOUT_SOUND_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "playCountdownTick" -> result.success(workoutSoundHelper.playCountdownTick())
+                    "playCountdownGo" -> result.success(workoutSoundHelper.playCountdownGo())
+                    "isSilent" -> result.success(workoutSoundHelper.isDeviceSilent())
+                    "stop" -> {
+                        workoutSoundHelper.stop()
+                        result.success(true)
                     }
                     else -> result.notImplemented()
                 }
@@ -94,6 +131,9 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         if (::liveUpdateManager.isInitialized) {
             liveUpdateManager.stop()
+        }
+        if (::workoutSoundHelper.isInitialized) {
+            workoutSoundHelper.stop()
         }
         super.onDestroy()
     }

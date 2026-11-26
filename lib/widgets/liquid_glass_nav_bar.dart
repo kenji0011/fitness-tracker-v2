@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:jiggicons/jiggicons.dart';
 
+import '../services/animation_speed_service.dart';
 import '../theme/app_colors.dart';
 import 'liquid_glass_surface.dart';
 import 'tempo_jigg_icon.dart';
@@ -105,15 +106,15 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   late final AnimationController _minimizeController;
   late final Animation<double> _minimizeAnimation;
 
-  Timer? _tapPulseTimer;
+  Timer? _jiggPlayTimer;
   DateTime? _lastProfileTapTime;
+  int? _lastTriggeredTab;
 
   /// Continuous tab position in `[0.0, items.length - 1]`.
   double _currentPos = 0.0;
   double _slideDistance = 0.0;
   bool _isDragging = false;
   bool _isHovering = false;
-  bool _isTapPulsing = false;
   double _dragVelocityStretch = 0.0;
   int _lastHapticIndex = 0;
 
@@ -125,10 +126,11 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
 
     _loadShader();
 
+    final speed = TempoAnimationSpeedService.instance;
     _lensController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 210),
-      reverseDuration: const Duration(milliseconds: 250),
+      duration: speed.scale(const Duration(milliseconds: 210)),
+      reverseDuration: speed.scale(const Duration(milliseconds: 250)),
     );
     _lensAnimation = CurvedAnimation(
       parent: _lensController,
@@ -138,7 +140,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
 
     _slideController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 340),
+      duration: speed.scale(const Duration(milliseconds: 340)),
     )..addListener(() {
         if (_slideAnimation != null) {
           setState(() => _currentPos = _slideAnimation!.value);
@@ -147,7 +149,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
 
     _iconBounceController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 420),
+      duration: speed.scale(const Duration(milliseconds: 420)),
     );
     _jiggControllers = List<JiggIconController>.generate(
       widget.items.length,
@@ -157,8 +159,8 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     _minimizeController = AnimationController(
       vsync: this,
       value: widget.minimized ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 300),
-      reverseDuration: const Duration(milliseconds: 320),
+      duration: speed.scale(const Duration(milliseconds: 300)),
+      reverseDuration: speed.scale(const Duration(milliseconds: 320)),
     )..addStatusListener((status) {
         if (status == AnimationStatus.completed ||
             status == AnimationStatus.dismissed) {
@@ -170,7 +172,22 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeOutCubic,
     );
+    speed.notifier.addListener(_syncSpeedDurations);
     _scheduleLayoutSync();
+  }
+
+  void _syncSpeedDurations() {
+    final speed = TempoAnimationSpeedService.instance;
+    _lensController.duration = speed.scale(const Duration(milliseconds: 210));
+    _lensController.reverseDuration =
+        speed.scale(const Duration(milliseconds: 250));
+    _slideController.duration = speed.scale(const Duration(milliseconds: 340));
+    _iconBounceController.duration =
+        speed.scale(const Duration(milliseconds: 420));
+    _minimizeController.duration =
+        speed.scale(const Duration(milliseconds: 300));
+    _minimizeController.reverseDuration =
+        speed.scale(const Duration(milliseconds: 320));
   }
 
   void _scheduleLayoutSync() {
@@ -210,6 +227,12 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       if (!_isHovering) {
         _animatePosTo(widget.currentIndex.toDouble());
       }
+      // Also animate Jiggicon on programmatic tab switches (e.g. tapping a
+      // Summary card that navigates to Workout or Progress).
+      if (_lastTriggeredTab != widget.currentIndex) {
+        _triggerIconBounce(widget.currentIndex, delayed: true);
+      }
+      _lastTriggeredTab = null;
     }
     if (oldWidget.minimized != widget.minimized) {
       if (widget.minimized) {
@@ -222,7 +245,9 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
 
   @override
   void dispose() {
-    _tapPulseTimer?.cancel();
+    TempoAnimationSpeedService.instance.notifier
+        .removeListener(_syncSpeedDurations);
+    _jiggPlayTimer?.cancel();
     _lensController.dispose();
     _slideController.dispose();
     _iconBounceController.dispose();
@@ -233,15 +258,28 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     super.dispose();
   }
 
-  void _triggerIconBounce(int index) {
-    _bouncingTabIndex = index;
-    _iconBounceController.forward(from: 0);
-    if (index >= 0 && index < _jiggControllers.length) {
-      _jiggControllers[index].play();
+  void _triggerIconBounce(int index, {bool delayed = false}) {
+    _jiggPlayTimer?.cancel();
+    void playNow() {
+      if (!mounted) return;
+      _bouncingTabIndex = index;
+      _iconBounceController.forward(from: 0);
+      if (index >= 0 && index < _jiggControllers.length) {
+        _jiggControllers[index].play();
+      }
     }
+
+    if (!delayed) {
+      playNow();
+      return;
+    }
+
+    // Wait briefly for the incoming tab's first frame + pill glide start so
+    // heavy tab mounts and the user's thumb never swallow the Jiggicon spring peak.
+    _jiggPlayTimer = Timer(const Duration(milliseconds: 70), playNow);
   }
 
-  bool get _isGlassLensEngaged => _isDragging || _isHovering || _isTapPulsing;
+  bool get _isGlassLensEngaged => _isDragging || _isHovering;
 
   void _syncLensExpansion() {
     if (_isGlassLensEngaged) {
@@ -296,30 +334,23 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       _lastProfileTapTime = null;
     }
 
+    final switchingTab = index != widget.currentIndex;
     HapticFeedback.selectionClick();
-    _triggerIconBounce(index);
-    _tapPulseTimer?.cancel();
-    setState(() => _isTapPulsing = true);
+    _lastTriggeredTab = index;
     _animatePosTo(index.toDouble());
     _syncLensExpansion();
+    _triggerIconBounce(index, delayed: switchingTab);
 
-    if (index != widget.currentIndex) {
+    if (switchingTab) {
       widget.onTap(index);
     }
-
-    _tapPulseTimer = Timer(const Duration(milliseconds: 280), () {
-      if (!mounted) return;
-      setState(() => _isTapPulsing = false);
-      _syncLensExpansion();
-    });
   }
 
   void _handleDragStart(DragStartDetails details, double totalWidth) {
-    _tapPulseTimer?.cancel();
+    _jiggPlayTimer?.cancel();
     _slideController.stop();
     final pos = _dxToContinuousPos(details.localPosition.dx, totalWidth);
     setState(() {
-      _isTapPulsing = false;
       _isDragging = true;
       _currentPos = pos;
       _dragVelocityStretch = 0.0;
@@ -335,6 +366,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     if (nearest != _lastHapticIndex) {
       _lastHapticIndex = nearest;
       HapticFeedback.selectionClick();
+      _triggerIconBounce(nearest);
     }
     setState(() {
       _currentPos = pos;
@@ -350,8 +382,11 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     });
     _animatePosTo(targetIndex.toDouble());
     if (targetIndex != widget.currentIndex) {
-      _triggerIconBounce(targetIndex);
+      _lastTriggeredTab = targetIndex;
+      _triggerIconBounce(targetIndex, delayed: true);
       widget.onTap(targetIndex);
+    } else {
+      _triggerIconBounce(targetIndex);
     }
     _syncLensExpansion();
   }
@@ -483,17 +518,23 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                             final scaleX = 1.0 + totalStretch;
                             final scaleY = 1.0 - totalStretch * 0.50;
 
-                            // Resting subtle pill rect (scales cleanly with minimized dock)
+                            // Concentric recessed active pill rect (uniform 4px inner margin
+                            // so edge tabs curve seamlessly parallel to the outer frosted dock)
+                            const restPillInset = 4.0;
                             final restPillWidth =
-                                (tabWidth - ui.lerpDouble(10.0, 8.0, m)!)
-                                    .clamp(46.0, 106.0);
+                                (tabWidth - restPillInset * 2)
+                                    .clamp(48.0, 136.0);
                             final restPillHeight =
-                                (capsuleHeight - 12.0).clamp(38.0, 52.0);
+                                (capsuleHeight - restPillInset * 2)
+                                    .clamp(40.0, 56.0);
                             final restPillTop =
                                 (dockBoxHeight - restPillHeight) / 2;
                             final restPillLeft = (_currentPos * tabWidth +
                                     (tabWidth - restPillWidth) / 2)
-                                .clamp(5.0, totalWidth - restPillWidth - 5.0);
+                                .clamp(
+                                  restPillInset,
+                                  totalWidth - restPillWidth - restPillInset,
+                                );
 
                             // Active Liquid Glass droplet rect (inflates over icons when dragging/hovering/pulsing)
                             final dropletWidth =
@@ -518,18 +559,9 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                     ? _posToIndex(_currentPos)
                                     : widget.currentIndex;
 
-                            // Compute exact screen-space rects for live Impeller GPU refraction
-                            // on BOTH the floating outer capsule dock (always live while scrolling!)
-                            // and the elevated hover/drag/tap droplet lens.
+                            // Compute exact screen-space rect for the interactive hover/drag/tap
+                            // GPU refraction droplet lens.
                             final barOrigin = _barGlobalOrigin();
-                            final dockScreenRect = barOrigin != null
-                                ? Rect.fromLTWH(
-                                    barOrigin.dx,
-                                    barOrigin.dy + capsuleInsetV,
-                                    totalWidth,
-                                    capsuleHeight,
-                                  )
-                                : null;
                             final dropletScreenRect = barOrigin != null
                                 ? Rect.fromLTWH(
                                     barOrigin.dx + dropletLeft,
@@ -543,27 +575,24 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                               clipBehavior: Clip.none,
                               alignment: Alignment.center,
                               children: [
-                                // LAYER 1: Live GPU Optical Refraction Floating Navbar Dock
-                                // Uses the exact same screen-space SDF refraction + chromatic
-                                // dispersion shader as the hover/drag pill so scrolling cards,
-                                // rings, and charts visibly pass & bend behind the glass dock!
+                                // LAYER 1: Frosted Glass Texture Floating Navbar Dock
+                                // Real Gaussian backdrop blur + satin micro-grain frost texture
+                                // so scrolling content diffuses softly behind the capsule.
                                 Positioned(
                                   left: 0,
                                   right: 0,
                                   top: capsuleInsetV,
                                   bottom: capsuleInsetV,
                                   child: _OpticalLiquidGlassDock(
-                                    program: _program,
-                                    screenRect: dockScreenRect,
                                     radius: capsuleRadius,
                                     isDark: isDark,
-                                    dpr: dpr,
                                   ),
                                 ),
 
-                                // LAYER 2A: Elevated 3D Domed Liquid Glass Active Selection Pill
-                                // Pure neutral optical glass lens at rest, morphing seamlessly
-                                // into the GPU chromatic-refraction droplet (Layer 3) on tap/drag.
+                                // LAYER 2A: Recessed Frosted Neutral Active Selection Pill
+                                // Concentric soft-shaded pill matching iOS 26/27 UITabBar style
+                                // at rest with subtle BitChord elastic stretch when gliding,
+                                // morphing into the GPU refraction droplet on drag/hover.
                                 if (tClamped < 0.99)
                                   Positioned(
                                     left: restPillLeft,
@@ -574,40 +603,32 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                       child: Opacity(
                                         opacity:
                                             (1.0 - tClamped).clamp(0.0, 1.0),
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            borderRadius: BorderRadius.circular(
-                                              restPillHeight / 2,
-                                            ),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black.withValues(
-                                                  alpha: isDark ? 0.38 : 0.09,
-                                                ),
-                                                blurRadius: 12,
-                                                spreadRadius: -2,
-                                                offset: const Offset(0, 3),
-                                              ),
-                                            ],
+                                        child: Transform(
+                                          alignment: Alignment.center,
+                                          transform: Matrix4.diagonal3Values(
+                                            scaleX,
+                                            scaleY,
+                                            1.0,
                                           ),
-                                          child: CustomPaint(
-                                            foregroundPainter:
-                                                LiquidGlassRimPainter(
-                                              borderRadius: restPillHeight / 2,
-                                              isDark: isDark,
-                                              intensity: 1.15,
-                                              strokeWidth: 1.2,
-                                            ),
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                borderRadius:
-                                                    BorderRadius.circular(
-                                                  restPillHeight / 2,
-                                                ),
-                                                gradient: LiquidGlassPalette
-                                                    .activeLensGradient(
-                                                  isDark: isDark,
-                                                ),
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                restPillHeight / 2,
+                                              ),
+                                              gradient: LiquidGlassPalette
+                                                  .activeLensGradient(
+                                                isDark: isDark,
+                                              ),
+                                              border: Border.all(
+                                                color: isDark
+                                                    ? Colors.white.withValues(
+                                                        alpha: 0.11,
+                                                      )
+                                                    : Colors.black.withValues(
+                                                        alpha: 0.045,
+                                                      ),
+                                                width: 0.65,
                                               ),
                                             ),
                                           ),
@@ -642,14 +663,17 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                               _iconBounceController.isAnimating)
                                           ? _iconBounceController.value
                                           : 0.0;
-                                      // Jiggicons (tabs 0-2) already play rich intrinsic spring physics;
-                                      // keep only a gentle tactile scale lift on them, and full bounce on Profile.
-                                      final bounceScale = animVal > 0
-                                          ? 1.0 +
-                                              (isJiggTab ? 0.08 : 0.24) *
-                                                  math.sin(animVal * math.pi) *
-                                                  (1.0 - animVal * 0.35)
-                                          : 1.0;
+                                      // Jiggicons (tabs 0-2) play their own authentic spring keyframes
+                                      // cleanly without outer scale interference; Profile avatar uses bounceScale.
+                                      final bounceScale =
+                                          (!isJiggTab && animVal > 0)
+                                              ? 1.0 +
+                                                  0.24 *
+                                                      math.sin(
+                                                        animVal * math.pi,
+                                                      ) *
+                                                      (1.0 - animVal * 0.35)
+                                              : 1.0;
                                       final tiltAngle = 0.0;
                                       final liftY = 0.0;
 
@@ -800,64 +824,36 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   }
 }
 
-/// Live GPU-refracted floating outer navbar capsule using `shaders/liquid_glass_lens.frag`
-/// so scrolled cards, rings, and colors visibly pass through and bend along the curved bevel,
-/// matching the exact optical glass effect of the hover/drag pill.
+/// Smooth X / iOS 26-style frosted glass floating outer navbar capsule using
+/// silky Gaussian backdrop blur (`sigma: 28`), a sheer translucent glass veil
+/// so scrolled cards and colors bloom softly behind the bar, and a crisp thin
+/// specular glass rim — with zero artificial noise/grain texture.
 class _OpticalLiquidGlassDock extends StatelessWidget {
-  final ui.FragmentProgram? program;
-  final Rect? screenRect;
   final double radius;
   final bool isDark;
-  final double dpr;
 
   const _OpticalLiquidGlassDock({
-    required this.program,
-    required this.screenRect,
     required this.radius,
     required this.isDark,
-    required this.dpr,
   });
 
   @override
   Widget build(BuildContext context) {
-    final useLiveShader = program != null &&
-        screenRect != null &&
-        !screenRect!.isEmpty &&
-        ui.ImageFilter.isShaderFilterSupported;
-
-    ui.ImageFilter backdropFilter;
-    if (useLiveShader) {
-      final shader = program!.fragmentShader();
-      shader.setFloat(2, screenRect!.left * dpr); // u_rectLeft
-      shader.setFloat(3, screenRect!.top * dpr); // u_rectTop
-      shader.setFloat(4, screenRect!.width * dpr); // u_rectWidth
-      shader.setFloat(5, screenRect!.height * dpr); // u_rectHeight
-      shader.setFloat(6, 1.0); // u_expansion (always active!)
-      shader.setFloat(7, 15.0 * dpr); // u_bevel (wide curved rim refraction)
-      shader.setFloat(8, 10.5 * dpr); // u_refract (live bending as content scrolls)
-      shader.setFloat(9, 0.075); // u_dispersion (subtle chromatic edge shimmer)
-      shader.setFloat(10, isDark ? 1.0 : 0.0); // u_isDark
-      shader.setFloat(11, 0.14); // u_press (calm resting optical lens depth)
-      backdropFilter = ui.ImageFilter.shader(shader);
-    } else {
-      backdropFilter = ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12);
-    }
-
-    // Balanced 75% frosted neutral glass veil over the live refracted backdrop:
-    // substantial Liquid Glass presence & crisp icon contrast while scrolling
-    // cards and colors still visibly refract & pass behind the capsule.
-    final sheerVeil = LinearGradient(
+    final frostedFill = LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: isDark
           ? [
-              const Color(0xFF2C2E36).withValues(alpha: 0.74),
-              const Color(0xFF14151A).withValues(alpha: 0.78),
+              const Color(0xFF22242A).withValues(alpha: 0.44),
+              const Color(0xFF141519).withValues(alpha: 0.36),
+              const Color(0xFF1C1E24).withValues(alpha: 0.42),
             ]
           : [
-              Colors.white.withValues(alpha: 0.78),
-              const Color(0xFFF4F6FB).withValues(alpha: 0.72),
+              Colors.white.withValues(alpha: 0.56),
+              const Color(0xFFF4F5F8).withValues(alpha: 0.46),
+              Colors.white.withValues(alpha: 0.54),
             ],
+      stops: const [0.0, 0.52, 1.0],
     );
 
     return Container(
@@ -866,36 +862,34 @@ class _OpticalLiquidGlassDock extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: isDark
-                ? Colors.black.withValues(alpha: 0.56)
-                : Colors.black.withValues(alpha: 0.11),
-            blurRadius: 30,
+                ? Colors.black.withValues(alpha: 0.48)
+                : Colors.black.withValues(alpha: 0.09),
+            blurRadius: 24,
             spreadRadius: -3,
-            offset: const Offset(0, 12),
+            offset: const Offset(0, 9),
           ),
-          if (!isDark)
-            BoxShadow(
-              color: Colors.white.withValues(alpha: 0.32),
-              blurRadius: 6,
-              spreadRadius: -1,
-              offset: const Offset(0, -1),
-            ),
         ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: BackdropFilter(
-          filter: backdropFilter,
+          filter: ui.ImageFilter.blur(
+            sigmaX: 28,
+            sigmaY: 28,
+            tileMode: ui.TileMode.clamp,
+          ),
           child: CustomPaint(
             foregroundPainter: LiquidGlassRimPainter(
               borderRadius: radius,
               isDark: isDark,
-              intensity: 1.08,
-              strokeWidth: 1.25,
+              intensity: isDark ? 0.95 : 0.92,
+              strokeWidth: 1.05,
+              showTopMeniscus: false,
             ),
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(radius),
-                gradient: sheerVeil,
+                gradient: frostedFill,
               ),
             ),
           ),

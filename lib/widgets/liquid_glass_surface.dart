@@ -203,8 +203,9 @@ class LiquidGlassPalette {
     );
   }
 
-  /// Elevated 3D domed crystal lens gradient for the active navbar selection pill,
-  /// tuned to lift crisply above the 75% frosted refractive dock.
+  /// Soft recessed neutral frosted pill gradient for the active navbar tab
+  /// (iOS 26/27 frosted UITabBar capsule), contrasting cleanly against the
+  /// bright milky frosted dock in Light Mode and charcoal frost in Dark Mode.
   static LinearGradient activeLensGradient({
     required bool isDark,
   }) {
@@ -213,22 +214,22 @@ class LiquidGlassPalette {
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
-          Colors.white.withValues(alpha: 0.26),
-          Colors.white.withValues(alpha: 0.12),
-          Colors.white.withValues(alpha: 0.18),
+          Colors.white.withValues(alpha: 0.17),
+          Colors.white.withValues(alpha: 0.13),
+          Colors.white.withValues(alpha: 0.15),
         ],
-        stops: const [0.0, 0.54, 1.0],
+        stops: const [0.0, 0.52, 1.0],
       );
     }
     return LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: [
-        Colors.white.withValues(alpha: 0.94),
-        Colors.white.withValues(alpha: 0.72),
-        const Color(0xFFF3F4F9).withValues(alpha: 0.84),
+        const Color(0xFF1C1C1E).withValues(alpha: 0.135),
+        const Color(0xFF1C1C1E).withValues(alpha: 0.105),
+        const Color(0xFF1C1C1E).withValues(alpha: 0.120),
       ],
-      stops: const [0.0, 0.54, 1.0],
+      stops: const [0.0, 0.52, 1.0],
     );
   }
 }

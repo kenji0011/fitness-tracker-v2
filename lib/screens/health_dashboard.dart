@@ -22,9 +22,11 @@ import '../widgets/liquid_glass_surface.dart';
 import '../widgets/oval_activity_rings.dart';
 import '../widgets/reorderable_summary_grid.dart';
 import '../widgets/tempo_jigg_icon.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_spotlight_tour.dart';
 import '../widgets/tempo_toast.dart';
+import 'activity_stats_screen.dart';
 import 'add_data_screen.dart';
 import 'manage_summary_features_screen.dart';
 import 'metric_detail_screen.dart';
@@ -90,12 +92,13 @@ class _HealthDashboardState extends State<HealthDashboard>
   bool _isStationary = false;
   bool _ingestingStepEvent = false;
   int? _pendingSensorSteps;
-  int? _highlightedRing;
   StreamSubscription<StepCount>? _stepSub;
   StreamSubscription<PedestrianStatus>? _pedestrianSub;
   bool _wasTickerEnabled = false;
+  bool _needsRefresh = false;
 
   final GlobalKey _addDataHintKey = GlobalKey();
+  final GlobalKey _ovalRingsHintKey = GlobalKey();
   final GlobalKey _ringsCardHintKey = GlobalKey();
   final GlobalKey _summaryGridHintKey = GlobalKey();
   final JiggIconController _waterDropController = JiggIconController();
@@ -118,8 +121,13 @@ class _HealthDashboardState extends State<HealthDashboard>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final enabled = TickerMode.of(context);
-    if (enabled && !_wasTickerEnabled && !_isLoading) {
-      _maybeShowSpotlight();
+    if (enabled && !_wasTickerEnabled) {
+      if (_needsRefresh) {
+        _needsRefresh = false;
+        _loadDashboard();
+      } else if (!_isLoading) {
+        _maybeShowSpotlight();
+      }
     }
     _wasTickerEnabled = enabled;
   }
@@ -141,10 +149,18 @@ class _HealthDashboardState extends State<HealthDashboard>
           padding: const EdgeInsets.all(6),
         ),
         TempoSpotlightStep(
-          targetKey: _ringsCardHintKey,
-          title: 'Interactive rings & goals',
+          targetKey: _ovalRingsHintKey,
+          title: 'Tap rings for full stats',
           description:
-              'Tap Calories, Steps, or Activity to open detailed trends, calendars, and edit daily goals.',
+              'Tap the oval activity rings to open your daily and weekly Stats page and share custom progress cards.',
+          borderRadius: 128,
+          padding: const EdgeInsets.all(6),
+        ),
+        TempoSpotlightStep(
+          targetKey: _ringsCardHintKey,
+          title: 'Daily targets & trends',
+          description:
+              'Tap Calories, Steps, or Activity to view detailed history, calendars, and adjust daily goals.',
           borderRadius: 24,
         ),
         TempoSpotlightStep(
@@ -162,7 +178,12 @@ class _HealthDashboardState extends State<HealthDashboard>
   void didUpdateWidget(covariant HealthDashboard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.refreshVersion != oldWidget.refreshVersion) {
-      _loadDashboard();
+      if (TickerMode.of(context)) {
+        _needsRefresh = false;
+        _loadDashboard();
+      } else {
+        _needsRefresh = true;
+      }
     }
   }
 
@@ -317,11 +338,18 @@ class _HealthDashboardState extends State<HealthDashboard>
     }
   }
 
-  Future<void> _openAddData({String? initialMetric}) async {
-    final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (_) => AddDataScreen(initialMetric: initialMetric),
-      ),
+  Future<void> _openAddData({
+    String? initialMetric,
+    BuildContext? sourceContext,
+    GlobalKey? sourceKey,
+    double borderRadius = 22.0,
+  }) async {
+    final changed = await pushTempoMorphRoute<bool>(
+      context: context,
+      sourceContext: sourceContext,
+      sourceKey: sourceKey,
+      sourceBorderRadius: borderRadius,
+      builder: (_) => AddDataScreen(initialMetric: initialMetric),
     );
     if (changed == true && mounted) {
       context.read<ActiveProfileProvider>().notifyDataChanged();
@@ -329,15 +357,15 @@ class _HealthDashboardState extends State<HealthDashboard>
     }
   }
 
-  Future<void> _openManageFeatures() async {
+  Future<void> _openManageFeatures({BuildContext? sourceContext}) async {
     HapticFeedback.selectionClick();
     final profileId = context.read<ActiveProfileProvider>().activeProfileId;
-    final updated = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ManageSummaryFeaturesScreen(
-          initialSelectedIds: _enabledSummaryFeatures,
-        ),
+    final updated = await pushTempoMorphRoute<List<String>>(
+      context: context,
+      sourceContext: sourceContext,
+      sourceBorderRadius: 999,
+      builder: (_) => ManageSummaryFeaturesScreen(
+        initialSelectedIds: _enabledSummaryFeatures,
       ),
     );
     if (updated != null && mounted) {
@@ -363,10 +391,27 @@ class _HealthDashboardState extends State<HealthDashboard>
     }
   }
 
-  Future<void> _openUnifiedMetric(TempoMetricKind kind) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => MetricDetailScreen(kind: kind)),
+  Future<void> _openUnifiedMetric(
+    TempoMetricKind kind, {
+    BuildContext? sourceContext,
+    double borderRadius = 20.0,
+  }) async {
+    await pushTempoMorphRoute<void>(
+      context: context,
+      sourceContext: sourceContext,
+      sourceBorderRadius: borderRadius,
+      builder: (_) => MetricDetailScreen(kind: kind),
+    );
+    if (mounted) _loadDashboard();
+  }
+
+  Future<void> _openActivityStats() async {
+    await pushTempoMorphRoute<void>(
+      context: context,
+      sourceKey: _ovalRingsHintKey,
+      sourceBorderRadius: 120,
+      sourceColor: AppColors.of(context, listen: false).scaffold,
+      builder: (_) => const ActivityStatsScreen(),
     );
     if (mounted) _loadDashboard();
   }
@@ -431,11 +476,14 @@ class _HealthDashboardState extends State<HealthDashboard>
                     title: 'Summary',
                     actions: [
                       TempoHeaderAction(
+                        buttonKey: _addDataHintKey,
                         tooltip: 'Log Health Data',
-                        onPressed: () => _openAddData(),
+                        onPressed: () => _openAddData(
+                          sourceKey: _addDataHintKey,
+                          borderRadius: 999,
+                        ),
                         icon: Icon(
                           CupertinoIcons.add,
-                          key: _addDataHintKey,
                           size: 22,
                           color: c.textPrimary,
                         ),
@@ -448,20 +496,16 @@ class _HealthDashboardState extends State<HealthDashboard>
                       children: [
                         // --- Hero Tilted Concentric Oval Activity Rings ---
                         Center(
-                          child: RepaintBoundary(
-                            child: OvalActivityRings(
-                              size: 242,
-                              caloriesProgress: calProgress,
-                              stepsProgress: stepProgress,
-                              minutesProgress: minProgress,
-                              highlightedRing: _highlightedRing,
-                              onRingTap: (ringIdx) {
-                                setState(() {
-                                  _highlightedRing = _highlightedRing == ringIdx
-                                      ? null
-                                      : ringIdx;
-                                });
-                              },
+                          child: KeyedSubtree(
+                            key: _ovalRingsHintKey,
+                            child: RepaintBoundary(
+                              child: OvalActivityRings(
+                                size: 242,
+                                caloriesProgress: calProgress,
+                                stepsProgress: stepProgress,
+                                minutesProgress: minProgress,
+                                onRingTap: (_) => _openActivityStats(),
+                              ),
                             ),
                           ),
                         ),
@@ -485,9 +529,11 @@ class _HealthDashboardState extends State<HealthDashboard>
                                   goalText:
                                       '${NumberFormat('#,###').format(calGoal)} kcal',
                                   progress: calProgress,
-                                  isHighlighted: _highlightedRing == 0,
-                                  onTap: () => _openUnifiedMetric(
+                                  isHighlighted: false,
+                                  onTap: (colCtx) => _openUnifiedMetric(
                                     TempoMetricKind.calories,
+                                    sourceContext: colCtx,
+                                    borderRadius: 16,
                                   ),
                                 ),
                               ),
@@ -507,9 +553,13 @@ class _HealthDashboardState extends State<HealthDashboard>
                                   goalText: NumberFormat('#,###')
                                       .format(stepGoal),
                                   progress: stepProgress,
-                                  isHighlighted: _highlightedRing == 1,
-                                  onTap: () => _pedometerActive
-                                      ? _openUnifiedMetric(TempoMetricKind.steps)
+                                  isHighlighted: false,
+                                  onTap: (colCtx) => _pedometerActive
+                                      ? _openUnifiedMetric(
+                                          TempoMetricKind.steps,
+                                          sourceContext: colCtx,
+                                          borderRadius: 16,
+                                        )
                                       : _enableStepsTracking(),
                                 ),
                               ),
@@ -527,9 +577,11 @@ class _HealthDashboardState extends State<HealthDashboard>
                                   value: '${today.minutes}',
                                   goalText: '$minGoal min',
                                   progress: minProgress,
-                                  isHighlighted: _highlightedRing == 2,
-                                  onTap: () => _openUnifiedMetric(
+                                  isHighlighted: false,
+                                  onTap: (colCtx) => _openUnifiedMetric(
                                     TempoMetricKind.minutes,
+                                    sourceContext: colCtx,
+                                    borderRadius: 16,
                                   ),
                                 ),
                               ),
@@ -590,8 +642,11 @@ class _HealthDashboardState extends State<HealthDashboard>
                             badgeColor: const Color(0xFF6B63F6),
                             title: 'Sleep',
                             trailingPill: 'Log',
-                            onTrailingPillTap: () =>
-                                _openAddData(initialMetric: 'sleep'),
+                            onTrailingPillTap: (tileCtx) => _openAddData(
+                              initialMetric: 'sleep',
+                              sourceContext: tileCtx,
+                              borderRadius: 20,
+                            ),
                             primaryValue: (profile?.sleepHours ?? 0) > 0
                                 ? '${profile!.sleepHours.toStringAsFixed(1)} hrs'
                                 : null,
@@ -604,12 +659,12 @@ class _HealthDashboardState extends State<HealthDashboard>
                               leftLabel: '00:00',
                               rightLabel: '24:00',
                             ),
-                            onTap: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const SleepDetailScreen(),
-                                ),
+                            onTap: (tileCtx) async {
+                              await pushTempoMorphRoute<void>(
+                                context: context,
+                                sourceContext: tileCtx,
+                                sourceBorderRadius: 20,
+                                builder: (_) => const SleepDetailScreen(),
                               );
                               if (mounted) _loadDashboard();
                             },
@@ -628,12 +683,12 @@ class _HealthDashboardState extends State<HealthDashboard>
                               points: weightPts,
                               lineColor: const Color(0xFF4CD964),
                             ),
-                            onTap: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const WeightDetailScreen(),
-                                ),
+                            onTap: (tileCtx) async {
+                              await pushTempoMorphRoute<void>(
+                                context: context,
+                                sourceContext: tileCtx,
+                                sourceBorderRadius: 20,
+                                builder: (_) => const WeightDetailScreen(),
                               );
                               if (mounted) _loadDashboard();
                             },
@@ -654,7 +709,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                               heightCm: profile?.heightCm ?? 0,
                               currentBmi: profile?.bmi ?? 0,
                             ),
-                            onTap: () => showBmiDetailPopup(
+                            onTap: (_) => showBmiDetailPopup(
                               context: context,
                               bmi: profile?.bmi ?? 0,
                               heightCm: profile?.heightCm ?? 0,
@@ -675,8 +730,10 @@ class _HealthDashboardState extends State<HealthDashboard>
                               points: waistPts,
                               lineColor: const Color(0xFF3CC29E),
                             ),
-                            onTap: () => _openUnifiedMetric(
+                            onTap: (tileCtx) => _openUnifiedMetric(
                               TempoMetricKind.waist,
+                              sourceContext: tileCtx,
+                              borderRadius: 20,
                             ),
                           ),
                           'burn': _HealthGridTile(
@@ -693,8 +750,10 @@ class _HealthDashboardState extends State<HealthDashboard>
                               leftLabel: '7d ago',
                               rightLabel: 'Today',
                             ),
-                            onTap: () => _openUnifiedMetric(
+                            onTap: (tileCtx) => _openUnifiedMetric(
                               TempoMetricKind.burn,
+                              sourceContext: tileCtx,
+                              borderRadius: 20,
                             ),
                           ),
                           'workouts': _HealthGridTile(
@@ -714,7 +773,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                               leftLabel: 'Mon',
                               rightLabel: 'Sun',
                             ),
-                            onTap: () => widget.onSwitchToWorkouts?.call(),
+                            onTap: (_) => widget.onSwitchToWorkouts?.call(),
                           ),
                           'water': _HealthGridTile(
                             badgeIcon: CupertinoIcons.drop_fill,
@@ -723,7 +782,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                             badgeColor: const Color(0xFF38BDF8),
                             title: 'Water',
                             trailingPill: '+250',
-                            onTrailingPillTap: _quickAddWater250,
+                            onTrailingPillTap: (_) => _quickAddWater250(),
                             primaryValue: () {
                               final todayKey = TempoRustDb.todayKey();
                               final ml = _waterPoints
@@ -745,12 +804,12 @@ class _HealthDashboardState extends State<HealthDashboard>
                               leftLabel: '7d ago',
                               rightLabel: 'Today',
                             ),
-                            onTap: () async {
-                              await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => const WaterDetailScreen(),
-                                ),
+                            onTap: (tileCtx) async {
+                              await pushTempoMorphRoute<void>(
+                                context: context,
+                                sourceContext: tileCtx,
+                                sourceBorderRadius: 20,
+                                builder: (_) => const WaterDetailScreen(),
                               );
                               if (mounted) _loadDashboard();
                             },
@@ -795,32 +854,35 @@ class _HealthDashboardState extends State<HealthDashboard>
 
                     // Centered Manage health features Liquid Glass pill below the Summary cards
                     Center(
-                      child: TempoLiquidButton(
-                        primary: false,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 10,
-                        ),
-                        onPressed: _openManageFeatures,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'Manage health features',
-                              style: TextStyle(
-                                color: c.textSecondary,
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: -0.1,
+                      child: Builder(
+                        builder: (pillCtx) => TempoLiquidButton(
+                          primary: false,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 10,
+                          ),
+                          onPressed: () =>
+                              _openManageFeatures(sourceContext: pillCtx),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Manage health features',
+                                style: TextStyle(
+                                  color: c.textSecondary,
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: -0.1,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 5),
-                            Icon(
-                              CupertinoIcons.chevron_right,
-                              size: 14,
-                              color: c.textTertiary,
-                            ),
-                          ],
+                              const SizedBox(width: 5),
+                              Icon(
+                                CupertinoIcons.chevron_right,
+                                size: 14,
+                                color: c.textTertiary,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -887,7 +949,7 @@ class _RingMetricColumn extends StatelessWidget {
   final String goalText;
   final double progress;
   final bool isHighlighted;
-  final VoidCallback onTap;
+  final void Function(BuildContext columnContext) onTap;
 
   const _RingMetricColumn({
     required this.accentColor,
@@ -904,7 +966,7 @@ class _RingMetricColumn extends StatelessWidget {
     final c = AppColors.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: onTap,
+      onTap: () => onTap(context),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -995,11 +1057,11 @@ class _HealthGridTile extends StatelessWidget {
   final Color badgeColor;
   final String title;
   final String? trailingPill;
-  final VoidCallback? onTrailingPillTap;
+  final void Function(BuildContext tileContext)? onTrailingPillTap;
   final String? primaryValue;
   final String subtitle;
   final Widget chart;
-  final VoidCallback onTap;
+  final void Function(BuildContext tileContext) onTap;
 
   const _HealthGridTile({
     required this.badgeIcon,
@@ -1022,7 +1084,7 @@ class _HealthGridTile extends StatelessWidget {
       child: AppleCard(
         borderRadius: 20,
         padding: const EdgeInsets.all(13),
-        onTap: onTap,
+        onTap: () => onTap(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1053,7 +1115,9 @@ class _HealthGridTile extends StatelessWidget {
                 if (trailingPill != null)
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: onTrailingPillTap,
+                    onTap: onTrailingPillTap != null
+                        ? () => onTrailingPillTap!(context)
+                        : null,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 9,

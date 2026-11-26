@@ -13,6 +13,7 @@ import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import '../widgets/tempo_spotlight_tour.dart';
 import '../widgets/tempo_toast.dart';
@@ -74,6 +75,7 @@ class _WorkoutScreenState extends State<WorkoutScreen>
   Set<String> _completedWorkoutIds = {};
   List<Workout> _customWorkouts = [];
   bool _wasTickerEnabled = false;
+  bool _needsRefresh = false;
 
   final GlobalKey _journeysHintKey = GlobalKey();
   final GlobalKey _customWorkoutHintKey = GlobalKey();
@@ -163,6 +165,10 @@ class _WorkoutScreenState extends State<WorkoutScreen>
     super.didChangeDependencies();
     final enabled = TickerMode.of(context);
     if (enabled && !_wasTickerEnabled) {
+      if (_needsRefresh) {
+        _needsRefresh = false;
+        _loadProgress();
+      }
       _maybeShowSpotlight();
     }
     _wasTickerEnabled = enabled;
@@ -199,7 +205,12 @@ class _WorkoutScreenState extends State<WorkoutScreen>
   void didUpdateWidget(covariant WorkoutScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.refreshVersion != oldWidget.refreshVersion) {
-      _loadProgress();
+      if (TickerMode.of(context)) {
+        _needsRefresh = false;
+        _loadProgress();
+      } else {
+        _needsRefresh = true;
+      }
     }
   }
 
@@ -254,13 +265,16 @@ class _WorkoutScreenState extends State<WorkoutScreen>
     });
   }
 
-  Future<void> _openCustomBuilder({Workout? existing}) async {
+  Future<void> _openCustomBuilder({
+    Workout? existing,
+    BuildContext? sourceContext,
+  }) async {
     HapticFeedback.selectionClick();
-    final saved = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CustomWorkoutBuilderScreen(existing: existing),
-      ),
+    final saved = await pushTempoMorphRoute<bool>(
+      context: context,
+      sourceContext: sourceContext,
+      sourceBorderRadius: 24,
+      builder: (_) => CustomWorkoutBuilderScreen(existing: existing),
     );
     if (saved == true && mounted) {
       _loadProgress();
@@ -518,24 +532,27 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                     final isActive =
                         _journeyProgress[q.journeyId]?.isSelected == true;
                     return Expanded(
-                      child: _QuickWorkoutTile(
-                        meta: q,
-                        isActive: isActive,
-                        onTap: () async {
-                          HapticFeedback.selectionClick();
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
+                      child: Builder(
+                        builder: (tileCtx) => _QuickWorkoutTile(
+                          meta: q,
+                          isActive: isActive,
+                          onTap: () async {
+                            HapticFeedback.selectionClick();
+                            await pushTempoMorphRoute<void>(
+                              context: context,
+                              sourceContext: tileCtx,
+                              sourceBorderRadius: 18,
+                              sourceColor: q.color,
                               builder: (_) => FitnessJourneyDetailScreen(
                                 journeyId: q.journeyId,
                                 journeyName: q.journeyName,
                                 journeySubtitle: q.subtitle,
                                 thumbnailAsset: q.thumb,
                               ),
-                            ),
-                          );
-                          if (mounted) _loadProgress();
-                        },
+                            );
+                            if (mounted) _loadProgress();
+                          },
+                        ),
                       ),
                     );
                   }).toList(),
@@ -903,23 +920,25 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                         final w = workouts[i];
                         final isDone = _completedWorkoutIds.contains(w.id);
                         final isCustom = w.journeyName == 'Custom';
-                        return _WorkoutLibraryCard(
-                          workout: w,
-                          isCompleted: isDone,
-                          isCustom: isCustom,
-                          onManageCustom: isCustom
-                              ? () => _showCustomWorkoutActions(w)
-                              : null,
-                          onTap: () async {
-                            HapticFeedback.selectionClick();
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
+                        return Builder(
+                          builder: (cardCtx) => _WorkoutLibraryCard(
+                            workout: w,
+                            isCompleted: isDone,
+                            isCustom: isCustom,
+                            onManageCustom: isCustom
+                                ? () => _showCustomWorkoutActions(w)
+                                : null,
+                            onTap: () async {
+                              HapticFeedback.selectionClick();
+                              await pushTempoMorphRoute<void>(
+                                context: context,
+                                sourceContext: cardCtx,
+                                sourceBorderRadius: 20,
                                 builder: (_) => WorkoutDetailScreen(workout: w),
-                              ),
-                            );
-                            if (mounted) _loadProgress();
-                          },
+                              );
+                              if (mounted) _loadProgress();
+                            },
+                          ),
                         );
                       },
                     ),
@@ -953,53 +972,55 @@ class _QuickWorkoutTileState extends State<_QuickWorkoutTile> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
-        widget.onTap();
-      },
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 0.92 : 1.0,
-        duration: const Duration(milliseconds: 130),
-        curve: Curves.easeOutCubic,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: widget.meta.color,
-                borderRadius: BorderRadius.circular(18),
-                border: widget.isActive
-                    ? Border.all(color: c.textPrimary, width: 2)
-                    : null,
-              ),
-              child: Icon(
-                widget.meta.icon,
-                color: Colors.white,
-                size: 28,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: Text(
-                widget.meta.shortLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: c.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+    return RepaintBoundary(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) {
+          setState(() => _pressed = false);
+          widget.onTap();
+        },
+        onTapCancel: () => setState(() => _pressed = false),
+        child: AnimatedScale(
+          scale: _pressed ? 0.92 : 1.0,
+          duration: const Duration(milliseconds: 130),
+          curve: Curves.easeOutCubic,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: widget.meta.color,
+                  borderRadius: BorderRadius.circular(18),
+                  border: widget.isActive
+                      ? Border.all(color: c.textPrimary, width: 2)
+                      : null,
+                ),
+                child: Icon(
+                  widget.meta.icon,
+                  color: Colors.white,
+                  size: 28,
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Text(
+                  widget.meta.shortLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
