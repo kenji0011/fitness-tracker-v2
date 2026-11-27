@@ -4,20 +4,27 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../services/appearance_service.dart';
 import '../services/local_media_service.dart';
 import '../theme/app_colors.dart';
 
-/// Shared singleton loader for Tempo's GPU Liquid Glass refraction fragment
-/// shader (`shaders/liquid_glass_lens.frag`), prewarmed in `main()` so the
-/// floating navbar capsule, active droplet, and circular header buttons render
-/// live screen-space optical refraction from Frame 0.
+/// Shared singleton loader for Tempo's GPU Liquid Glass & Progressive Blur
+/// fragment shaders (`shaders/liquid_glass_lens.frag` &
+/// `shaders/progressive_blur.frag`), prewarmed in `main()` so the floating
+/// navbar droplet, difficulty sliders, dragged summary cards, and top sliver
+/// headers render live screen-space optical effects from Frame 0.
 class TempoLiquidShaderCache {
   TempoLiquidShaderCache._();
 
   static ui.FragmentProgram? _program;
   static Future<ui.FragmentProgram?>? _loading;
 
+  static ui.FragmentProgram? _progressiveBlurProgram;
+  static Future<ui.FragmentProgram?>? _loadingProgressiveBlur;
+
   static ui.FragmentProgram? get program => _program;
+  static ui.FragmentProgram? get progressiveBlurProgram =>
+      _progressiveBlurProgram;
 
   static Future<ui.FragmentProgram?> load() {
     if (_program != null) return Future<ui.FragmentProgram?>.value(_program);
@@ -32,6 +39,25 @@ class TempoLiquidShaderCache {
     }).catchError((Object e) {
       debugPrint('TempoLiquidShaderCache fallback active: $e');
       _loading = null;
+      return null;
+    });
+  }
+
+  static Future<ui.FragmentProgram?> loadProgressiveBlur() {
+    if (_progressiveBlurProgram != null) {
+      return Future<ui.FragmentProgram?>.value(_progressiveBlurProgram);
+    }
+    if (!ui.ImageFilter.isShaderFilterSupported) {
+      return Future<ui.FragmentProgram?>.value(null);
+    }
+    return _loadingProgressiveBlur ??= ui.FragmentProgram.fromAsset(
+      'shaders/progressive_blur.frag',
+    ).then<ui.FragmentProgram?>((prog) {
+      _progressiveBlurProgram = prog;
+      return prog;
+    }).catchError((Object e) {
+      debugPrint('TempoLiquidShaderCache progressive blur fallback active: $e');
+      _loadingProgressiveBlur = null;
       return null;
     });
   }
@@ -330,7 +356,49 @@ class _LiquidGlassSurfaceState extends State<LiquidGlassSurface> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final appearance = TempoAppearanceService.instance.value;
+    final useBlur = appearance.allowDynamicBlur;
     final isInteractive = widget.onTap != null || widget.onDoubleTap != null;
+    final inner = CustomPaint(
+      foregroundPainter: appearance.useLiquidGlass
+          ? LiquidGlassRimPainter(
+              borderRadius: widget.borderRadius,
+              isDark: c.isDark,
+              intensity: _pressed ? 1.2 : 0.95,
+              tintColor: widget.tintColor,
+            )
+          : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOutCubic,
+        padding: widget.padding,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.borderRadius),
+          color: !useBlur ? (widget.tintColor ?? c.card) : null,
+          border: !appearance.useLiquidGlass
+              ? Border.all(color: c.cardBorder, width: 0.8)
+              : null,
+          gradient: !useBlur
+              ? null
+              : (widget.tintColor != null
+                  ? LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        widget.tintColor!
+                            .withValues(alpha: _pressed ? 0.90 : 0.80),
+                        widget.tintColor!
+                            .withValues(alpha: _pressed ? 0.80 : 0.68),
+                      ],
+                    )
+                  : LiquidGlassPalette.surfaceGradient(
+                      isDark: c.isDark,
+                      pressed: _pressed,
+                    )),
+        ),
+        child: widget.child,
+      ),
+    );
     final surface = Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(widget.borderRadius),
@@ -344,41 +412,15 @@ class _LiquidGlassSurfaceState extends State<LiquidGlassSurface> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(widget.borderRadius),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: CustomPaint(
-            foregroundPainter: LiquidGlassRimPainter(
-              borderRadius: widget.borderRadius,
-              isDark: c.isDark,
-              intensity: _pressed ? 1.2 : 0.95,
-              tintColor: widget.tintColor,
-            ),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              curve: Curves.easeOutCubic,
-              padding: widget.padding,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(widget.borderRadius),
-                gradient: widget.tintColor != null
-                    ? LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          widget.tintColor!
-                              .withValues(alpha: _pressed ? 0.90 : 0.80),
-                          widget.tintColor!
-                              .withValues(alpha: _pressed ? 0.80 : 0.68),
-                        ],
-                      )
-                    : LiquidGlassPalette.surfaceGradient(
-                        isDark: c.isDark,
-                        pressed: _pressed,
-                      ),
-              ),
-              child: widget.child,
-            ),
-          ),
-        ),
+        child: useBlur
+            ? BackdropFilter(
+                filter: ui.ImageFilter.blur(
+                  sigmaX: appearance.betterGlassPerformance ? 16 : 24,
+                  sigmaY: appearance.betterGlassPerformance ? 16 : 24,
+                ),
+                child: inner,
+              )
+            : inner,
       ),
     );
 
@@ -471,50 +513,74 @@ class _TempoLiquidButtonState extends State<TempoLiquidButton>
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(widget.borderRadius),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-                child: CustomPaint(
-                  foregroundPainter: LiquidGlassRimPainter(
-                    borderRadius: widget.borderRadius,
-                    isDark: c.isDark,
-                    intensity: _pressed ? 1.25 : 0.98,
-                    tintColor: widget.primary ? c.accent : null,
-                  ),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 140),
-                    padding: widget.padding,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(widget.borderRadius),
-                      gradient: widget.primary
-                          ? LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                Color.lerp(
-                                  c.accent,
-                                  Colors.white,
-                                  _pressed ? 0.24 : 0.14,
-                                )!
-                                    .withValues(alpha: 0.90),
-                                c.accent.withValues(alpha: 0.86),
-                              ],
-                            )
-                          : LiquidGlassPalette.surfaceGradient(
-                              isDark: c.isDark,
-                              pressed: _pressed,
+              child: TempoAppearanceService.instance.value.allowDynamicBlur
+                  ? BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                      child: CustomPaint(
+                        foregroundPainter:
+                            TempoAppearanceService.instance.value.useLiquidGlass
+                                ? LiquidGlassRimPainter(
+                                    borderRadius: widget.borderRadius,
+                                    isDark: c.isDark,
+                                    intensity: _pressed ? 1.25 : 0.98,
+                                    tintColor: widget.primary ? c.accent : null,
+                                  )
+                                : null,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 140),
+                          padding: widget.padding,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            borderRadius:
+                                BorderRadius.circular(widget.borderRadius),
+                            gradient: widget.primary
+                                ? LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Color.lerp(
+                                        c.accent,
+                                        Colors.white,
+                                        _pressed ? 0.24 : 0.14,
+                                      )!
+                                          .withValues(alpha: 0.90),
+                                      c.accent.withValues(alpha: 0.86),
+                                    ],
+                                  )
+                                : LiquidGlassPalette.surfaceGradient(
+                                    isDark: c.isDark,
+                                    pressed: _pressed,
+                                  ),
+                          ),
+                          child: DefaultTextStyle.merge(
+                            style: TextStyle(
+                              color:
+                                  widget.primary ? Colors.white : c.textPrimary,
+                              fontWeight: FontWeight.w700,
                             ),
-                    ),
-                    child: DefaultTextStyle.merge(
-                      style: TextStyle(
-                        color: widget.primary ? Colors.white : c.textPrimary,
-                        fontWeight: FontWeight.w700,
+                            child: widget.child,
+                          ),
+                        ),
                       ),
-                      child: widget.child,
+                    )
+                  : Container(
+                      padding: widget.padding,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(widget.borderRadius),
+                        color: widget.primary ? c.accent : c.card,
+                        border: widget.primary
+                            ? null
+                            : Border.all(color: c.cardBorder, width: 0.9),
+                      ),
+                      child: DefaultTextStyle.merge(
+                        style: TextStyle(
+                          color: widget.primary ? Colors.white : c.textPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        child: widget.child,
+                      ),
                     ),
-                  ),
-                ),
-              ),
             ),
           ),
         ),

@@ -10,6 +10,7 @@ import 'screens/profile_switcher_screen.dart';
 import 'screens/tempo_shell_screen.dart';
 import 'services/active_profile_provider.dart';
 import 'services/animation_speed_service.dart';
+import 'services/appearance_service.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_provider.dart';
 import 'widgets/liquid_glass_surface.dart';
@@ -30,8 +31,10 @@ Future<void> main() async {
     activeProfileProvider.initialize(),
     themeProvider.initialize(),
     TempoAnimationSpeedService.instance.initialize(),
+    TempoAppearanceService.instance.initialize(),
     TempoJiggicons.prewarmCritical(),
     TempoLiquidShaderCache.load(),
+    TempoLiquidShaderCache.loadProgressiveBlur(),
   ]);
 
   // Prewarm secondary tab icons silently during the startup splash without blocking Frame 0.

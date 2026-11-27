@@ -10,7 +10,10 @@ class AppColors {
   const AppColors._(this.isDark);
 
   factory AppColors.of(BuildContext context, {bool listen = true}) {
-    final isDark = Provider.of<ThemeProvider>(context, listen: listen).isDarkMode;
+    final theme = Provider.of<ThemeProvider>(context, listen: listen);
+    final isDark = theme.themeMode == ThemeMode.system
+        ? MediaQuery.platformBrightnessOf(context) == Brightness.dark
+        : theme.isDarkMode;
     return AppColors._(isDark);
   }
 

@@ -9,7 +9,10 @@ import 'package:flutter/services.dart';
 import 'package:jiggicons/jiggicons.dart';
 
 import '../services/animation_speed_service.dart';
+import '../services/appearance_service.dart';
 import '../theme/app_colors.dart';
+import 'bitchord_glass_lens.dart';
+import 'bitchord_pill_motion.dart';
 import 'liquid_glass_surface.dart';
 import 'tempo_jigg_icon.dart';
 
@@ -25,18 +28,21 @@ class LiquidGlassNavItem {
   });
 }
 
-/// iOS 26/27-inspired floating Liquid Glass Navigation Bar powered by a real
-/// GPU screen-space SDF refraction + chromatic dispersion fragment shader
-/// (`shaders/liquid_glass_lens.frag`) ported from QWEA0/Liquid-Glass-Android.
-///
-/// Interaction model:
-/// - **At rest:** Clean floating frosted-glass capsule with a subtle, flush resting pill.
-/// - **On horizontal drag / touch-scrub / desktop hover:** The optical **Liquid Glass Droplet**
-///   inflates **over** the tab row, refracts & chromatically disperses the live icons & labels
-///   underneath at its curved bevel, stretches elastically (`scaleX/scaleY`), gives haptic
-///   clicks across tabs, and settles cleanly back into the resting pill on release.
-/// - **Double-tap `Profile`:** Instantly opens the 4-digit PIN local profile switcher with zero
-///   tap lag on single taps.
+/// BitChord-calibrated floating Liquid Glass Navigation Bar powered by:
+/// - **BitChord / Kyant0 7-band chromatic dispersion circular-dome shader**
+///   (`shaders/liquid_glass_lens.frag`, `LENS_HEIGHT = 12 dp`, `LENS_AMOUNT = 14 dp`)
+///   running inside a single zero-allocation pooled `RenderProxyBox`
+///   (`BackdropFilterLayer`) with 0-frame lag `paint()` coordinates.
+/// - **BitChord 120Hz `BitChordPillMotion`** (`1/240 s` semi-implicit Euler
+///   substeps, decoupled X/Y lift springs, `PILL_GROW_HEIGHT = 9 dp` overhang,
+///   `FOLLOW_TAU = 0.05 s` smooth finger/hover chase, edge rubber-band, and
+///   2nd-derivative `±12%` acceleration squash).
+/// - **Zero-rebuild glide pipeline:** Outer dock and tab icons stay isolated in
+///   `RepaintBoundary` layers while the flat resting pill and lifted crystal
+///   lens repaint directly from `BitChordPillMotion` (`0` `setState` calls and
+///   `0` shader allocations per frame).
+/// - **Full Appearance settings integration:** Honors `Reduce animation`,
+///   `Reduce Dynamic Blur`, `Liquid Glass`, and `Better Performance for Glass`.
 class LiquidGlassNavBar extends StatefulWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
@@ -85,15 +91,9 @@ class LiquidGlassNavBar extends StatefulWidget {
 class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     with TickerProviderStateMixin {
   ui.FragmentProgram? _program;
-  bool _layoutSynced = false;
 
-  final GlobalKey _barKey = GlobalKey();
-
-  late final AnimationController _lensController;
-  late final Animation<double> _lensAnimation;
-
-  late final AnimationController _slideController;
-  Animation<double>? _slideAnimation;
+  late final BitChordPillMotion _motion;
+  late final ValueNotifier<int> _activeVisualIndex;
 
   /// Per-tab SF-Symbols-inspired spring click bounce animation (Profile avatar)
   late final AnimationController _iconBounceController;
@@ -107,46 +107,32 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   late final Animation<double> _minimizeAnimation;
 
   Timer? _jiggPlayTimer;
+  Timer? _holdLiftTimer;
   DateTime? _lastProfileTapTime;
   int? _lastTriggeredTab;
-
-  /// Continuous tab position in `[0.0, items.length - 1]`.
-  double _currentPos = 0.0;
-  double _slideDistance = 0.0;
-  bool _isDragging = false;
-  bool _isHovering = false;
-  double _dragVelocityStretch = 0.0;
   int _lastHapticIndex = 0;
+
+  // Low-slop pointer scrub state (eliminates Flutter's 18 dp horizontal drag deadzone)
+  int? _activePointerId;
+  Offset _pointerDownLocal = Offset.zero;
+  bool _isScrubbing = false;
+  bool _isHovering = false;
+  double _currentTotalWidth = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _currentPos = widget.currentIndex.toDouble();
     _lastHapticIndex = widget.currentIndex;
+    _activeVisualIndex = ValueNotifier<int>(widget.currentIndex);
+
+    _motion = BitChordPillMotion(
+      vsync: this,
+      initialIndex: widget.currentIndex,
+    )..reduceMotion = TempoAppearanceService.instance.reduceAnimation;
 
     _loadShader();
 
     final speed = TempoAnimationSpeedService.instance;
-    _lensController = AnimationController(
-      vsync: this,
-      duration: speed.scale(const Duration(milliseconds: 210)),
-      reverseDuration: speed.scale(const Duration(milliseconds: 250)),
-    );
-    _lensAnimation = CurvedAnimation(
-      parent: _lensController,
-      curve: Curves.easeOutBack,
-      reverseCurve: Curves.easeOutCubic,
-    );
-
-    _slideController = AnimationController(
-      vsync: this,
-      duration: speed.scale(const Duration(milliseconds: 340)),
-    )..addListener(() {
-        if (_slideAnimation != null) {
-          setState(() => _currentPos = _slideAnimation!.value);
-        }
-      });
-
     _iconBounceController = AnimationController(
       vsync: this,
       duration: speed.scale(const Duration(milliseconds: 420)),
@@ -161,27 +147,26 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       value: widget.minimized ? 1.0 : 0.0,
       duration: speed.scale(const Duration(milliseconds: 300)),
       reverseDuration: speed.scale(const Duration(milliseconds: 320)),
-    )..addStatusListener((status) {
-        if (status == AnimationStatus.completed ||
-            status == AnimationStatus.dismissed) {
-          _scheduleLayoutSync();
-        }
-      });
+    );
     _minimizeAnimation = CurvedAnimation(
       parent: _minimizeController,
       curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeOutCubic,
     );
+
     speed.notifier.addListener(_syncSpeedDurations);
-    _scheduleLayoutSync();
+    TempoAppearanceService.instance.notifier.addListener(_syncAppearance);
+  }
+
+  void _syncAppearance() {
+    if (!mounted) return;
+    final reduced = TempoAppearanceService.instance.reduceAnimation ||
+        MediaQuery.disableAnimationsOf(context);
+    _motion.reduceMotion = reduced;
   }
 
   void _syncSpeedDurations() {
     final speed = TempoAnimationSpeedService.instance;
-    _lensController.duration = speed.scale(const Duration(milliseconds: 210));
-    _lensController.reverseDuration =
-        speed.scale(const Duration(milliseconds: 250));
-    _slideController.duration = speed.scale(const Duration(milliseconds: 340));
     _iconBounceController.duration =
         speed.scale(const Duration(milliseconds: 420));
     _minimizeController.duration =
@@ -190,21 +175,11 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
         speed.scale(const Duration(milliseconds: 320));
   }
 
-  void _scheduleLayoutSync() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (_barGlobalOrigin() != null) {
-        setState(() => _layoutSynced = true);
-      }
-    });
-  }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_layoutSynced) {
-      _scheduleLayoutSync();
-    }
+    _motion.reduceMotion = TempoAppearanceService.instance.reduceAnimation ||
+        MediaQuery.disableAnimationsOf(context);
   }
 
   Future<void> _loadShader() async {
@@ -222,20 +197,21 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   @override
   void didUpdateWidget(covariant LiquidGlassNavBar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.currentIndex != widget.currentIndex && !_isDragging) {
+    if (oldWidget.currentIndex != widget.currentIndex && !_isScrubbing) {
       _lastHapticIndex = widget.currentIndex;
       if (!_isHovering) {
-        _animatePosTo(widget.currentIndex.toDouble());
+        _activeVisualIndex.value = widget.currentIndex;
+        _motion.animateTo(widget.currentIndex);
       }
-      // Also animate Jiggicon on programmatic tab switches (e.g. tapping a
-      // Summary card that navigates to Workout or Progress).
       if (_lastTriggeredTab != widget.currentIndex) {
         _triggerIconBounce(widget.currentIndex, delayed: true);
       }
       _lastTriggeredTab = null;
     }
     if (oldWidget.minimized != widget.minimized) {
-      if (widget.minimized) {
+      if (_motion.reduceMotion) {
+        _minimizeController.value = widget.minimized ? 1.0 : 0.0;
+      } else if (widget.minimized) {
         _minimizeController.forward();
       } else {
         _minimizeController.reverse();
@@ -247,9 +223,11 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   void dispose() {
     TempoAnimationSpeedService.instance.notifier
         .removeListener(_syncSpeedDurations);
+    TempoAppearanceService.instance.notifier.removeListener(_syncAppearance);
     _jiggPlayTimer?.cancel();
-    _lensController.dispose();
-    _slideController.dispose();
+    _holdLiftTimer?.cancel();
+    _motion.dispose();
+    _activeVisualIndex.dispose();
     _iconBounceController.dispose();
     for (final ctrl in _jiggControllers) {
       ctrl.dispose();
@@ -260,6 +238,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
 
   void _triggerIconBounce(int index, {bool delayed = false}) {
     _jiggPlayTimer?.cancel();
+    if (_motion.reduceMotion) return;
     void playNow() {
       if (!mounted) return;
       _bouncingTabIndex = index;
@@ -273,50 +252,119 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
       playNow();
       return;
     }
-
-    // Wait briefly for the incoming tab's first frame + pill glide start so
-    // heavy tab mounts and the user's thumb never swallow the Jiggicon spring peak.
     _jiggPlayTimer = Timer(const Duration(milliseconds: 70), playNow);
   }
 
-  bool get _isGlassLensEngaged => _isDragging || _isHovering;
-
-  void _syncLensExpansion() {
-    if (_isGlassLensEngaged) {
-      _lensController.forward();
-    } else {
-      _lensController.reverse();
-    }
-  }
-
-  void _animatePosTo(double target) {
-    if ((target - _currentPos).abs() < 0.005) {
-      _slideController.stop();
-      setState(() => _currentPos = target);
-      return;
-    }
-    _slideController.stop();
-    _slideDistance = (target - _currentPos).abs();
-    _slideAnimation = Tween<double>(
-      begin: _currentPos,
-      end: target,
-    ).animate(
-      CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
-    );
-    _slideController.forward(from: 0);
-  }
-
-  double _dxToContinuousPos(double localDx, double totalWidth) {
+  double _dxToUnclampedPos(double localDx, double totalWidth) {
+    if (totalWidth <= 0 || widget.items.isEmpty) return 0.0;
     final tabWidth = totalWidth / widget.items.length;
-    final raw = (localDx - tabWidth / 2) / tabWidth;
-    return raw.clamp(0.0, (widget.items.length - 1).toDouble());
+    return (localDx - tabWidth * 0.5) / tabWidth;
   }
 
   int _posToIndex(double pos) =>
       pos.round().clamp(0, widget.items.length - 1);
 
+  void _enterScrubMode(double localDx, double totalWidth) {
+    if (_isScrubbing) return;
+    _holdLiftTimer?.cancel();
+    _jiggPlayTimer?.cancel();
+    _isScrubbing = true;
+    final rawPos = _dxToUnclampedPos(localDx, totalWidth);
+    final nearest = _posToIndex(rawPos);
+    _lastHapticIndex = nearest;
+    _activeVisualIndex.value = nearest;
+    _motion.startDrag();
+    _motion.dragTo(rawPos, itemCount: widget.items.length);
+    HapticFeedback.lightImpact();
+  }
+
+  void _handlePointerDown(PointerDownEvent event, double totalWidth) {
+    if (_activePointerId != null) return;
+    if (event.kind == PointerDeviceKind.mouse &&
+        event.buttons != kPrimaryButton) {
+      return;
+    }
+    _activePointerId = event.pointer;
+    _pointerDownLocal = event.localPosition;
+    _isScrubbing = false;
+    _holdLiftTimer?.cancel();
+
+    // Holding a thumb briefly (110 ms) lifts the BitChord crystal lens right
+    // under your finger with zero horizontal movement required!
+    _holdLiftTimer = Timer(const Duration(milliseconds: 110), () {
+      if (!mounted || _activePointerId != event.pointer || _isScrubbing) return;
+      _enterScrubMode(_pointerDownLocal.dx, _currentTotalWidth);
+    });
+  }
+
+  void _handlePointerMove(PointerMoveEvent event, double totalWidth) {
+    if (event.pointer != _activePointerId) return;
+    final dx = (event.localPosition.dx - _pointerDownLocal.dx).abs();
+    final dy = (event.localPosition.dy - _pointerDownLocal.dy).abs();
+
+    if (!_isScrubbing) {
+      // Responsive 6 dp threshold (3× faster engagement than Flutter's 18 dp drag slop)
+      if (dx >= 6.0 && dx >= dy * 0.8) {
+        _enterScrubMode(event.localPosition.dx, totalWidth);
+      } else if (dy > 24.0) {
+        _holdLiftTimer?.cancel();
+      }
+      return;
+    }
+
+    final rawPos = _dxToUnclampedPos(event.localPosition.dx, totalWidth);
+    _motion.dragTo(rawPos, itemCount: widget.items.length);
+
+    final nearest = _posToIndex(rawPos);
+    if (nearest != _lastHapticIndex) {
+      _lastHapticIndex = nearest;
+      _activeVisualIndex.value = nearest;
+      HapticFeedback.selectionClick();
+      _triggerIconBounce(nearest);
+    }
+  }
+
+  void _handlePointerUp(PointerUpEvent event, double totalWidth) {
+    if (event.pointer != _activePointerId) return;
+    _holdLiftTimer?.cancel();
+    _activePointerId = null;
+
+    if (_isScrubbing) {
+      _isScrubbing = false;
+      // Match BitChord (FloatingTabBar.kt:916): commit the exact tab under the
+      // finger on lift so fast flicks always land where you release, while the
+      // spring glides the lifted crystal lens smoothly into that slot!
+      final targetIndex = _posToIndex(
+        _dxToUnclampedPos(event.localPosition.dx, totalWidth),
+      );
+      _activeVisualIndex.value = targetIndex;
+      _motion.release(targetIndex);
+      if (targetIndex != widget.currentIndex) {
+        _lastTriggeredTab = targetIndex;
+        _triggerIconBounce(targetIndex, delayed: true);
+        widget.onTap(targetIndex);
+      } else {
+        _triggerIconBounce(targetIndex);
+      }
+      return;
+    }
+
+    _handleTapAt(event.localPosition.dx, totalWidth);
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (event.pointer != _activePointerId) return;
+    _holdLiftTimer?.cancel();
+    _activePointerId = null;
+    if (_isScrubbing) {
+      _isScrubbing = false;
+      _activeVisualIndex.value = widget.currentIndex;
+      _motion.release(widget.currentIndex);
+    }
+  }
+
   void _handleTapAt(double localDx, double totalWidth) {
-    final index = _posToIndex(_dxToContinuousPos(localDx, totalWidth));
+    final index = _posToIndex(_dxToUnclampedPos(localDx, totalWidth));
     final isProfileTab = index == widget.items.length - 1;
 
     // Instant double-tap check on Profile tab (zero single-tap delay!)
@@ -337,105 +385,45 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     final switchingTab = index != widget.currentIndex;
     HapticFeedback.selectionClick();
     _lastTriggeredTab = index;
-    _animatePosTo(index.toDouble());
-    _syncLensExpansion();
-    _triggerIconBounce(index, delayed: switchingTab);
-
+    _activeVisualIndex.value = index;
     if (switchingTab) {
+      // BitChord behavior: tapping another tab lifts the crystal lens & glides!
+      _motion.animateTo(index);
+      _triggerIconBounce(index, delayed: true);
       widget.onTap(index);
-    }
-  }
-
-  void _handleDragStart(DragStartDetails details, double totalWidth) {
-    _jiggPlayTimer?.cancel();
-    _slideController.stop();
-    final pos = _dxToContinuousPos(details.localPosition.dx, totalWidth);
-    setState(() {
-      _isDragging = true;
-      _currentPos = pos;
-      _dragVelocityStretch = 0.0;
-    });
-    _lastHapticIndex = _posToIndex(pos);
-    HapticFeedback.lightImpact();
-    _syncLensExpansion();
-  }
-
-  void _handleDragUpdate(DragUpdateDetails details, double totalWidth) {
-    final pos = _dxToContinuousPos(details.localPosition.dx, totalWidth);
-    final nearest = _posToIndex(pos);
-    if (nearest != _lastHapticIndex) {
-      _lastHapticIndex = nearest;
-      HapticFeedback.selectionClick();
-      _triggerIconBounce(nearest);
-    }
-    setState(() {
-      _currentPos = pos;
-      _dragVelocityStretch = (details.delta.dx.abs() / 18.0).clamp(0.0, 0.20);
-    });
-  }
-
-  void _handleDragEnd(DragEndDetails details) {
-    final targetIndex = _posToIndex(_currentPos);
-    setState(() {
-      _isDragging = false;
-      _dragVelocityStretch = 0.0;
-    });
-    _animatePosTo(targetIndex.toDouble());
-    if (targetIndex != widget.currentIndex) {
-      _lastTriggeredTab = targetIndex;
-      _triggerIconBounce(targetIndex, delayed: true);
-      widget.onTap(targetIndex);
     } else {
-      _triggerIconBounce(targetIndex);
+      _triggerIconBounce(index);
     }
-    _syncLensExpansion();
-  }
-
-  void _handleDragCancel() {
-    setState(() {
-      _isDragging = false;
-      _dragVelocityStretch = 0.0;
-    });
-    _animatePosTo(widget.currentIndex.toDouble());
-    _syncLensExpansion();
   }
 
   // Only allow real pointer hover (mouse / trackpad / stylus) — never touch!
-  // This prevents Android/HyperOS touch events from ever leaving hover stuck.
   bool _isPointerHoverDevice(PointerEvent event) =>
       event.kind != PointerDeviceKind.touch;
 
   void _handleHoverEnter(PointerEnterEvent event, double totalWidth) {
-    if (!_isPointerHoverDevice(event) || _isDragging) return;
-    final pos = _dxToContinuousPos(event.localPosition.dx, totalWidth);
-    setState(() => _isHovering = true);
-    _animatePosTo(pos);
-    _syncLensExpansion();
+    if (!_isPointerHoverDevice(event) || _isScrubbing) return;
+    _isHovering = true;
+    final rawPos = _dxToUnclampedPos(event.localPosition.dx, totalWidth);
+    _motion.startDrag();
+    _motion.dragTo(rawPos, itemCount: widget.items.length);
+    _activeVisualIndex.value = _posToIndex(rawPos);
   }
 
   void _handleHoverMove(PointerHoverEvent event, double totalWidth) {
-    if (!_isPointerHoverDevice(event) || _isDragging) return;
-    final pos = _dxToContinuousPos(event.localPosition.dx, totalWidth);
-    _slideController.stop();
-    setState(() {
-      _isHovering = true;
-      _currentPos = pos;
-    });
+    if (!_isPointerHoverDevice(event) || _isScrubbing) return;
+    _isHovering = true;
+    final rawPos = _dxToUnclampedPos(event.localPosition.dx, totalWidth);
+    _motion.dragTo(rawPos, itemCount: widget.items.length);
+    _activeVisualIndex.value = _posToIndex(rawPos);
   }
 
   void _handleHoverExit(PointerExitEvent event) {
     if (!_isHovering) return;
-    setState(() => _isHovering = false);
-    if (!_isDragging) {
-      _animatePosTo(widget.currentIndex.toDouble());
+    _isHovering = false;
+    if (!_isScrubbing) {
+      _activeVisualIndex.value = widget.currentIndex;
+      _motion.release(widget.currentIndex);
     }
-    _syncLensExpansion();
-  }
-
-  Offset? _barGlobalOrigin() {
-    final box = _barKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize || !box.attached) return null;
-    return box.localToGlobal(Offset.zero);
   }
 
   @override
@@ -445,349 +433,305 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
     final dpr = MediaQuery.devicePixelRatioOf(context);
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    return AnimatedBuilder(
-      animation: _minimizeAnimation,
-      builder: (context, _) {
-        final m = _minimizeAnimation.value.clamp(0.0, 1.0);
-        final hPad = ui.lerpDouble(18.0, 48.0, m)!;
-        final maxBarWidth = ui.lerpDouble(460.0, 272.0, m)!;
-        final dockBoxHeight = ui.lerpDouble(82.0, 66.0, m)!;
-        final capsuleInsetV = ui.lerpDouble(9.0, 7.0, m)!;
-        final capsuleHeight = dockBoxHeight - capsuleInsetV * 2;
-        final capsuleRadius = capsuleHeight / 2;
-        final labelReveal = (1.0 - m * 1.45).clamp(0.0, 1.0);
-        final labelHeightFactor = (1.0 - m).clamp(0.0, 1.0);
+    return ValueListenableBuilder<TempoAppearanceSettings>(
+      valueListenable: TempoAppearanceService.instance.notifier,
+      builder: (context, appearance, _) {
+        _motion.reduceMotion = appearance.reduceAnimation ||
+            MediaQuery.disableAnimationsOf(context);
 
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            hPad,
-            0,
-            hPad,
-            bottomPadding > 0 ? bottomPadding : 14,
-          ),
-          child: Center(
-            heightFactor: 1,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: maxBarWidth),
-              child: SizedBox(
-                key: _barKey,
-                height: dockBoxHeight,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final totalWidth = constraints.maxWidth;
-                    final tabWidth = totalWidth / widget.items.length;
+        return AnimatedBuilder(
+          animation: _minimizeAnimation,
+          builder: (context, _) {
+            final m = _minimizeAnimation.value.clamp(0.0, 1.0);
+            final hPad = ui.lerpDouble(18.0, 48.0, m)!;
+            final maxBarWidth = ui.lerpDouble(460.0, 272.0, m)!;
+            final capsuleHeight = ui.lerpDouble(64.0, 52.0, m)!;
+            final capsuleRadius = capsuleHeight * 0.5;
+            final growHeight = ui.lerpDouble(
+              BitChordPillMotion.pillGrowHeightDp,
+              BitChordPillMotion.pillGrowHeightMinimizedDp,
+              m,
+            )!;
+            // Extra vertical allowance around the capsule so the lifted lens can
+            // stand boldly past the top and bottom edges of the dock (+9 dp).
+            final capsuleInsetV = ui.lerpDouble(10.0, 8.0, m)!;
+            final dockBoxHeight = capsuleHeight + capsuleInsetV * 2.0;
+            final labelReveal = (1.0 - m * 1.45).clamp(0.0, 1.0);
+            final labelHeightFactor = (1.0 - m).clamp(0.0, 1.0);
 
-                    return MouseRegion(
-                      onEnter: (e) => _handleHoverEnter(e, totalWidth),
-                      onHover: (e) => _handleHoverMove(e, totalWidth),
-                      onExit: _handleHoverExit,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapUp: (details) =>
-                            _handleTapAt(details.localPosition.dx, totalWidth),
-                        onHorizontalDragStart: (d) =>
-                            _handleDragStart(d, totalWidth),
-                        onHorizontalDragUpdate: (d) =>
-                            _handleDragUpdate(d, totalWidth),
-                        onHorizontalDragEnd: _handleDragEnd,
-                        onHorizontalDragCancel: _handleDragCancel,
-                        child: AnimatedBuilder(
-                          animation: Listenable.merge([
-                            _lensAnimation,
-                            _slideController,
-                            _iconBounceController,
-                          ]),
-                          builder: (context, _) {
-                            final t = _lensAnimation.value.clamp(0.0, 1.12);
-                            final tClamped = t.clamp(0.0, 1.0);
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                hPad,
+                0,
+                hPad,
+                bottomPadding > 0 ? bottomPadding : 12,
+              ),
+              child: Center(
+                heightFactor: 1,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxBarWidth),
+                  child: SizedBox(
+                    height: dockBoxHeight,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final totalWidth = constraints.maxWidth;
+                        _currentTotalWidth = totalWidth;
+                        final tabWidth = totalWidth / widget.items.length;
+                        _motion.stepDp = tabWidth;
 
-                            // BitChord volume-preserving liquid droplet stretch (STRETCH=0.16, SQUASH=0.50)
-                            final slideWave = _slideController.isAnimating
-                                ? math.sin(
-                                    math.pi *
-                                        (_slideController.value * 1.15)
-                                            .clamp(0.0, 1.0),
-                                  )
-                                : 0.0;
-                            final slideStretch = 0.16 *
-                                (_slideDistance / 3.0).clamp(0.0, 1.0) *
-                                slideWave;
-                            final totalStretch =
-                                math.max(_dragVelocityStretch, slideStretch);
+                        const restInset = 4.0;
+                        final restSize = Size(
+                          (tabWidth - restInset * 2.0).clamp(44.0, 140.0),
+                          (capsuleHeight - restInset * 2.0).clamp(38.0, 58.0),
+                        );
+                        final liftedH = capsuleHeight + growHeight;
+                        final liftedW = (liftedH * restSize.width / restSize.height)
+                            .clamp(restSize.width + 10.0, tabWidth * 1.24);
+                        final liftedSize = Size(liftedW, liftedH);
 
-                            final scaleX = 1.0 + totalStretch;
-                            final scaleY = 1.0 - totalStretch * 0.50;
+                        final showLiftedGlass =
+                            appearance.useLiquidGlass && !appearance.reduceAnimation;
 
-                            // Concentric recessed active pill rect (uniform 4px inner margin
-                            // so edge tabs curve seamlessly parallel to the outer frosted dock)
-                            const restPillInset = 4.0;
-                            final restPillWidth =
-                                (tabWidth - restPillInset * 2)
-                                    .clamp(48.0, 136.0);
-                            final restPillHeight =
-                                (capsuleHeight - restPillInset * 2)
-                                    .clamp(40.0, 56.0);
-                            final restPillTop =
-                                (dockBoxHeight - restPillHeight) / 2;
-                            final restPillLeft = (_currentPos * tabWidth +
-                                    (tabWidth - restPillWidth) / 2)
-                                .clamp(
-                                  restPillInset,
-                                  totalWidth - restPillWidth - restPillInset,
-                                );
-
-                            // Active Liquid Glass droplet rect (inflates over icons when dragging/hovering/pulsing)
-                            final dropletWidth =
-                                (tabWidth * 1.02).clamp(56.0, 116.0) *
-                                    ui.lerpDouble(0.88, 1.0, t)! *
-                                    scaleX;
-                            final dropletHeight = ui.lerpDouble(
-                                  restPillHeight,
-                                  ui.lerpDouble(74.0, 58.0, m)!,
-                                  t,
-                                )! *
-                                scaleY;
-                            final dropletTop =
-                                (dockBoxHeight - dropletHeight) / 2;
-                            final dropletLeft = (_currentPos * tabWidth +
-                                    (tabWidth - dropletWidth) / 2)
-                                .clamp(-2.0, totalWidth - dropletWidth + 2.0);
-
-                            // Single source of truth for highlighted tab
-                            final activeVisualIndex =
-                                (_isDragging || _isHovering)
-                                    ? _posToIndex(_currentPos)
-                                    : widget.currentIndex;
-
-                            // Compute exact screen-space rect for the interactive hover/drag/tap
-                            // GPU refraction droplet lens.
-                            final barOrigin = _barGlobalOrigin();
-                            final dropletScreenRect = barOrigin != null
-                                ? Rect.fromLTWH(
-                                    barOrigin.dx + dropletLeft,
-                                    barOrigin.dy + dropletTop,
-                                    dropletWidth,
-                                    dropletHeight,
-                                  )
-                                : Rect.zero;
-
-                            return Stack(
+                        return MouseRegion(
+                          onEnter: (e) => _handleHoverEnter(e, totalWidth),
+                          onHover: (e) => _handleHoverMove(e, totalWidth),
+                          onExit: _handleHoverExit,
+                          child: Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerDown: (e) =>
+                                _handlePointerDown(e, totalWidth),
+                            onPointerMove: (e) =>
+                                _handlePointerMove(e, totalWidth),
+                            onPointerUp: (e) =>
+                                _handlePointerUp(e, totalWidth),
+                            onPointerCancel: _handlePointerCancel,
+                            child: Stack(
                               clipBehavior: Clip.none,
                               alignment: Alignment.center,
                               children: [
-                                // LAYER 1: Frosted Glass Texture Floating Navbar Dock
-                                // Real Gaussian backdrop blur + satin micro-grain frost texture
-                                // so scrolling content diffuses softly behind the capsule.
+                                // LAYER 1 (STATIC): Frosted Outer Navbar Capsule
                                 Positioned(
                                   left: 0,
                                   right: 0,
                                   top: capsuleInsetV,
                                   bottom: capsuleInsetV,
-                                  child: _OpticalLiquidGlassDock(
-                                    radius: capsuleRadius,
-                                    isDark: isDark,
+                                  child: RepaintBoundary(
+                                    child: _OpticalLiquidGlassDock(
+                                      radius: capsuleRadius,
+                                      isDark: isDark,
+                                      appearance: appearance,
+                                      cardColor: c.card,
+                                      borderColor: c.cardBorder,
+                                    ),
                                   ),
                                 ),
 
-                                // LAYER 2A: Recessed Frosted Neutral Active Selection Pill
-                                // Concentric soft-shaded pill matching iOS 26/27 UITabBar style
-                                // at rest with subtle BitChord elastic stretch when gliding,
-                                // morphing into the GPU refraction droplet on drag/hover.
-                                if (tClamped < 0.99)
-                                  Positioned(
-                                    left: restPillLeft,
-                                    top: restPillTop,
-                                    width: restPillWidth,
-                                    height: restPillHeight,
-                                    child: IgnorePointer(
-                                      child: Opacity(
-                                        opacity:
-                                            (1.0 - tClamped).clamp(0.0, 1.0),
-                                        child: Transform(
-                                          alignment: Alignment.center,
-                                          transform: Matrix4.diagonal3Values(
-                                            scaleX,
-                                            scaleY,
-                                            1.0,
-                                          ),
-                                          child: Container(
-                                            decoration: BoxDecoration(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                restPillHeight / 2,
-                                              ),
-                                              gradient: LiquidGlassPalette
-                                                  .activeLensGradient(
-                                                isDark: isDark,
-                                              ),
-                                              border: Border.all(
-                                                color: isDark
-                                                    ? Colors.white.withValues(
-                                                        alpha: 0.11,
-                                                      )
-                                                    : Colors.black.withValues(
-                                                        alpha: 0.045,
-                                                      ),
-                                                width: 0.65,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
+                                // LAYER 2A (PAINT-ONLY): Resting Flat Selection Pill
+                                // Repaints directly from `_motion` with 0 widget rebuilds!
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: _FlatSelectionPillPainter(
+                                        motion: _motion,
+                                        tabWidth: tabWidth,
+                                        itemCount: widget.items.length,
+                                        dockBoxHeight: dockBoxHeight,
+                                        restSize: restSize,
+                                        liftedSize: liftedSize,
+                                        isDark: isDark,
+                                        clearWhileLifted:
+                                            appearance.useGlassRefraction &&
+                                                showLiftedGlass,
                                       ),
                                     ),
                                   ),
+                                ),
 
-                                // LAYER 2B: Tab Icons & Collapsing Labels
+                                // LAYER 2B (ISOLATED): Tab Icons & Collapsing Labels
+                                // Only updates when the highlighted integer tab changes!
                                 Positioned(
                                   left: 0,
                                   right: 0,
                                   top: capsuleInsetV,
                                   bottom: capsuleInsetV,
-                                  child: Row(
-                                    children:
-                                        List.generate(widget.items.length, (i) {
-                                      final item = widget.items[i];
-                                      final isActive = i == activeVisualIndex;
-                                      final activeTint =
-                                          isActive ? c.accent : c.navInactive;
-                                      final isProfileTab =
-                                          i == widget.items.length - 1;
-                                      final hasProfileAvatar = isProfileTab &&
-                                          (widget.profileName
-                                                  ?.trim()
-                                                  .isNotEmpty ??
-                                              false);
-
-                                      final isJiggTab = i >= 0 && i <= 2;
-                                      final animVal = (_bouncingTabIndex == i &&
-                                              _iconBounceController.isAnimating)
-                                          ? _iconBounceController.value
-                                          : 0.0;
-                                      // Jiggicons (tabs 0-2) play their own authentic spring keyframes
-                                      // cleanly without outer scale interference; Profile avatar uses bounceScale.
-                                      final bounceScale =
-                                          (!isJiggTab && animVal > 0)
-                                              ? 1.0 +
-                                                  0.24 *
-                                                      math.sin(
-                                                        animVal * math.pi,
-                                                      ) *
-                                                      (1.0 - animVal * 0.35)
-                                              : 1.0;
-                                      final tiltAngle = 0.0;
-                                      final liftY = 0.0;
-
-                                      return Expanded(
-                                        child: Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.center,
-                                          children: [
-                                            Transform.translate(
-                                              offset: Offset(0, liftY),
-                                              child: Transform.rotate(
-                                                angle: tiltAngle,
-                                                child: Transform.scale(
-                                                  scale: bounceScale,
-                                                  child: hasProfileAvatar
-                                                      ? LocalProfileAvatar(
-                                                          name: widget
-                                                              .profileName!,
-                                                          avatarPath: widget
-                                                                  .profileAvatarPath ??
-                                                              '',
-                                                          size: 25,
-                                                          showBorder: true,
-                                                          borderWidth: 1.8,
-                                                          borderColor: isActive
-                                                              ? c.accent
-                                                              : (isDark
-                                                                  ? Colors.white
-                                                                      .withValues(
-                                                                          alpha:
-                                                                              0.35)
-                                                                  : Colors
-                                                                      .white),
-                                                          showShadow: false,
-                                                        )
-                                                      : _buildNavIcon(
-                                                          index: i,
-                                                          item: item,
-                                                          isActive: isActive,
-                                                          color: activeTint,
-                                                        ),
-                                                ),
-                                              ),
-                                            ),
-                                            if (labelHeightFactor > 0.02)
-                                              ClipRect(
-                                                child: Align(
-                                                  alignment: Alignment.topCenter,
-                                                  heightFactor:
+                                  child: RepaintBoundary(
+                                    child: ValueListenableBuilder<int>(
+                                      valueListenable: _activeVisualIndex,
+                                      builder: (context, activeIdx, _) {
+                                        return AnimatedBuilder(
+                                          animation: _iconBounceController,
+                                          builder: (context, _) {
+                                            return Row(
+                                              children: List.generate(
+                                                widget.items.length,
+                                                (i) => _buildTabCell(
+                                                  index: i,
+                                                  isActive: i == activeIdx,
+                                                  c: c,
+                                                  isDark: isDark,
+                                                  labelHeightFactor:
                                                       labelHeightFactor,
-                                                  child: Opacity(
-                                                    opacity: labelReveal,
-                                                    child: Padding(
-                                                      padding:
-                                                          const EdgeInsets.only(
-                                                        top: 3,
-                                                      ),
-                                                      child: Text(
-                                                        item.label,
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                          fontSize: 11,
-                                                          fontWeight: isActive
-                                                              ? FontWeight.w700
-                                                              : FontWeight.w500,
-                                                          letterSpacing: -0.1,
-                                                          color: activeTint,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
+                                                  labelReveal: labelReveal,
                                                 ),
                                               ),
-                                          ],
-                                        ),
-                                      );
-                                    }),
+                                            );
+                                          },
+                                        );
+                                      },
+                                    ),
                                   ),
                                 ),
 
-                                // LAYER 3 (TOP): Screen-space GPU Optical Liquid Glass Droplet
-                                if (tClamped > 0.01 && barOrigin != null)
-                                  Positioned(
-                                    left: dropletLeft,
-                                    top: dropletTop,
-                                    width: dropletWidth,
-                                    height: dropletHeight,
+                                // LAYER 3 (TOP, ZERO-ALLOCATION POOLED GPU LENS):
+                                // BitChord 7-band chromatic dispersion crystal droplet!
+                                // Listens directly to `_motion` in RenderObject -> 0 rebuilds!
+                                if (showLiftedGlass)
+                                  Positioned.fill(
                                     child: IgnorePointer(
-                                      child: _OpticalLiquidGlassDroplet(
+                                      child: BitChordGlassLensBox(
                                         program: _program,
-                                        screenRect: dropletScreenRect,
-                                        expansion: tClamped,
+                                        repaint: _motion,
                                         isDark: isDark,
                                         dpr: dpr,
-                                        pressIntensity:
-                                            _isDragging ? 0.85 : 0.30,
+                                        useRefractionShader:
+                                            appearance.useGlassRefraction,
+                                        frameBuilder: (_) {
+                                          if (_motion.isFlat ||
+                                              tabWidth <= 0) {
+                                            return BitChordLensFrame.inactive;
+                                          }
+                                          final liveSize = _motion.liveSize(
+                                            restSize,
+                                            liftedSize,
+                                          );
+                                          final cx =
+                                              (_motion.position + 0.5) *
+                                                  tabWidth;
+                                          final cy = dockBoxHeight * 0.5;
+                                          final localRect = Rect.fromCenter(
+                                            center: Offset(cx, cy),
+                                            width: liveSize.width,
+                                            height: liveSize.height,
+                                          );
+                                          final presence =
+                                              _motion.glassPresence;
+                                          final material = _motion.material;
+                                          final rimAlpha =
+                                              (material * _motion.rimFactor)
+                                                  .clamp(0.0, 1.0);
+                                          return BitChordLensFrame(
+                                            active: true,
+                                            rect: localRect,
+                                            borderRadius:
+                                                liveSize.height * 0.5,
+                                            refractionHeightDp:
+                                                12.0 * presence,
+                                            refractionAmountDp:
+                                                14.0 * material,
+                                            depthEffect: 0.45,
+                                            aberration: 1.0,
+                                            rimAlpha: rimAlpha,
+                                            shadowAlpha: rimAlpha,
+                                            material: material,
+                                          );
+                                        },
                                       ),
                                     ),
                                   ),
                               ],
-                            );
-                          },
-                        ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildTabCell({
+    required int index,
+    required bool isActive,
+    required AppColors c,
+    required bool isDark,
+    required double labelHeightFactor,
+    required double labelReveal,
+  }) {
+    final item = widget.items[index];
+    final activeTint = isActive ? c.accent : c.navInactive;
+    final isProfileTab = index == widget.items.length - 1;
+    final hasProfileAvatar =
+        isProfileTab && (widget.profileName?.trim().isNotEmpty ?? false);
+
+    final isJiggTab = index >= 0 && index <= 2;
+    final animVal =
+        (_bouncingTabIndex == index && _iconBounceController.isAnimating)
+            ? _iconBounceController.value
+            : 0.0;
+    final bounceScale = (!isJiggTab && animVal > 0)
+        ? 1.0 +
+            0.24 * math.sin(animVal * math.pi) * (1.0 - animVal * 0.35)
+        : 1.0;
+
+    return Expanded(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Transform.scale(
+            scale: bounceScale,
+            child: hasProfileAvatar
+                ? LocalProfileAvatar(
+                    name: widget.profileName!,
+                    avatarPath: widget.profileAvatarPath ?? '',
+                    size: 25,
+                    showBorder: true,
+                    borderWidth: 1.8,
+                    borderColor: isActive
+                        ? c.accent
+                        : (isDark
+                            ? Colors.white.withValues(alpha: 0.35)
+                            : Colors.white),
+                    showShadow: false,
+                  )
+                : _buildNavIcon(
+                    index: index,
+                    item: item,
+                    isActive: isActive,
+                    color: activeTint,
+                  ),
+          ),
+          if (labelHeightFactor > 0.02)
+            ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: labelHeightFactor,
+                child: Opacity(
+                  opacity: labelReveal,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      item.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            isActive ? FontWeight.w700 : FontWeight.w500,
+                        letterSpacing: -0.1,
+                        color: activeTint,
                       ),
-                    );
-                  },
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -824,29 +768,58 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   }
 }
 
-/// Smooth X / iOS 26-style frosted glass floating outer navbar capsule using
-/// silky Gaussian backdrop blur (`sigma: 28`), a sheer translucent glass veil
-/// so scrolled cards and colors bloom softly behind the bar, and a crisp thin
-/// specular glass rim — with zero artificial noise/grain texture.
+/// Outer floating navbar capsule that adapts cleanly to all Appearance settings:
+/// - Full Liquid Glass (`sigma: 24` + crisp 45° specular rim)
+/// - Better Performance for Glass (`sigma: 16` lighter frost + specular rim)
+/// - Liquid Glass OFF (classic soft blur without optical lens)
+/// - Reduce Dynamic Blur ON (zero `BackdropFilter`, clean opaque `c.card` capsule)
 class _OpticalLiquidGlassDock extends StatelessWidget {
   final double radius;
   final bool isDark;
+  final TempoAppearanceSettings appearance;
+  final Color cardColor;
+  final Color borderColor;
 
   const _OpticalLiquidGlassDock({
     required this.radius,
     required this.isDark,
+    required this.appearance,
+    required this.cardColor,
+    required this.borderColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (appearance.reduceDynamicBlur) {
+      return Container(
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: borderColor, width: 0.9),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.08),
+              blurRadius: 20,
+              spreadRadius: -3,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final blurSigma = !appearance.liquidGlass
+        ? 18.0
+        : (appearance.betterGlassPerformance ? 16.0 : 24.0);
+
     final frostedFill = LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: isDark
           ? [
-              const Color(0xFF22242A).withValues(alpha: 0.44),
-              const Color(0xFF141519).withValues(alpha: 0.36),
-              const Color(0xFF1C1E24).withValues(alpha: 0.42),
+              const Color(0xFF1E2026).withValues(alpha: 0.44),
+              const Color(0xFF121317).withValues(alpha: 0.36),
+              const Color(0xFF1A1C22).withValues(alpha: 0.42),
             ]
           : [
               Colors.white.withValues(alpha: 0.56),
@@ -854,6 +827,16 @@ class _OpticalLiquidGlassDock extends StatelessWidget {
               Colors.white.withValues(alpha: 0.54),
             ],
       stops: const [0.0, 0.52, 1.0],
+    );
+
+    final inner = Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        gradient: frostedFill,
+        border: appearance.liquidGlass
+            ? null
+            : Border.all(color: borderColor, width: 0.8),
+      ),
     );
 
     return Container(
@@ -874,119 +857,105 @@ class _OpticalLiquidGlassDock extends StatelessWidget {
         borderRadius: BorderRadius.circular(radius),
         child: BackdropFilter(
           filter: ui.ImageFilter.blur(
-            sigmaX: 28,
-            sigmaY: 28,
+            sigmaX: blurSigma,
+            sigmaY: blurSigma,
             tileMode: ui.TileMode.clamp,
           ),
-          child: CustomPaint(
-            foregroundPainter: LiquidGlassRimPainter(
-              borderRadius: radius,
-              isDark: isDark,
-              intensity: isDark ? 0.95 : 0.92,
-              strokeWidth: 1.05,
-              showTopMeniscus: false,
-            ),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(radius),
-                gradient: frostedFill,
-              ),
-            ),
-          ),
+          child: appearance.liquidGlass
+              ? CustomPaint(
+                  foregroundPainter: LiquidGlassRimPainter(
+                    borderRadius: radius,
+                    isDark: isDark,
+                    intensity: isDark ? 0.92 : 0.90,
+                    strokeWidth: 0.95,
+                    showTopMeniscus: false,
+                  ),
+                  child: inner,
+                )
+              : inner,
         ),
       ),
     );
   }
 }
 
-class _OpticalLiquidGlassDroplet extends StatelessWidget {
-  final ui.FragmentProgram? program;
-  final Rect screenRect;
-  final double expansion;
+/// Paint-only resting selection pill driven directly by [BitChordPillMotion].
+/// Fades smoothly out (`1 - material`) when the crystal refraction lens lifts
+/// so the lifted lens stays 100% transparent glass (exact BitChord handoff).
+class _FlatSelectionPillPainter extends CustomPainter {
+  final BitChordPillMotion motion;
+  final double tabWidth;
+  final int itemCount;
+  final double dockBoxHeight;
+  final Size restSize;
+  final Size liftedSize;
   final bool isDark;
-  final double dpr;
-  final double pressIntensity;
+  final bool clearWhileLifted;
 
-  const _OpticalLiquidGlassDroplet({
-    required this.program,
-    required this.screenRect,
-    required this.expansion,
+  _FlatSelectionPillPainter({
+    required this.motion,
+    required this.tabWidth,
+    required this.itemCount,
+    required this.dockBoxHeight,
+    required this.restSize,
+    required this.liftedSize,
     required this.isDark,
-    required this.dpr,
-    required this.pressIntensity,
-  });
+    required this.clearWhileLifted,
+  }) : super(repaint: motion);
 
   @override
-  Widget build(BuildContext context) {
-    final radius = ui.lerpDouble(26.0, 38.0, expansion)!;
+  void paint(Canvas canvas, Size size) {
+    final alphaFactor =
+        clearWhileLifted ? (1.0 - motion.material).clamp(0.0, 1.0) : 1.0;
+    if (alphaFactor <= 0.004 || tabWidth <= 0) return;
 
-    Widget lensContent;
-    if (program != null && ui.ImageFilter.isShaderFilterSupported) {
-      final shader = program!.fragmentShader();
-      // Indices 0 & 1 are u_size (populated automatically by Impeller)
-      shader.setFloat(2, screenRect.left * dpr); // u_rectLeft
-      shader.setFloat(3, screenRect.top * dpr); // u_rectTop
-      shader.setFloat(4, screenRect.width * dpr); // u_rectWidth
-      shader.setFloat(5, screenRect.height * dpr); // u_rectHeight
-      shader.setFloat(6, expansion); // u_expansion
-      shader.setFloat(7, 11.0 * dpr); // u_bevel
-      shader.setFloat(8, 9.0 * dpr); // u_refract
-      shader.setFloat(9, 0.08); // u_dispersion
-      shader.setFloat(10, isDark ? 1.0 : 0.0); // u_isDark
-      shader.setFloat(11, pressIntensity); // u_press
-
-      lensContent = ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.shader(shader),
-          child: const SizedBox.expand(),
-        ),
-      );
-    } else {
-      lensContent = ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(radius),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: isDark
-                  ? [
-                      Colors.white.withValues(alpha: 0.16 * expansion),
-                      Colors.transparent,
-                      Colors.white.withValues(alpha: 0.10 * expansion),
-                    ]
-                  : [
-                      Colors.white.withValues(alpha: 0.34 * expansion),
-                      Colors.white.withValues(alpha: 0.04 * expansion),
-                      Colors.white.withValues(alpha: 0.22 * expansion),
-                    ],
-            ),
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.35 * expansion)
-                  : Colors.white.withValues(alpha: 0.92 * expansion),
-              width: 1.4,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(radius),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black
-                .withValues(alpha: (isDark ? 0.36 : 0.11) * expansion),
-            blurRadius: 16 * expansion,
-            offset: Offset(0, 5 * expansion),
-          ),
-        ],
-      ),
-      child: lensContent,
+    final liveSize = motion.liveSize(restSize, liftedSize);
+    final cx = (motion.position + 0.5) * tabWidth;
+    final cy = dockBoxHeight * 0.5;
+    final rect = Rect.fromCenter(
+      center: Offset(cx, cy),
+      width: liveSize.width,
+      height: liveSize.height,
     );
+    final rrect = RRect.fromRectAndRadius(
+      rect,
+      Radius.circular(liveSize.height * 0.5),
+    );
+
+    final fillPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: isDark
+            ? [
+                Colors.white.withValues(alpha: 0.16 * alphaFactor),
+                Colors.white.withValues(alpha: 0.12 * alphaFactor),
+                Colors.white.withValues(alpha: 0.14 * alphaFactor),
+              ]
+            : [
+                const Color(0xFF1C1C1E).withValues(alpha: 0.125 * alphaFactor),
+                const Color(0xFF1C1C1E).withValues(alpha: 0.095 * alphaFactor),
+                const Color(0xFF1C1C1E).withValues(alpha: 0.110 * alphaFactor),
+              ],
+        stops: const [0.0, 0.52, 1.0],
+      ).createShader(rect);
+    canvas.drawRRect(rrect, fillPaint);
+
+    final borderPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.65
+      ..color = isDark
+          ? Colors.white.withValues(alpha: 0.11 * alphaFactor)
+          : Colors.black.withValues(alpha: 0.045 * alphaFactor);
+    canvas.drawRRect(rrect, borderPaint);
   }
+
+  @override
+  bool shouldRepaint(covariant _FlatSelectionPillPainter oldDelegate) =>
+      oldDelegate.tabWidth != tabWidth ||
+      oldDelegate.dockBoxHeight != dockBoxHeight ||
+      oldDelegate.restSize != restSize ||
+      oldDelegate.liftedSize != liftedSize ||
+      oldDelegate.isDark != isDark ||
+      oldDelegate.clearWhileLifted != clearWhileLifted;
 }

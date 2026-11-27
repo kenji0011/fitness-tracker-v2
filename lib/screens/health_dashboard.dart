@@ -14,6 +14,7 @@ import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/appearance_service.dart';
 import '../services/step_counter_sync.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
@@ -635,8 +636,10 @@ class _HealthDashboardState extends State<HealthDashboard>
                     // --- 2-Column Rich Health Metric Grid (user-configurable via Manage health features) ---
                     Builder(
                       builder: (_) {
-                        final cardMap = <String, Widget>{
-                          'sleep': _HealthGridTile(
+                        final cardBuilders =
+                            <String, Widget Function(bool isGlassDragging)>{
+                          'sleep': (glassDrag) => _HealthGridTile(
+                            isGlassDragging: glassDrag,
                             badgeIcon: CupertinoIcons.bed_double_fill,
                             jiggIconName: 'weather-moon',
                             badgeColor: const Color(0xFF6B63F6),
@@ -669,7 +672,8 @@ class _HealthDashboardState extends State<HealthDashboard>
                               if (mounted) _loadDashboard();
                             },
                           ),
-                          'weight': _HealthGridTile(
+                          'weight': (glassDrag) => _HealthGridTile(
+                            isGlassDragging: glassDrag,
                             badgeIcon: CupertinoIcons.gauge,
                             badgeColor: const Color(0xFF4CD964),
                             title: 'Weight',
@@ -693,7 +697,8 @@ class _HealthDashboardState extends State<HealthDashboard>
                               if (mounted) _loadDashboard();
                             },
                           ),
-                          'bmi': _HealthGridTile(
+                          'bmi': (glassDrag) => _HealthGridTile(
+                            isGlassDragging: glassDrag,
                             badgeIcon: CupertinoIcons.heart_fill,
                             jiggIconName: 'heart',
                             badgeColor: const Color(0xFFE84A4A),
@@ -716,7 +721,8 @@ class _HealthDashboardState extends State<HealthDashboard>
                               weightPoints: weightPts,
                             ),
                           ),
-                          'waist': _HealthGridTile(
+                          'waist': (glassDrag) => _HealthGridTile(
+                            isGlassDragging: glassDrag,
                             badgeIcon: CupertinoIcons.resize_h,
                             badgeColor: const Color(0xFF3CC29E),
                             title: 'Waist',
@@ -736,7 +742,8 @@ class _HealthDashboardState extends State<HealthDashboard>
                               borderRadius: 20,
                             ),
                           ),
-                          'burn': _HealthGridTile(
+                          'burn': (glassDrag) => _HealthGridTile(
+                            isGlassDragging: glassDrag,
                             badgeIcon: CupertinoIcons.bolt_fill,
                             jiggIconName: 'flash',
                             badgeColor: const Color(0xFFF39C2E),
@@ -756,7 +763,8 @@ class _HealthDashboardState extends State<HealthDashboard>
                               borderRadius: 20,
                             ),
                           ),
-                          'workouts': _HealthGridTile(
+                          'workouts': (glassDrag) => _HealthGridTile(
+                            isGlassDragging: glassDrag,
                             badgeIcon: CupertinoIcons.flame_fill,
                             jiggIconName: 'dumbbell',
                             badgeColor: const Color(0xFFE8527A),
@@ -775,7 +783,8 @@ class _HealthDashboardState extends State<HealthDashboard>
                             ),
                             onTap: (_) => widget.onSwitchToWorkouts?.call(),
                           ),
-                          'water': _HealthGridTile(
+                          'water': (glassDrag) => _HealthGridTile(
+                            isGlassDragging: glassDrag,
                             badgeIcon: CupertinoIcons.drop_fill,
                             jiggIconName: 'drop',
                             jiggController: _waterDropController,
@@ -817,7 +826,7 @@ class _HealthDashboardState extends State<HealthDashboard>
                         };
 
                         final visibleIds = _enabledSummaryFeatures
-                            .where(cardMap.containsKey)
+                            .where(cardBuilders.containsKey)
                             .toList();
 
                         if (visibleIds.isEmpty) {
@@ -844,7 +853,11 @@ class _HealthDashboardState extends State<HealthDashboard>
                           itemIds: visibleIds,
                           spacing: 10,
                           childAspectRatio: 0.94,
-                          itemBuilder: (_, id, __) => cardMap[id]!,
+                          itemBuilder: (_, id, isDragging) => cardBuilders[id]!(
+                            isDragging &&
+                                TempoAppearanceService
+                                    .instance.value.useLiquidGlass,
+                          ),
                           onReorder: _persistSummaryOrder,
                         );
                       },
@@ -1051,6 +1064,7 @@ class _RingMetricColumn extends StatelessWidget {
 }
 
 class _HealthGridTile extends StatelessWidget {
+  final bool isGlassDragging;
   final IconData badgeIcon;
   final String? jiggIconName;
   final JiggIconController? jiggController;
@@ -1064,6 +1078,7 @@ class _HealthGridTile extends StatelessWidget {
   final void Function(BuildContext tileContext) onTap;
 
   const _HealthGridTile({
+    this.isGlassDragging = false,
     required this.badgeIcon,
     this.jiggIconName,
     this.jiggController,
@@ -1080,12 +1095,7 @@ class _HealthGridTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return RepaintBoundary(
-      child: AppleCard(
-        borderRadius: 20,
-        padding: const EdgeInsets.all(13),
-        onTap: () => onTap(context),
-        child: Column(
+    final content = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -1197,7 +1207,21 @@ class _HealthGridTile extends StatelessWidget {
             const Spacer(),
             chart,
           ],
-        ),
+        );
+
+    if (isGlassDragging) {
+      return Padding(
+        padding: const EdgeInsets.all(13),
+        child: content,
+      );
+    }
+
+    return RepaintBoundary(
+      child: AppleCard(
+        borderRadius: 20,
+        padding: const EdgeInsets.all(13),
+        onTap: () => onTap(context),
+        child: content,
       ),
     );
   }

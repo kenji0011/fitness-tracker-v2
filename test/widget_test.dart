@@ -554,7 +554,8 @@ void main() {
     expect(find.text('Male | 173cm | 61.0kg | 21'), findsOneWidget);
     expect(find.text('PREFERENCES'), findsOneWidget);
     expect(find.text('DATA & MEDIA'), findsOneWidget);
-    expect(find.text('Dark mode'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Dark mode'), findsNothing);
     expect(find.text('Live step counter'), findsOneWidget);
     expect(find.text('Clean light appearance active'), findsNothing);
     expect(find.text('Private on-device album & comparison'), findsNothing);
@@ -1526,7 +1527,7 @@ void main() {
     // Navigate to Profile (last child in Stack)
     await tester.tap(find.text('Profile').last);
     await tester.pumpAndSettle();
-    expect(find.text('Dark mode'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
 
     // Navigate back to Summary -> Profile AnimatedOpacity reaches 0.0 AND moves Offstage
     await tester.tap(find.text('Summary').last);

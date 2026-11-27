@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../services/animation_speed_service.dart';
+import '../services/appearance_service.dart';
 import '../theme/app_colors.dart';
 import 'tempo_spring_physics.dart';
 
@@ -324,12 +325,22 @@ class TempoMorphPageRoute<T> extends PageRoute<T> {
   /// True for both circular glass header buttons (`sourceBorderRadius >= 999`)
   /// and compact square/squircle app-icon launchers (e.g. Workout HIIT Burn /
   /// Strength / Cardio / Endurance / Mobility `56×56` squircles) so they share
-  /// zero-ghosting anchor suppression and HyperOS 4 decoupled icon physics.
+  /// HyperOS 4 decoupled icon physics.
   bool get _isCompactIconKeySource {
     if (sourceKey == null) return false;
     final r = initialSourceRect;
     if (r == null) return sourceBorderRadius >= 999.0;
     return (r.width - r.height).abs() <= 10.0 && r.width <= 84.0;
+  }
+
+  /// True for compact keyed header buttons (circular icons, squircles, AND
+  /// compact glass capsule pills like `[ + Custom ]`) so they receive zero-ghost
+  /// anchor suppression and 0 ms rapid mid-close re-tap ownership handoff.
+  bool get _shouldSuppressAnchorKey {
+    if (sourceKey == null) return false;
+    if (_isCompactIconKeySource) return true;
+    final r = initialSourceRect;
+    return r != null && r.height <= 48.0 && r.width <= 180.0;
   }
 
   @override
@@ -349,15 +360,22 @@ class TempoMorphPageRoute<T> extends PageRoute<T> {
 
   @override
   Duration get transitionDuration =>
-      TempoAnimationSpeedService.instance.scale(const Duration(milliseconds: 460));
+      TempoAppearanceService.instance.reduceAnimation
+          ? const Duration(milliseconds: 120)
+          : TempoAnimationSpeedService.instance
+              .scale(const Duration(milliseconds: 460));
 
   @override
-  Duration get reverseTransitionDuration => TempoAnimationSpeedService.instance
-      .scale(Duration(milliseconds: _isCompactIconKeySource ? 540 : 470));
+  Duration get reverseTransitionDuration =>
+      TempoAppearanceService.instance.reduceAnimation
+          ? const Duration(milliseconds: 110)
+          : TempoAnimationSpeedService.instance.scale(
+              Duration(milliseconds: _isCompactIconKeySource ? 540 : 470),
+            );
 
   void _syncAnchorSuppression(bool hideAnchor) {
     final key = sourceKey;
-    if (key == null || !_isCompactIconKeySource) return;
+    if (key == null || !_shouldSuppressAnchorKey) return;
     if (hideAnchor) {
       _activeMorphRouteByKey[key] = this;
       if (!identical(activeTempoMorphAnchorKey.value, key)) {
@@ -373,7 +391,7 @@ class TempoMorphPageRoute<T> extends PageRoute<T> {
 
   bool get _supersededByNewerRoute {
     final key = sourceKey;
-    if (key == null || !_isCompactIconKeySource) return false;
+    if (key == null || !_shouldSuppressAnchorKey) return false;
     final owner = _activeMorphRouteByKey[key];
     return owner != null && !identical(owner, this);
   }
@@ -498,7 +516,7 @@ class TempoMorphPageRoute<T> extends PageRoute<T> {
     // Freeze the settled destination page into a GPU texture synchronously
     // BEFORE Frame 0 of the reverse animation starts!
     _ensurePageSnapshotCaptured();
-    if (_isCompactIconKeySource) {
+    if (_shouldSuppressAnchorKey) {
       _syncAnchorSuppression(true);
     }
     return super.didPop(result);
@@ -532,7 +550,7 @@ class TempoMorphPageRoute<T> extends PageRoute<T> {
   void _scheduleFreshCloseSnapshot() {
     if (_scheduledCloseRecapture ||
         _liveSnapshotGetter == null ||
-        _isCompactIconKeySource) {
+        _shouldSuppressAnchorKey) {
       return;
     }
     _scheduledCloseRecapture = true;

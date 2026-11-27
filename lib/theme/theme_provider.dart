@@ -22,7 +22,10 @@ class ThemeProvider with ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(_prefKey);
-      if (saved == 'dark' && _themeMode != ThemeMode.dark) {
+      if (saved == 'system' && _themeMode != ThemeMode.system) {
+        _themeMode = ThemeMode.system;
+        notifyListeners();
+      } else if (saved == 'dark' && _themeMode != ThemeMode.dark) {
         _themeMode = ThemeMode.dark;
         notifyListeners();
       } else if (saved == 'light' && _themeMode != ThemeMode.light) {
@@ -42,10 +45,12 @@ class ThemeProvider with ChangeNotifier {
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        _prefKey,
-        mode == ThemeMode.dark ? 'dark' : 'light',
-      );
+      final encoded = switch (mode) {
+        ThemeMode.system => 'system',
+        ThemeMode.dark => 'dark',
+        ThemeMode.light => 'light',
+      };
+      await prefs.setString(_prefKey, encoded);
     } catch (_) {}
   }
 }

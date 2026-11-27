@@ -3,7 +3,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/appearance_service.dart';
 import '../theme/app_colors.dart';
+import 'bitchord_glass_lens.dart';
 import 'ios_popover_menu.dart';
 import 'liquid_glass_surface.dart';
 import 'tempo_morph_route.dart';
@@ -115,61 +117,76 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final isDark = c.isDark;
+    final appearance = TempoAppearanceService.instance.value;
+    final useBlur = widget.enableBlur && appearance.allowDynamicBlur;
+    final useRim = appearance.useLiquidGlass;
     final scrollBoost = widget.glassOpacity.clamp(0.0, 1.0);
     final rimIntensity = _pressed ? 1.25 : (0.98 + 0.14 * scrollBoost);
     final shadowAlpha = (isDark ? 0.40 : 0.095) * (0.88 + 0.12 * scrollBoost);
-    final blurSigma = _pressed ? 18.0 : (14.0 + 3.0 * scrollBoost);
+    final blurSigma = _pressed
+        ? 18.0
+        : (appearance.betterGlassPerformance
+            ? 12.0
+            : (14.0 + 3.0 * scrollBoost));
 
-    final glassInner = CustomPaint(
-      foregroundPainter: LiquidGlassRimPainter(
-        borderRadius: widget.size / 2,
-        isDark: isDark,
-        intensity: rimIntensity,
-        strokeWidth: 1.2,
-        tintColor: widget.tintColor,
+    final innerFill = AnimatedContainer(
+      duration: const Duration(milliseconds: 140),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: !useBlur ? c.card : null,
+        border: !useRim ? Border.all(color: c.cardBorder, width: 0.8) : null,
+        gradient: !useBlur
+            ? null
+            : (widget.tintColor != null
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      widget.tintColor!.withValues(
+                        alpha: isDark
+                            ? (_pressed ? 0.36 : 0.24)
+                            : (_pressed ? 0.24 : 0.15),
+                      ),
+                      widget.tintColor!.withValues(
+                        alpha: isDark
+                            ? (_pressed ? 0.24 : 0.14)
+                            : (_pressed ? 0.16 : 0.09),
+                      ),
+                    ],
+                  )
+                : LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: isDark
+                        ? [
+                            const Color(0xFF363842)
+                                .withValues(alpha: _pressed ? 0.84 : 0.72),
+                            const Color(0xFF17181E)
+                                .withValues(alpha: _pressed ? 0.88 : 0.76),
+                          ]
+                        : [
+                            Colors.white
+                                .withValues(alpha: _pressed ? 0.88 : 0.78),
+                            const Color(0xFFF3F5FA)
+                                .withValues(alpha: _pressed ? 0.78 : 0.68),
+                          ],
+                  )),
       ),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: widget.tintColor != null
-              ? LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    widget.tintColor!.withValues(
-                      alpha: isDark
-                          ? (_pressed ? 0.36 : 0.24)
-                          : (_pressed ? 0.24 : 0.15),
-                    ),
-                    widget.tintColor!.withValues(
-                      alpha: isDark
-                          ? (_pressed ? 0.24 : 0.14)
-                          : (_pressed ? 0.16 : 0.09),
-                    ),
-                  ],
-                )
-              : LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: isDark
-                      ? [
-                          const Color(0xFF363842)
-                              .withValues(alpha: _pressed ? 0.84 : 0.72),
-                          const Color(0xFF17181E)
-                              .withValues(alpha: _pressed ? 0.88 : 0.76),
-                        ]
-                      : [
-                          Colors.white
-                              .withValues(alpha: _pressed ? 0.88 : 0.78),
-                          const Color(0xFFF3F5FA)
-                              .withValues(alpha: _pressed ? 0.78 : 0.68),
-                        ],
-                ),
-        ),
-        child: Center(child: widget.icon),
-      ),
+      child: Center(child: widget.icon),
     );
+
+    final glassInner = useRim
+        ? CustomPaint(
+            foregroundPainter: LiquidGlassRimPainter(
+              borderRadius: widget.size / 2,
+              isDark: isDark,
+              intensity: rimIntensity,
+              strokeWidth: 1.2,
+              tintColor: widget.tintColor,
+            ),
+            child: innerFill,
+          )
+        : innerFill;
 
     Widget btn = GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -213,7 +230,7 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
               ],
             ),
             child: ClipOval(
-              child: widget.enableBlur
+              child: useBlur
                   ? BackdropFilter(
                       filter: ui.ImageFilter.blur(
                         sigmaX: blurSigma,
@@ -289,15 +306,20 @@ class TempoSliverHeader extends StatelessWidget {
     final topPad = MediaQuery.paddingOf(context).top;
     final c = AppColors.of(context);
 
-    return SliverPersistentHeader(
-      pinned: true,
-      delegate: _TempoSliverHeaderDelegate(
-        title: title,
-        showBackButton: showBackButton,
-        onBack: onBack ?? () => Navigator.of(context).maybePop(),
-        actions: actions,
-        topPadding: topPad,
-        colors: c,
+    return ValueListenableBuilder<TempoAppearanceSettings>(
+      valueListenable: TempoAppearanceService.instance.notifier,
+      builder: (context, appearance, _) => SliverPersistentHeader(
+        pinned: true,
+        delegate: _TempoSliverHeaderDelegate(
+          title: title,
+          showBackButton: showBackButton,
+          onBack: onBack ?? () => Navigator.of(context).maybePop(),
+          actions: actions,
+          topPadding: topPad,
+          colors: c,
+          progressiveBlur: appearance.useProgressiveBlur,
+          betterGlassPerformance: appearance.betterGlassPerformance,
+        ),
       ),
     );
   }
@@ -310,6 +332,8 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
   final List<TempoHeaderAction> actions;
   final double topPadding;
   final AppColors colors;
+  final bool progressiveBlur;
+  final bool betterGlassPerformance;
 
   static const double _toolbarHeight = 56.0;
   static const double _largeTitleExtra = 54.0;
@@ -321,6 +345,8 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.actions,
     required this.topPadding,
     required this.colors,
+    required this.progressiveBlur,
+    required this.betterGlassPerformance,
   });
 
   @override
@@ -336,6 +362,7 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
     bool overlapsContent,
   ) {
     final c = AppColors.of(context);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
     final range = (maxExtent - minExtent).clamp(1.0, double.infinity);
     final rawT = (shrinkOffset / range).clamp(0.0, 1.0);
 
@@ -345,29 +372,34 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
 
     // Circular glass bubbles fade in cleanly as user scrolls up
     final glassOpacity = ((rawT - 0.15) / 0.65).clamp(0.0, 1.0);
-    final barScrimOpacity = ((rawT - 0.25) / 0.70).clamp(0.0, 1.0);
+    final barScrimOpacity = ((rawT - 0.20) / 0.72).clamp(0.0, 1.0);
 
     final sideClearance = (actions.length * 48.0 + 20.0).clamp(68.0, 140.0);
 
     return SizedBox.expand(
       child: Stack(
         fit: StackFit.expand,
+        clipBehavior: Clip.none,
         children: [
-          // Soft translucent gradient backdrop as header collapses
+          // Seamless single-pass continuous progressive blur + scaffold mist
+          // extending slightly below the toolbar and decaying to exact 0.0 px
+          // blur before its bottom edge (zero hard horizontal cut seam!).
           if (barScrimOpacity > 0.01)
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      c.scaffold.withValues(alpha: 0.94 * barScrimOpacity),
-                      c.scaffold.withValues(alpha: 0.82 * barScrimOpacity),
-                      c.scaffold.withValues(alpha: 0.0),
-                    ],
-                    stops: const [0.0, 0.78, 1.0],
-                  ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: -18,
+              child: IgnorePointer(
+                child: ProgressiveBlurBackdrop(
+                  program: TempoLiquidShaderCache.progressiveBlurProgram,
+                  strength: barScrimOpacity,
+                  maxBlurDp: betterGlassPerformance ? 10.5 : 16.0,
+                  scrimColor: c.scaffold,
+                  scrimAlpha: c.isDark ? 0.74 : 0.80,
+                  softKnee: 0.44,
+                  dpr: dpr,
+                  enableProgressiveBlur: progressiveBlur,
                 ),
               ),
             ),
@@ -467,5 +499,7 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
       oldDelegate.showBackButton != showBackButton ||
       oldDelegate.actions.length != actions.length ||
       oldDelegate.topPadding != topPadding ||
-      oldDelegate.colors.isDark != colors.isDark;
+      oldDelegate.colors.isDark != colors.isDark ||
+      oldDelegate.progressiveBlur != progressiveBlur ||
+      oldDelegate.betterGlassPerformance != betterGlassPerformance;
 }

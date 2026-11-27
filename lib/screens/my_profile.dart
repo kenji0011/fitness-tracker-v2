@@ -31,6 +31,7 @@ import '../widgets/tempo_spotlight_tour.dart';
 import '../widgets/tempo_toast.dart';
 import '../widgets/tempo_update_sheet.dart';
 import 'about_app_screen.dart';
+import 'appearance_settings_screen.dart';
 import 'avatar_crop_screen.dart';
 import 'intro_walkthrough_screen.dart';
 import 'permissions_screen.dart';
@@ -65,7 +66,6 @@ class _MyProfileState extends State<MyProfile> {
   final GlobalKey _avatarHintKey = GlobalKey();
   final GlobalKey _identityHintKey = GlobalKey();
   final GlobalKey _animSpeedRowKey = GlobalKey();
-  final JiggIconController _themeJiggController = JiggIconController();
   final JiggIconController _autoUpdateJiggController = JiggIconController();
   final Map<String, JiggIconController> _settingJiggControllers = {};
 
@@ -80,7 +80,6 @@ class _MyProfileState extends State<MyProfile> {
 
   @override
   void dispose() {
-    _themeJiggController.dispose();
     _autoUpdateJiggController.dispose();
     for (final ctrl in _settingJiggControllers.values) {
       ctrl.dispose();
@@ -950,21 +949,23 @@ class _MyProfileState extends State<MyProfile> {
                 _groupedSettingsCard(
                   c: c,
                   children: [
-                    _switchTile(
-                      c: c,
-                      icon: c.isDark
-                          ? CupertinoIcons.moon_fill
-                          : CupertinoIcons.sun_max_fill,
-                      jiggIconName: c.isDark ? 'weather-moon' : 'palette',
-                      jiggController: _themeJiggController,
+                    _settingTile(
+                      icon: CupertinoIcons.sparkles,
+                      jiggIconName: 'palette',
                       badgeColor: const Color(0xFF7A6FF0),
-                      title: 'Dark mode',
-                      value: themeProvider.isDarkMode,
-                      onChanged: (v) {
-                        HapticFeedback.selectionClick();
-                        _themeJiggController.play();
-                        themeProvider.toggleTheme(v);
+                      title: 'Appearance',
+                      trailingText: switch (themeProvider.themeMode) {
+                        ThemeMode.system => 'System',
+                        ThemeMode.dark => 'Dark',
+                        ThemeMode.light => 'Light',
                       },
+                      c: c,
+                      onTapWithContext: (rowCtx) => pushTempoMorphRoute<void>(
+                        context: context,
+                        sourceContext: rowCtx,
+                        sourceBorderRadius: 18,
+                        builder: (_) => const AppearanceSettingsScreen(),
+                      ),
                     ),
                     _switchTile(
                       c: c,
