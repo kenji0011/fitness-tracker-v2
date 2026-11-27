@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../services/animation_speed_service.dart';
 import '../theme/app_colors.dart';
+import 'tempo_spring_physics.dart';
 
 /// Shows an iOS 26/27-inspired modal bottom sheet with:
 /// - Critically-damped spring opening animation (slide + subtle scale + scrim fade)
@@ -34,26 +35,6 @@ Future<T?> showTempoSheet<T>({
       showDragHandle: showDragHandle,
     ),
   );
-}
-
-/// Custom spring-physics curve for opening the sheet like native iOS.
-class _IosSheetOpenCurve extends Curve {
-  static final _sim = SpringSimulation(
-    const SpringDescription(mass: 1.0, stiffness: 320.0, damping: 27.5),
-    0.0,
-    1.0,
-    0.0,
-  );
-
-  const _IosSheetOpenCurve();
-
-  @override
-  double transformInternal(double t) {
-    if (t <= 0.0) return 0.0;
-    if (t >= 1.0) return 1.0;
-    // Map normalized [0, 1] over 0.48s of real spring physics
-    return _sim.x(t * 0.48);
-  }
 }
 
 class _TempoSpringSheetRoute<T> extends PopupRoute<T> {
@@ -93,6 +74,22 @@ class _TempoSpringSheetRoute<T> extends PopupRoute<T> {
   @override
   Duration get reverseTransitionDuration =>
       TempoAnimationSpeedService.instance.scale(const Duration(milliseconds: 260));
+
+  @override
+  Widget buildModalBarrier() {
+    final anim = animation;
+    if (anim == null) return const SizedBox.shrink();
+    return AnimatedBuilder(
+      animation: anim,
+      builder: (context, _) {
+        if (anim.status == AnimationStatus.reverse ||
+            anim.status == AnimationStatus.dismissed) {
+          return const SizedBox.shrink();
+        }
+        return super.buildModalBarrier();
+      },
+    );
+  }
 
   @override
   void dispose() {
@@ -165,7 +162,6 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
   bool _isDragging = false;
   bool _stretchHapticFired = false;
 
-  static const _openCurve = _IosSheetOpenCurve();
   static const _springDesc = SpringDescription(
     mass: 1.0,
     stiffness: 380.0,
@@ -360,46 +356,51 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
       );
     }
 
+    final Widget cachedSheetContent = RepaintBoundary(child: content);
+
     return AnimatedBuilder(
       animation: Listenable.merge([
         widget.routeAnimation,
         widget.dismissProgress,
       ]),
       builder: (context, child) {
-        final rawT = widget.routeAnimation.value;
+        final rawT = widget.routeAnimation.value.clamp(0.0, 1.0);
         final isClosing =
-            widget.routeAnimation.status == AnimationStatus.reverse;
+            widget.routeAnimation.status == AnimationStatus.reverse ||
+                widget.routeAnimation.status == AnimationStatus.dismissed;
         final t = isClosing
-            ? Curves.easeInCubic.transform(rawT)
-            : _openCurve.transform(rawT);
+            ? (1.0 - TempoSpringCurves.sheetClose.transform(1.0 - rawT))
+                .clamp(0.0, 1.0)
+            : TempoSpringCurves.sheetOpen.transform(rawT);
 
         // Backdrop scrim smoothly fades in on open & fades out during downward drag
-        final scrimAlpha = (0.44 * rawT.clamp(0.0, 1.0)) *
+        final scrimAlpha = (0.44 * rawT) *
             (1.0 - widget.dismissProgress.value * 0.85);
 
-        // Subtle iOS opening entrance: slide up + gentle scale from 0.96 -> 1.0
-        final openSlideY = (1.0 - t) * (screenH * 0.55);
-        final openScale = 0.96 + 0.04 * t.clamp(0.0, 1.05);
-        final openOpacity = (rawT * 2.2).clamp(0.0, 1.0);
+        // Slide smoothly over the sheet's true measured height (zero Opacity
+        // around BackdropFilter glass sheets, zero premature cutoff on tall sheets).
+        final travelHeight = math.max(_sheetHeight + 28.0, screenH * 0.42);
+        final openSlideY = (1.0 - t) * travelHeight;
+        final openScale = 0.97 + 0.03 * t.clamp(0.0, 1.03);
 
-        return Stack(
-          children: [
-            // Dynamic dimmed backdrop
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.isDismissible ? widget.onDismiss : null,
-                child: ColoredBox(
-                  color: Colors.black.withValues(alpha: scrimAlpha.clamp(0.0, 0.55)),
+        return IgnorePointer(
+          ignoring: isClosing,
+          child: Stack(
+            children: [
+              // Dynamic dimmed backdrop
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.isDismissible ? widget.onDismiss : null,
+                  child: ColoredBox(
+                    color: Colors.black.withValues(alpha: scrimAlpha.clamp(0.0, 0.55)),
+                  ),
                 ),
               ),
-            ),
 
-            // Positioned sheet anchored at bottom
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Opacity(
-                opacity: openOpacity,
+              // Positioned sheet anchored at bottom
+              Align(
+                alignment: Alignment.bottomCenter,
                 child: Transform.translate(
                   offset: Offset(0, openSlideY + translateY),
                   child: Transform(
@@ -447,11 +448,11 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
-      child: content,
+      child: cachedSheetContent,
     );
   }
 }

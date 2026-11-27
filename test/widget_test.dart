@@ -2619,16 +2619,17 @@ void main() {
     expect(find.text('Close Circular Morph'), findsOneWidget);
 
     // Close -> verify anchor suppresses during flight and morph container becomes a 1:1 circle
+    final poppedRoute = ModalRoute.of(
+      tester.element(find.text('Close Circular Morph')),
+    )! as TempoMorphPageRoute<void>;
     await tester.tap(find.text('Close Circular Morph'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 280));
     expect(activeTempoMorphAnchorKey.value, same(circleKey));
-    final morphPos = tester.widgetList<Positioned>(find.byType(Positioned)).where(
-          (p) => p.width != null && p.height != null && p.width! >= 40 && p.width! <= 200,
-        );
-    expect(morphPos, isNotEmpty);
-    final circlePos = morphPos.last;
-    expect((circlePos.width! - circlePos.height!).abs(), lessThan(2.0));
+    final circleRect = poppedRoute.debugLastMorphRect;
+    expect(circleRect, isNotNull);
+    expect(circleRect!.width, inInclusiveRange(34.0, 200.0));
+    expect((circleRect.width - circleRect.height).abs(), lessThan(2.0));
 
     await tester.pumpAndSettle();
     expect(activeTempoMorphAnchorKey.value, isNull);

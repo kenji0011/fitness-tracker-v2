@@ -21,6 +21,7 @@ import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_spring_physics.dart';
 import 'photo_compare_screen.dart';
 import 'photo_editing_screen.dart';
 
@@ -820,8 +821,8 @@ class _PhotoMorphViewerRoute extends PageRoute<void> {
   bool _attachedStatusListener = false;
   bool _disposed = false;
 
-  static const Curve _openCurve = Cubic(0.32, 0.22, 0.18, 1.0);
-  static const Curve _closeCurve = Cubic(0.36, 0.10, 0.20, 1.0);
+  static final Curve _openCurve = TempoSpringCurves.photoOpen;
+  static final Curve _closeCurve = TempoSpringCurves.photoClose;
 
   _PhotoMorphViewerRoute({
     required this.photos,
@@ -864,6 +865,22 @@ class _PhotoMorphViewerRoute extends PageRoute<void> {
   @override
   Duration get reverseTransitionDuration =>
       TempoAnimationSpeedService.instance.scale(const Duration(milliseconds: 360));
+
+  @override
+  Widget buildModalBarrier() {
+    final anim = animation;
+    if (anim == null) return const SizedBox.shrink();
+    return AnimatedBuilder(
+      animation: anim,
+      builder: (context, _) {
+        if (anim.status == AnimationStatus.reverse ||
+            anim.status == AnimationStatus.dismissed) {
+          return const SizedBox.shrink();
+        }
+        return super.buildModalBarrier();
+      },
+    );
+  }
 
   void _setHiddenTileSync(String? targetId) {
     if (hiddenPhotoIdNotifier.value == targetId) return;
@@ -961,7 +978,9 @@ class _PhotoMorphViewerRoute extends PageRoute<void> {
     }
 
     final rawT = animation.value.clamp(0.0, 1.0);
-    final settled = rawT >= 0.999;
+    final settled = rawT >= 0.999 &&
+        (animation.status == AnimationStatus.completed ||
+            animation.status == AnimationStatus.forward);
 
     // Keep child in a persistent Stack slot (never reparenting on settle) so
     // _ProgressPhotoViewerScreen preserves State and swaps onstage with zero

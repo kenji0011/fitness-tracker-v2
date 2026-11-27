@@ -3,12 +3,12 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
 import '../services/animation_speed_service.dart';
 import '../theme/app_colors.dart';
 import 'liquid_glass_surface.dart';
+import 'tempo_spring_physics.dart';
 
 /// Descriptor for an option inside [showHyperOsDropdownMenu].
 class HyperOsDropdownOption<T> {
@@ -59,45 +59,16 @@ Future<T?> showHyperOsDropdownMenu<T>({
   );
 }
 
-class _HyperOsUnfoldSpringCurve extends Curve {
-  final SpringSimulation _sim;
-  final double _durationSec;
-
-  _HyperOsUnfoldSpringCurve({
-    required double stiffness,
-    required double damping,
-    required double durationSec,
-  })  : _durationSec = durationSec,
-        _sim = SpringSimulation(
-          SpringDescription(mass: 1.0, stiffness: stiffness, damping: damping),
-          0.0,
-          1.0,
-          0.0,
-        );
-
-  @override
-  double transformInternal(double t) {
-    if (t <= 0.0) return 0.0;
-    if (t >= 1.0) return 1.0;
-    final raw = _sim.x(t * _durationSec).clamp(0.0, 1.03);
-    if (t > 0.90) {
-      final tail = ((t - 0.90) / 0.10).clamp(0.0, 1.0);
-      return lerpDouble(raw, 1.0, Curves.easeOutCubic.transform(tail))!;
-    }
-    return raw;
-  }
-}
-
 class _HyperOsDropdownRoute<T> extends PopupRoute<T> {
   final Rect rowRect;
   final List<HyperOsDropdownOption<T>> options;
   final T selectedValue;
   final double width;
 
-  static final _unfoldSpring = _HyperOsUnfoldSpringCurve(
-    stiffness: 340.0,
-    damping: 29.0,
-    durationSec: 0.34,
+  /// Constant BackdropFilter sigma avoids Impeller blur kernel churn at 120Hz.
+  static final ImageFilter _glassBlurFilter = ImageFilter.blur(
+    sigmaX: 22.0,
+    sigmaY: 22.0,
   );
 
   _HyperOsDropdownRoute({
@@ -122,7 +93,23 @@ class _HyperOsDropdownRoute<T> extends PopupRoute<T> {
 
   @override
   Duration get reverseTransitionDuration =>
-      TempoAnimationSpeedService.instance.scale(const Duration(milliseconds: 240));
+      TempoAnimationSpeedService.instance.scale(const Duration(milliseconds: 340));
+
+  @override
+  Widget buildModalBarrier() {
+    final anim = animation;
+    if (anim == null) return const SizedBox.shrink();
+    return AnimatedBuilder(
+      animation: anim,
+      builder: (context, _) {
+        if (anim.status == AnimationStatus.reverse ||
+            anim.status == AnimationStatus.dismissed) {
+          return const SizedBox.shrink();
+        }
+        return super.buildModalBarrier();
+      },
+    );
+  }
 
   @override
   Widget buildPage(
@@ -160,26 +147,28 @@ class _HyperOsDropdownRoute<T> extends PopupRoute<T> {
           .clamp(pad.top + 12.0, screen.height - targetHeight - pad.bottom - 14.0);
     }
 
-    final listContent = SizedBox(
-      width: targetWidth,
-      height: targetHeight,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: options.map((opt) {
-            final isSelected = opt.value == selectedValue;
-            return _HyperOsDropdownRow(
-              label: opt.label,
-              height: rowHeight,
-              selected: isSelected,
-              onTap: () {
-                HapticFeedback.selectionClick();
-                Navigator.of(context).pop<T>(opt.value);
-              },
-            );
-          }).toList(),
+    final listContent = RepaintBoundary(
+      child: SizedBox(
+        width: targetWidth,
+        height: targetHeight,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: options.map((opt) {
+              final isSelected = opt.value == selectedValue;
+              return _HyperOsDropdownRow(
+                label: opt.label,
+                height: rowHeight,
+                selected: isSelected,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  Navigator.of(context).pop<T>(opt.value);
+                },
+              );
+            }).toList(),
+          ),
         ),
       ),
     );
@@ -199,15 +188,15 @@ class _HyperOsDropdownRoute<T> extends PopupRoute<T> {
 
         if (isClosing) {
           final closeP = (1.0 - rawT).clamp(0.0, 1.0);
-          final fold = Curves.easeInOutCubic.transform(closeP);
+          final fold = TempoSpringCurves.dropdownFoldClose.transform(closeP);
           heightT = (1.0 - fold).clamp(0.0, 1.0);
-          scaleT = (1.0 - Curves.easeInCubic.transform(closeP)).clamp(0.0, 1.0);
+          scaleT = (1.0 - fold).clamp(0.0, 1.0);
           surfaceT = (1.0 - Curves.easeInQuad.transform(closeP)).clamp(0.0, 1.0);
           contentAlpha =
               (1.0 - Curves.easeOutCubic.transform((closeP * 1.65).clamp(0.0, 1.0)))
                   .clamp(0.0, 1.0);
         } else {
-          final springVal = _unfoldSpring.transform(rawT);
+          final springVal = TempoSpringCurves.dropdownUnfold.transform(rawT);
           heightT = springVal;
           scaleT = springVal;
           surfaceT = Curves.easeOutCubic.transform((rawT / 0.42).clamp(0.0, 1.0));
@@ -227,100 +216,101 @@ class _HyperOsDropdownRoute<T> extends PopupRoute<T> {
             ? anchorTop + (targetHeight - curH)
             : anchorTop;
 
-        // Impeller-safe glass fade: animate blur sigma + fill alpha + rim directly
-        // without wrapping BackdropFilter inside Opacity.
-        final blurSigma = (24.0 * surfaceT).clamp(0.0, 24.0);
+        // Impeller-safe 120Hz glass fade: constant blur sigma + animated fill/rim
+        // without wrapping BackdropFilter inside Opacity or thrashing blur kernels.
+        final enableBlur = surfaceT > 0.10;
         final bgAlpha = (c.isDark ? 0.86 : 0.90) * surfaceT;
         final shadowAlpha = (c.isDark ? 0.46 : 0.16) * surfaceT;
         final rimIntensity = 0.95 * surfaceT;
 
-        return Stack(
-          children: [
-            Positioned(
-              top: curTop,
-              right: rightInset,
-              child: Transform(
-                alignment:
-                    openUpward ? Alignment.bottomRight : Alignment.topRight,
-                transform: Matrix4.diagonal3Values(scaleX, scaleY, 1.0),
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: Container(
-                    width: targetWidth,
-                    height: curH,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(radius),
-                      boxShadow: shadowAlpha > 0.005
-                          ? [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: shadowAlpha),
-                                blurRadius: 30,
-                                offset: const Offset(0, 10),
-                              ),
-                            ]
-                          : const [],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(radius),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(
-                          sigmaX: blurSigma,
-                          sigmaY: blurSigma,
+        final innerSurface = CustomPaint(
+          foregroundPainter: rimIntensity > 0.02
+              ? LiquidGlassRimPainter(
+                  borderRadius: radius,
+                  isDark: c.isDark,
+                  intensity: rimIntensity,
+                  strokeWidth: 1.1,
+                )
+              : null,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: c.isDark
+                    ? [
+                        const Color(0xFF34363E).withValues(alpha: bgAlpha),
+                        const Color(0xFF1F2026).withValues(
+                          alpha: (bgAlpha + 0.04).clamp(0.0, 1.0),
                         ),
-                        child: CustomPaint(
-                          foregroundPainter: rimIntensity > 0.02
-                              ? LiquidGlassRimPainter(
-                                  borderRadius: radius,
-                                  isDark: c.isDark,
-                                  intensity: rimIntensity,
-                                  strokeWidth: 1.1,
-                                )
-                              : null,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(radius),
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: c.isDark
-                                    ? [
-                                        const Color(0xFF34363E)
-                                            .withValues(alpha: bgAlpha),
-                                        const Color(0xFF1F2026).withValues(
-                                          alpha: (bgAlpha + 0.04).clamp(0.0, 1.0),
-                                        ),
-                                      ]
-                                    : [
-                                        Colors.white.withValues(
-                                          alpha: (bgAlpha + 0.05).clamp(0.0, 1.0),
-                                        ),
-                                        const Color(0xFFF6F7FB)
-                                            .withValues(alpha: bgAlpha),
-                                      ],
-                              ),
-                            ),
-                            child: OverflowBox(
-                              alignment: openUpward
-                                  ? Alignment.bottomCenter
-                                  : Alignment.topCenter,
-                              minWidth: targetWidth,
-                              maxWidth: targetWidth,
-                              minHeight: targetHeight,
-                              maxHeight: targetHeight,
-                              child: Opacity(
-                                opacity: contentAlpha,
-                                child: child,
-                              ),
-                            ),
-                          ),
+                      ]
+                    : [
+                        Colors.white.withValues(
+                          alpha: (bgAlpha + 0.05).clamp(0.0, 1.0),
                         ),
+                        const Color(0xFFF6F7FB).withValues(alpha: bgAlpha),
+                      ],
+              ),
+            ),
+            child: OverflowBox(
+              alignment:
+                  openUpward ? Alignment.bottomCenter : Alignment.topCenter,
+              minWidth: targetWidth,
+              maxWidth: targetWidth,
+              minHeight: targetHeight,
+              maxHeight: targetHeight,
+              child: Opacity(
+                opacity: contentAlpha,
+                child: child,
+              ),
+            ),
+          ),
+        );
+
+        return IgnorePointer(
+          ignoring: isClosing,
+          child: Stack(
+            children: [
+              Positioned(
+                top: curTop,
+                right: rightInset,
+                child: Transform(
+                  alignment:
+                      openUpward ? Alignment.bottomRight : Alignment.topRight,
+                  transform: Matrix4.diagonal3Values(scaleX, scaleY, 1.0),
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: Container(
+                      width: targetWidth,
+                      height: curH,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(radius),
+                        boxShadow: shadowAlpha > 0.005
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: shadowAlpha),
+                                  blurRadius: 24.0,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ]
+                            : const [],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(radius),
+                        child: enableBlur
+                            ? BackdropFilter(
+                                filter: _glassBlurFilter,
+                                child: innerSurface,
+                              )
+                            : innerSurface,
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );

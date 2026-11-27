@@ -247,7 +247,16 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
               identical(activeTempoPopoverAnchorKey.value, widget.key) ||
                   identical(activeTempoMorphAnchorKey.value, widget.key);
           if (isHidden) {
-            return SizedBox.square(dimension: widget.size);
+            // Keep the slot clickable even mid-close bounce so rapid re-taps
+            // launch immediately on the very first tap with zero delay!
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                HapticFeedback.selectionClick();
+                widget.onPressed();
+              },
+              child: SizedBox.square(dimension: widget.size),
+            );
           }
           return RepaintBoundary(child: btn);
         },

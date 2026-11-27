@@ -79,6 +79,9 @@ class _WorkoutScreenState extends State<WorkoutScreen>
 
   final GlobalKey _journeysHintKey = GlobalKey();
   final GlobalKey _customWorkoutHintKey = GlobalKey();
+  late final Map<String, GlobalKey> _quickIconKeys = {
+    for (final q in _quickWorkouts) q.journeyId: GlobalKey(),
+  };
 
   static const List<_QuickWorkoutMeta> _quickWorkouts = [
     _QuickWorkoutMeta(
@@ -531,28 +534,28 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                   children: _quickWorkouts.map((q) {
                     final isActive =
                         _journeyProgress[q.journeyId]?.isSelected == true;
+                    final iconKey = _quickIconKeys[q.journeyId]!;
                     return Expanded(
-                      child: Builder(
-                        builder: (tileCtx) => _QuickWorkoutTile(
-                          meta: q,
-                          isActive: isActive,
-                          onTap: () async {
-                            HapticFeedback.selectionClick();
-                            await pushTempoMorphRoute<void>(
-                              context: context,
-                              sourceContext: tileCtx,
-                              sourceBorderRadius: 18,
-                              sourceColor: q.color,
-                              builder: (_) => FitnessJourneyDetailScreen(
-                                journeyId: q.journeyId,
-                                journeyName: q.journeyName,
-                                journeySubtitle: q.subtitle,
-                                thumbnailAsset: q.thumb,
-                              ),
-                            );
-                            if (mounted) _loadProgress();
-                          },
-                        ),
+                      child: _QuickWorkoutTile(
+                        meta: q,
+                        iconKey: iconKey,
+                        isActive: isActive,
+                        onTap: () async {
+                          HapticFeedback.selectionClick();
+                          await pushTempoMorphRoute<void>(
+                            context: context,
+                            sourceKey: iconKey,
+                            sourceBorderRadius: 18,
+                            sourceColor: q.color,
+                            builder: (_) => FitnessJourneyDetailScreen(
+                              journeyId: q.journeyId,
+                              journeyName: q.journeyName,
+                              journeySubtitle: q.subtitle,
+                              thumbnailAsset: q.thumb,
+                            ),
+                          );
+                          if (mounted) _loadProgress();
+                        },
                       ),
                     );
                   }).toList(),
@@ -950,14 +953,20 @@ class _WorkoutScreenState extends State<WorkoutScreen>
   }
 }
 
-/// Tactile vibrant squircle activity launcher matching the Mi Fitness top bar.
+/// Tactile vibrant squircle activity launcher matching the Mi Fitness top bar,
+/// engineered with a dedicated full-size 56×56 `RepaintBoundary` anchor and
+/// `activeTempoMorphAnchorKey` zero-ghosting suppression so tapping HIIT Burn,
+/// Strength, Cardio, Endurance, or Mobility launches and docks like a native
+/// HyperOS 4 / iOS 26 app icon.
 class _QuickWorkoutTile extends StatefulWidget {
   final _QuickWorkoutMeta meta;
+  final GlobalKey iconKey;
   final bool isActive;
   final VoidCallback onTap;
 
   const _QuickWorkoutTile({
     required this.meta,
+    required this.iconKey,
     required this.isActive,
     required this.onTap,
   });
@@ -972,56 +981,75 @@ class _QuickWorkoutTileState extends State<_QuickWorkoutTile> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return RepaintBoundary(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapUp: (_) {
-          setState(() => _pressed = false);
-          widget.onTap();
-        },
-        onTapCancel: () => setState(() => _pressed = false),
-        child: AnimatedScale(
-          scale: _pressed ? 0.92 : 1.0,
-          duration: const Duration(milliseconds: 130),
-          curve: Curves.easeOutCubic,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: widget.meta.color,
-                  borderRadius: BorderRadius.circular(18),
-                  border: widget.isActive
-                      ? Border.all(color: c.textPrimary, width: 2)
-                      : null,
-                ),
-                child: Icon(
-                  widget.meta.icon,
-                  color: Colors.white,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: Text(
-                  widget.meta.shortLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Dedicated unscaled 56×56 squircle slot: keeps exact resting bounds
+          // for crisp GPU snapshots and hides cleanly during morph flight (zero ghost).
+          SizedBox.square(
+            dimension: 56,
+            child: AnimatedBuilder(
+              animation: activeTempoMorphAnchorKey,
+              builder: (_, __) {
+                final isFlying = identical(
+                  activeTempoMorphAnchorKey.value,
+                  widget.iconKey,
+                );
+                if (isFlying) {
+                  return const SizedBox.square(dimension: 56);
+                }
+                return RepaintBoundary(
+                  key: widget.iconKey,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 110),
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: _pressed
+                          ? Color.lerp(widget.meta.color, Colors.black, 0.10)
+                          : widget.meta.color,
+                      borderRadius: BorderRadius.circular(18),
+                      border: widget.isActive
+                          ? Border.all(color: c.textPrimary, width: 2)
+                          : null,
+                    ),
+                    child: AnimatedScale(
+                      scale: _pressed ? 0.88 : 1.0,
+                      duration: const Duration(milliseconds: 110),
+                      curve: Curves.easeOutCubic,
+                      child: Icon(
+                        widget.meta.icon,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ],
+                );
+              },
+            ),
           ),
-        ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Text(
+              widget.meta.shortLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
