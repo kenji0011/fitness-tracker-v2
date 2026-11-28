@@ -9,10 +9,13 @@ import 'package:tempo_fitness/screens/my_profile.dart';
 import 'package:tempo_fitness/services/active_profile_provider.dart';
 import 'package:tempo_fitness/services/appearance_service.dart';
 import 'package:tempo_fitness/services/tempo_rust_db.dart';
+import 'package:tempo_fitness/theme/app_theme.dart';
 import 'package:tempo_fitness/theme/theme_provider.dart';
 import 'package:tempo_fitness/widgets/bitchord_glass_lens.dart';
 import 'package:tempo_fitness/widgets/bitchord_pill_motion.dart';
+import 'package:tempo_fitness/widgets/bitchord_segmented_slider.dart';
 import 'package:tempo_fitness/widgets/liquid_glass_nav_bar.dart';
+import 'package:tempo_fitness/widgets/liquid_glass_surface.dart';
 import 'package:tempo_fitness/widgets/reorderable_summary_grid.dart';
 import 'package:tempo_fitness/widgets/tempo_sliver_header.dart';
 
@@ -291,9 +294,9 @@ void main() {
     );
   });
 
-  group('Seamless Progressive Header Blur & Dragged Summary Card Liquid Glass', () {
+  group('Faded Frosted Header Blur & Dragged Summary Card Liquid Glass', () {
     testWidgets(
-      'TempoSliverHeader mounts ProgressiveBlurBackdrop cleanly and ReorderableSummaryGrid lifts with BitChordGlassLensBox',
+      'TempoSliverHeader mounts borderless FrostedFadeBlurBackdrop on scroll and ReorderableSummaryGrid lifts with BitChordGlassLensBox',
       (tester) async {
         SharedPreferences.setMockInitialValues({});
         final appearance = TempoAppearanceService.instance;
@@ -341,10 +344,32 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // Scroll up to engage TempoSliverHeader's seamless ProgressiveBlurBackdrop
+        // Scroll up to engage TempoSliverHeader's borderless FrostedFadeBlurBackdrop
         await tester.drag(find.byType(CustomScrollView), const Offset(0, -180));
         await tester.pumpAndSettle();
-        expect(find.byType(ProgressiveBlurBackdrop), findsOneWidget);
+        expect(find.byType(FrostedFadeBlurBackdrop), findsOneWidget);
+
+        // Turning off Progressive Blur toggles enableFrostedBlur cleanly to false
+        await appearance.setProgressiveBlur(false);
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<FrostedFadeBlurBackdrop>(
+                find.byType(FrostedFadeBlurBackdrop),
+              )
+              .enableFrostedBlur,
+          isFalse,
+        );
+        await appearance.setProgressiveBlur(true);
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<FrostedFadeBlurBackdrop>(
+                find.byType(FrostedFadeBlurBackdrop),
+              )
+              .enableFrostedBlur,
+          isTrue,
+        );
 
         // Scroll back to top and long-press drag Card sleep across Card weight
         await tester.drag(find.byType(CustomScrollView), const Offset(0, 180));
@@ -368,6 +393,184 @@ void main() {
         await themeProvider.toggleTheme(true);
         await appearance.setBetterGlassPerformance(true);
         await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        appearance.resetForTest();
+      },
+    );
+
+    testWidgets(
+      'BitChordSegmentedSlider slides smoothly across Latest | Week | M | Y and responds to taps in Light & Dark Mode',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final appearance = TempoAppearanceService.instance;
+        appearance.resetForTest();
+        final themeProvider = ThemeProvider();
+        int selected = 0;
+
+        await tester.pumpWidget(
+          ChangeNotifierProvider.value(
+            value: themeProvider,
+            child: StatefulBuilder(
+              builder: (context, setState) => MaterialApp(
+                home: Scaffold(
+                  body: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: BitChordSegmentedSlider(
+                        labels: const ['Latest', 'Week', 'M', 'Y'],
+                        selectedIndex: selected,
+                        onChanged: (idx) => setState(() => selected = idx),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Tap 'M' -> lifts crystal glass lens & selects index 2
+        await tester.tap(find.text('M'));
+        await tester.pump(const Duration(milliseconds: 60));
+        await tester.pumpAndSettle();
+        expect(selected, equals(2));
+
+        // Slide smoothly horizontally from 'M' -> 'Y' -> 'Latest'
+        final mCenter = tester.getCenter(find.text('M'));
+        final yCenter = tester.getCenter(find.text('Y'));
+        final latestCenter = tester.getCenter(find.text('Latest'));
+
+        final drag = await tester.startGesture(mCenter);
+        await tester.pump(const Duration(milliseconds: 24));
+        await drag.moveTo(yCenter);
+        await tester.pump(const Duration(milliseconds: 24));
+        expect(selected, equals(3));
+        await drag.moveTo(latestCenter);
+        await tester.pump(const Duration(milliseconds: 24));
+        await drag.up();
+        await tester.pumpAndSettle();
+        expect(selected, equals(0));
+
+        await themeProvider.toggleTheme(true);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        appearance.resetForTest();
+      },
+    );
+
+    testWidgets(
+      'TempoBouncyButton compresses and rebounds cleanly on tap without errors',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final themeProvider = ThemeProvider();
+        int taps = 0;
+
+        await tester.pumpWidget(
+          ChangeNotifierProvider.value(
+            value: themeProvider,
+            child: MaterialApp(
+              home: Scaffold(
+                body: Center(
+                  child: TempoBouncyButton(
+                    onPressed: () => taps++,
+                    child: const Text('Save goal'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('Save goal')),
+        );
+        await tester.pump(const Duration(milliseconds: 60));
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 120));
+        await tester.pumpAndSettle();
+        expect(find.byType(TempoTouchLightEffect), findsOneWidget);
+        expect(taps, equals(1));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'TempoTouchLightSplashFactory and TempoGlassCircleButton bloom and settle cleanly in Light & Dark Mode',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final appearance = TempoAppearanceService.instance;
+        appearance.resetForTest();
+        final themeProvider = ThemeProvider();
+        int filledTaps = 0;
+        int circleTaps = 0;
+
+        await tester.pumpWidget(
+          ChangeNotifierProvider.value(
+            value: themeProvider,
+            child: Consumer<ThemeProvider>(
+              builder: (_, tp, __) => MaterialApp(
+                theme: AppTheme.lightTheme,
+                darkTheme: AppTheme.darkTheme,
+                themeMode: tp.themeMode,
+                home: Scaffold(
+                  body: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FilledButton(
+                          onPressed: () => filledTaps++,
+                          child: const Text('Start Workout'),
+                        ),
+                        const SizedBox(height: 16),
+                        TempoGlassCircleButton(
+                          icon: const Icon(CupertinoIcons.add, size: 20),
+                          onPressed: () => circleTaps++,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          AppTheme.lightTheme.splashFactory,
+          isA<TempoTouchLightSplashFactory>(),
+        );
+        expect(
+          AppTheme.darkTheme.splashFactory,
+          isA<TempoTouchLightSplashFactory>(),
+        );
+
+        // Quick tap on FilledButton (triggers TempoTouchLightSplashFactory)
+        await tester.tap(find.text('Start Workout'));
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.pumpAndSettle();
+        expect(filledTaps, equals(1));
+
+        // Hold + move finger slightly + release on circular glass button
+        final cCenter = tester.getCenter(find.byType(TempoGlassCircleButton));
+        final g = await tester.startGesture(cCenter);
+        await tester.pump(const Duration(milliseconds: 60));
+        await g.moveTo(cCenter + const Offset(6, -4));
+        await tester.pump(const Duration(milliseconds: 50));
+        await g.up();
+        await tester.pumpAndSettle();
+        expect(circleTaps, equals(1));
+
+        // Repeat in Dark Mode
+        await themeProvider.toggleTheme(true);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start Workout'));
+        await tester.pumpAndSettle();
+        expect(filledTaps, equals(2));
         expect(tester.takeException(), isNull);
 
         appearance.resetForTest();

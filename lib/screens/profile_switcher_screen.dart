@@ -8,11 +8,16 @@ import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/appearance_service.dart';
 import '../services/local_media_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bitchord_segmented_slider.dart';
+import '../widgets/hyperos_dropdown_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/pin_pad_sheet.dart';
+import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_startup_splash.dart';
 import '../widgets/tempo_toast.dart';
 import 'avatar_crop_screen.dart';
 
@@ -26,7 +31,7 @@ Future<void> showProfileSwitcherSheet(BuildContext context) {
   );
 }
 
-/// Full-screen Apple-style Profile Gate shown on first launch or when locked.
+/// Full-screen Liquid Glass Profile Gate shown on first launch or when switching users.
 class ProfileGateScreen extends StatefulWidget {
   const ProfileGateScreen({super.key});
 
@@ -57,23 +62,39 @@ class _ProfileGateScreenState extends State<ProfileGateScreen> {
       backgroundColor: c.scaffold,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
+              // Unified Tempo Dual-Ring Brand Pill
               Center(
-                child: Text(
-                  'Tempo',
-                  style: TextStyle(
-                    color: c.textTertiary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1.4,
+                child: LiquidGlassSurface(
+                  borderRadius: 999,
+                  blurEnabled: false,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 7,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const TempoDualRingLogo(size: 22, glowIntensity: 0.40),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Tempo',
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.1,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 20),
               Text(
                 profiles.isEmpty ? 'Welcome to Tempo' : 'Choose Your Profile',
                 textAlign: TextAlign.center,
@@ -97,26 +118,30 @@ class _ProfileGateScreenState extends State<ProfileGateScreen> {
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: _hintProfileName != null
-                        ? c.textPrimary
+                        ? c.accent
                         : c.textSecondary,
                     fontSize: 14.5,
+                    fontWeight: _hintProfileName != null
+                        ? FontWeight.w600
+                        : FontWeight.w500,
                     height: 1.4,
                   ),
                 ),
               ),
-              const SizedBox(height: 36),
+              const SizedBox(height: 30),
               Expanded(
                 child: profiles.isEmpty
                     ? _EmptyOnboardingCard(
                         onCreate: () => showCreateProfileModal(context),
                       )
                     : GridView.builder(
+                        physics: const BouncingScrollPhysics(),
                         padding: const EdgeInsets.only(bottom: 24),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
-                          mainAxisSpacing: 16,
-                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 14,
+                          crossAxisSpacing: 14,
                           childAspectRatio: 0.86,
                         ),
                         itemCount: profiles.length + 1,
@@ -130,7 +155,6 @@ class _ProfileGateScreenState extends State<ProfileGateScreen> {
                           final profile = profiles[idx];
                           return _ProfileTileCard(
                             profile: profile,
-                            isActive: false,
                             onSingleTap: () =>
                                 _showDoubleTapHint(profile.displayName),
                             onDoubleTapSwitch: () =>
@@ -141,25 +165,10 @@ class _ProfileGateScreenState extends State<ProfileGateScreen> {
               ),
               if (profiles.isEmpty) ...[
                 const SizedBox(height: 16),
-                SizedBox(
+                TempoBouncyButton(
                   height: 54,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: c.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () => showCreateProfileModal(context),
-                    child: const Text(
-                      'Create First Profile',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
+                  onPressed: () => showCreateProfileModal(context),
+                  child: const Text('Create First Profile'),
                 ),
               ],
             ],
@@ -183,68 +192,55 @@ class _ProfileGateScreenState extends State<ProfileGateScreen> {
   }
 }
 
-class _AddProfileTileCard extends StatefulWidget {
+class _AddProfileTileCard extends StatelessWidget {
   final VoidCallback onTap;
 
   const _AddProfileTileCard({required this.onTap});
 
   @override
-  State<_AddProfileTileCard> createState() => _AddProfileTileCardState();
-}
-
-class _AddProfileTileCardState extends State<_AddProfileTileCard> {
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
+    return LiquidGlassSurface(
+      borderRadius: 28,
+      blurEnabled: false,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
+      onTap: () {
         HapticFeedback.selectionClick();
-        widget.onTap();
+        onTap();
       },
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 0.94 : 1.0,
-        duration: const Duration(milliseconds: 140),
-        curve: Curves.easeOutCubic,
-        child: AppleCard(
-          borderRadius: 28,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: c.searchBg,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: c.divider, width: 1.2),
-                ),
-                child: Icon(
-                  CupertinoIcons.add,
-                  color: c.textPrimary,
-                  size: 34,
-                ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              color: c.accent.withValues(alpha: c.isDark ? 0.18 : 0.11),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: c.accent.withValues(alpha: 0.32),
+                width: 1.2,
               ),
-              const SizedBox(height: 16),
-              Text(
-                'Add Profile',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: c.textSecondary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.2,
-                ),
-              ),
-            ],
+            ),
+            child: Icon(
+              CupertinoIcons.add,
+              color: c.accent,
+              size: 32,
+            ),
           ),
-        ),
+          const SizedBox(height: 16),
+          Text(
+            'Add Profile',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: c.textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.2,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -259,19 +255,29 @@ class _EmptyOnboardingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return Center(
-      child: AppleCard(
+      child: LiquidGlassSurface(
+        borderRadius: 28,
+        blurEnabled: false,
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              CupertinoIcons.person_2,
-              size: 38,
-              color: c.textSecondary,
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.12),
+              ),
+              child: Icon(
+                CupertinoIcons.person_2_fill,
+                size: 28,
+                color: c.accent,
+              ),
             ),
             const SizedBox(height: 16),
             Text(
-              '100% On-Device & Private',
+              'On-Device & Private',
               style: TextStyle(
                 color: c.textPrimary,
                 fontSize: 19,
@@ -302,190 +308,209 @@ class _ProfileSwitcherSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final allowBlur = TempoAppearanceService.instance.value.allowDynamicBlur;
     final provider = context.watch<ActiveProfileProvider>();
     final profiles = provider.profiles;
     final activeId = provider.activeProfileId;
 
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-        child: Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.78,
+    final inner = Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.78,
+      ),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        MediaQuery.of(context).padding.bottom + 20,
+      ),
+      decoration: BoxDecoration(
+        color: c.isDark
+            ? const Color(0xFF1C1C1E).withValues(alpha: allowBlur ? 0.90 : 0.98)
+            : const Color(0xFFF2F2F7).withValues(alpha: allowBlur ? 0.92 : 0.99),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        border: Border(top: BorderSide(color: c.glassBorder, width: 1)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 38,
+              height: 5,
+              decoration: BoxDecoration(
+                color: c.textTertiary.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
           ),
-          padding: EdgeInsets.fromLTRB(
-            20,
-            14,
-            20,
-            MediaQuery.of(context).padding.bottom + 20,
-          ),
-          decoration: BoxDecoration(
-            color: c.isDark
-                ? const Color(0xFF1C1C1E).withValues(alpha: 0.92)
-                : const Color(0xFFF2F2F7).withValues(alpha: 0.94),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-            border: Border(top: BorderSide(color: c.glassBorder, width: 1)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          const SizedBox(height: 16),
+          Row(
             children: [
-              Center(
-                child: Container(
-                  width: 38,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: c.textTertiary.withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.13),
+                ),
+                child: Icon(
+                  CupertinoIcons.person_2_fill,
+                  color: c.accent,
+                  size: 19,
                 ),
               ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Switch Profile',
-                        style: TextStyle(
-                          color: c.textPrimary,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.5,
-                        ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Switch Profile',
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.4,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Double-tap a profile to switch',
-                        style: TextStyle(
-                          color: c.textSecondary,
-                          fontSize: 13,
-                        ),
+                    ),
+                    Text(
+                      'Double-tap a profile to switch',
+                      style: TextStyle(
+                        color: c.textSecondary,
+                        fontSize: 12.5,
                       ),
-                    ],
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: () async {
-                      Navigator.of(context).pop();
-                      await showCreateProfileModal(context);
-                    },
-                    icon: const Icon(CupertinoIcons.add, size: 18),
-                    label: const Text('New'),
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 18),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: profiles.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (ctx, i) {
-                    final profile = profiles[i];
-                    final isCurrent = profile.id == activeId;
-                    return _ProfileRowCard(
-                      profile: profile,
-                      isActive: isCurrent,
-                      onDoubleTapSwitch: () async {
-                        if (isCurrent) {
-                          Navigator.of(context).pop();
-                          return;
-                        }
-                        final pin = await showApplePinPadSheet(
-                          context: context,
-                          title: 'Switch to ${profile.displayName}',
-                          subtitle: 'Enter 4-digit PIN',
-                          onVerify: (enteredPin) =>
-                              provider.switchProfileWithPin(
-                            profile.id,
-                            enteredPin,
-                          ),
-                        );
-                        if (pin != null && context.mounted) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                    );
-                  },
+              TempoLiquidButton(
+                primary: false,
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  await showCreateProfileModal(context);
+                },
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(CupertinoIcons.add, size: 16),
+                    SizedBox(width: 5),
+                    Text('New', style: TextStyle(fontSize: 13.5)),
+                  ],
                 ),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 18),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: profiles.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (ctx, i) {
+                final profile = profiles[i];
+                final isCurrent = profile.id == activeId;
+                return _ProfileRowCard(
+                  profile: profile,
+                  isActive: isCurrent,
+                  onDoubleTapSwitch: () async {
+                    if (isCurrent) {
+                      Navigator.of(context).pop();
+                      return;
+                    }
+                    final pin = await showApplePinPadSheet(
+                      context: context,
+                      title: 'Switch to ${profile.displayName}',
+                      subtitle: 'Enter passcode',
+                      onVerify: (enteredPin) =>
+                          provider.switchProfileWithPin(
+                        profile.id,
+                        enteredPin,
+                      ),
+                    );
+                    if (pin != null && context.mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
+    );
+
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+      child: allowBlur
+          ? BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: inner,
+            )
+          : inner,
     );
   }
 }
 
-class _ProfileTileCard extends StatefulWidget {
+class _ProfileTileCard extends StatelessWidget {
   final LocalProfile profile;
-  final bool isActive;
   final VoidCallback onSingleTap;
   final VoidCallback onDoubleTapSwitch;
 
   const _ProfileTileCard({
     required this.profile,
-    required this.isActive,
     required this.onSingleTap,
     required this.onDoubleTapSwitch,
   });
 
   @override
-  State<_ProfileTileCard> createState() => _ProfileTileCardState();
-}
-
-class _ProfileTileCardState extends State<_ProfileTileCard> {
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapCancel: () => setState(() => _pressed = false),
-      onTap: () {
-        setState(() => _pressed = false);
-        widget.onSingleTap();
-      },
+    return LiquidGlassSurface(
+      borderRadius: 28,
+      blurEnabled: false,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
+      onTap: onSingleTap,
       onDoubleTap: () {
-        setState(() => _pressed = false);
         HapticFeedback.mediumImpact();
-        widget.onDoubleTapSwitch();
+        onDoubleTapSwitch();
       },
-      child: AnimatedScale(
-        scale: _pressed ? 0.94 : 1.0,
-        duration: const Duration(milliseconds: 140),
-        curve: Curves.easeOutCubic,
-        child: AppleCard(
-          borderRadius: 28,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              LocalProfileAvatar(
-                name: widget.profile.displayName,
-                avatarPath: widget.profile.avatarPath,
-                size: 96,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: c.isDark
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : Colors.black.withValues(alpha: 0.06),
+                width: 1.2,
               ),
-              const SizedBox(height: 16),
-              Text(
-                widget.profile.displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: c.textPrimary,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.2,
-                ),
-              ),
-            ],
+            ),
+            child: LocalProfileAvatar(
+              name: profile.displayName,
+              avatarPath: profile.avatarPath,
+              size: 88,
+            ),
           ),
-        ),
+          const SizedBox(height: 15),
+          Text(
+            profile.displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: c.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.25,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -512,8 +537,9 @@ class _ProfileRowCardState extends State<_ProfileRowCard> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return AppleCard(
-      borderRadius: 20,
+    return LiquidGlassSurface(
+      borderRadius: 22,
+      blurEnabled: false,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       onTap: () {
         if (widget.isActive) return;
@@ -532,7 +558,7 @@ class _ProfileRowCardState extends State<_ProfileRowCard> {
           LocalProfileAvatar(
             name: widget.profile.displayName,
             avatarPath: widget.profile.avatarPath,
-            size: 56,
+            size: 52,
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -543,18 +569,18 @@ class _ProfileRowCardState extends State<_ProfileRowCard> {
                   widget.profile.displayName,
                   style: TextStyle(
                     color: c.textPrimary,
-                    fontSize: 16.5,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 if (widget.isActive || _showDoubleTapPrompt) ...[
                   const SizedBox(height: 2),
                   Text(
-                    widget.isActive ? 'Active' : 'Double-tap to switch',
+                    widget.isActive ? 'Currently signed in' : 'Double-tap to switch',
                     style: TextStyle(
                       color: widget.isActive ? c.textSecondary : c.accent,
                       fontSize: 12.5,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -562,10 +588,20 @@ class _ProfileRowCardState extends State<_ProfileRowCard> {
             ),
           ),
           if (widget.isActive)
-            Icon(
-              CupertinoIcons.checkmark_alt,
-              color: c.textPrimary,
-              size: 18,
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.13),
+                borderRadius: BorderRadius.circular(99),
+              ),
+              child: Text(
+                'Active',
+                style: TextStyle(
+                  color: c.accent,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
         ],
       ),
@@ -573,7 +609,8 @@ class _ProfileRowCardState extends State<_ProfileRowCard> {
   }
 }
 
-/// Modal to create a brand-new local profile with Name, optional Avatar, Body stats, and 4-digit PIN.
+/// Modal to create a brand-new local profile with Name, optional Avatar, Body stats,
+/// Fitness Goal (HyperOS dropdown), Gender (`BitChordSegmentedSlider`), and 4-digit PIN.
 Future<void> showCreateProfileModal(BuildContext context) {
   return showTempoSheet<void>(
     context: context,
@@ -594,10 +631,16 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
   final _heightCtrl = TextEditingController(text: '170');
   final _weightCtrl = TextEditingController(text: '68');
   final _ageCtrl = TextEditingController(text: '24');
-  String _gender = 'Prefer not to say';
+  final GlobalKey _goalRowKey = GlobalKey();
+
+  String _gender = 'Male';
   String _goal = 'general_fitness';
   String _pickedImagePath = '';
+  bool _goalMenuOpen = false;
   bool _saving = false;
+
+  static const _genderLabels = ['Male', 'Female', 'Other'];
+  static const _genderValues = ['Male', 'Female', 'Prefer not to say'];
 
   static const _goals = <MapEntry<String, String>>[
     MapEntry('general_fitness', 'General Health & Wellness'),
@@ -606,6 +649,10 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
     MapEntry('cardio', 'Cardio Fitness'),
     MapEntry('muscular_endurance', 'Muscular Endurance'),
   ];
+
+  String get _goalLabel => _goals
+      .firstWhere((e) => e.key == _goal, orElse: () => _goals.first)
+      .value;
 
   @override
   void dispose() {
@@ -636,6 +683,26 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
     }
   }
 
+  Future<void> _openGoalMenu() async {
+    FocusScope.of(context).unfocus();
+    HapticFeedback.selectionClick();
+    setState(() => _goalMenuOpen = true);
+    final picked = await showHyperOsDropdownMenu<String>(
+      context: context,
+      rowKey: _goalRowKey,
+      selectedValue: _goal,
+      options: _goals
+          .map((e) => HyperOsDropdownOption(value: e.key, label: e.value))
+          .toList(),
+    );
+    if (mounted) {
+      setState(() {
+        if (picked != null) _goal = picked;
+        _goalMenuOpen = false;
+      });
+    }
+  }
+
   Future<void> _continueToPin() async {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
@@ -643,7 +710,6 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
       return;
     }
 
-    // Step 1: Enter 4-digit PIN
     final pin1 = await showApplePinPadSheet(
       context: context,
       title: 'Create 4-Digit PIN',
@@ -651,7 +717,6 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
     );
     if (pin1 == null || !mounted) return;
 
-    // Step 2: Confirm 4-digit PIN
     final pin2 = await showApplePinPadSheet(
       context: context,
       title: 'Confirm 4-Digit PIN',
@@ -693,72 +758,123 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final allowBlur = TempoAppearanceService.instance.value.allowDynamicBlur;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final genderIdx = _genderValues.indexOf(_gender).clamp(0, 2);
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: ClipRRect(
+    final inner = Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.90,
+      ),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        MediaQuery.of(context).padding.bottom + 20,
+      ),
+      decoration: BoxDecoration(
+        color: c.isDark
+            ? const Color(0xFF1C1C1E).withValues(alpha: allowBlur ? 0.92 : 0.98)
+            : const Color(0xFFF2F2F7).withValues(alpha: allowBlur ? 0.94 : 0.99),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-          child: Container(
-            padding: EdgeInsets.fromLTRB(
-              22,
-              14,
-              22,
-              MediaQuery.of(context).padding.bottom + 20,
+        border: Border(top: BorderSide(color: c.glassBorder, width: 1)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 38,
+              height: 5,
+              decoration: BoxDecoration(
+                color: c.textTertiary.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(99),
+              ),
             ),
-            decoration: BoxDecoration(
-              color: c.isDark
-                  ? const Color(0xFF1C1C1E).withValues(alpha: 0.94)
-                  : const Color(0xFFF2F2F7).withValues(alpha: 0.96),
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(32)),
-              border: Border(top: BorderSide(color: c.glassBorder, width: 1)),
-            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Unified Modal Header (badge + title + Liquid Glass close circle)
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.13),
+                ),
+                child: Icon(
+                  CupertinoIcons.person_add_solid,
+                  color: c.accent,
+                  size: 19,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'New Local Profile',
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                  ),
+                ),
+              ),
+              TempoGlassCircleButton(
+                size: 36,
+                enableBlur: false,
+                tooltip: 'Close',
+                icon: Icon(
+                  CupertinoIcons.xmark,
+                  size: 16,
+                  color: c.textPrimary,
+                ),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Scrollable Form Body
+          Flexible(
             child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Center(
-                    child: Container(
-                      width: 38,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: c.textTertiary.withValues(alpha: 0.35),
-                        borderRadius: BorderRadius.circular(99),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'New Local Profile',
-                    style: TextStyle(
-                      color: c.textPrimary,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
+                  // Avatar Picker with Liquid Glass specular ring
                   Center(
                     child: GestureDetector(
                       onTap: _pickAvatar,
                       child: Stack(
                         children: [
-                          LocalProfileAvatar(
-                            name: _nameCtrl.text.isEmpty
-                                ? 'Tempo'
-                                : _nameCtrl.text,
-                            avatarPath: _pickedImagePath,
-                            size: 76,
+                          Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: c.accent.withValues(alpha: 0.45),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: LocalProfileAvatar(
+                              name: _nameCtrl.text.isEmpty
+                                  ? 'Tempo'
+                                  : _nameCtrl.text,
+                              avatarPath: _pickedImagePath,
+                              size: 76,
+                            ),
                           ),
                           Positioned(
                             right: 0,
                             bottom: 0,
                             child: Container(
-                              padding: const EdgeInsets.all(6),
+                              width: 28,
+                              height: 28,
                               decoration: BoxDecoration(
                                 color: c.accent,
                                 shape: BoxShape.circle,
@@ -769,7 +885,7 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
                               ),
                               child: const Icon(
                                 CupertinoIcons.camera_fill,
-                                size: 14,
+                                size: 13,
                                 color: Colors.white,
                               ),
                             ),
@@ -779,146 +895,240 @@ class _CreateProfileSheetState extends State<_CreateProfileSheet> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  _label('Name', c),
-                  TextField(
-                    controller: _nameCtrl,
-                    onChanged: (_) => setState(() {}),
-                    style: TextStyle(color: c.textPrimary),
-                    decoration: InputDecoration(
-                      hintText: 'e.g. Alex',
-                      hintStyle: TextStyle(color: c.textHint),
+
+                  // Name & Body Metrics Card
+                  _sectionLabel('PROFILE DETAILS', c),
+                  LiquidGlassSurface(
+                    borderRadius: 24,
+                    blurEnabled: false,
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _fieldLabel('Name', c),
+                        const SizedBox(height: 6),
+                        _cleanInput(
+                          controller: _nameCtrl,
+                          hintText: 'Your name',
+                          onChanged: (_) => setState(() {}),
+                          c: c,
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _fieldLabel('Height (cm)', c),
+                                  const SizedBox(height: 6),
+                                  _cleanInput(
+                                    controller: _heightCtrl,
+                                    keyboardType: TextInputType.number,
+                                    tabular: true,
+                                    c: c,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _fieldLabel('Weight (kg)', c),
+                                  const SizedBox(height: 6),
+                                  _cleanInput(
+                                    controller: _weightCtrl,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
+                                    tabular: true,
+                                    c: c,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _fieldLabel('Age', c),
+                                  const SizedBox(height: 6),
+                                  _cleanInput(
+                                    controller: _ageCtrl,
+                                    keyboardType: TextInputType.number,
+                                    tabular: true,
+                                    c: c,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _label('Height (cm)', c),
-                            TextField(
-                              controller: _heightCtrl,
-                              keyboardType: TextInputType.number,
-                              style: TextStyle(color: c.textPrimary),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _label('Weight (kg)', c),
-                            TextField(
-                              controller: _weightCtrl,
-                              keyboardType: TextInputType.number,
-                              style: TextStyle(color: c.textPrimary),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _label('Age', c),
-                            TextField(
-                              controller: _ageCtrl,
-                              keyboardType: TextInputType.number,
-                              style: TextStyle(color: c.textPrimary),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  _label('Fitness Goal', c),
-                  DropdownButtonFormField<String>(
-                    initialValue: _goal,
-                    dropdownColor: c.card,
-                    style: TextStyle(color: c.textPrimary, fontSize: 15),
-                    items: _goals
-                        .map(
-                          (g) => DropdownMenuItem(
-                            value: g.key,
-                            child: Text(g.value),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) setState(() => _goal = v);
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  _label('Gender', c),
-                  DropdownButtonFormField<String>(
-                    initialValue: _gender,
-                    dropdownColor: c.card,
-                    style: TextStyle(color: c.textPrimary, fontSize: 15),
-                    items: const [
-                      DropdownMenuItem(value: 'Male', child: Text('Male')),
-                      DropdownMenuItem(value: 'Female', child: Text('Female')),
-                      DropdownMenuItem(
-                        value: 'Prefer not to say',
-                        child: Text('Prefer not to say'),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _gender = v);
-                    },
-                  ),
-                  const SizedBox(height: 22),
-                  SizedBox(
-                    height: 52,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: c.accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: _saving ? null : _continueToPin,
-                      child: _saving
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text(
-                              'Set 4-Digit PIN & Create',
+                  const SizedBox(height: 16),
+
+                  // Fitness Goal (HyperOS Liquid Glass Dropdown)
+                  _sectionLabel('FITNESS GOAL', c),
+                  LiquidGlassSurface(
+                    key: _goalRowKey,
+                    borderRadius: 20,
+                    blurEnabled: false,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    onTap: _openGoalMenu,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: AnimatedOpacity(
+                            opacity: _goalMenuOpen ? 0.0 : 1.0,
+                            duration: const Duration(milliseconds: 140),
+                            child: Text(
+                              _goalLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
+                                color: c.textPrimary,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(
+                          CupertinoIcons.chevron_up_chevron_down,
+                          size: 14,
+                          color: c.textTertiary,
+                        ),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 16),
+
+                  // Gender (Liquid Glass BitChordSegmentedSlider)
+                  _sectionLabel('GENDER', c),
+                  BitChordSegmentedSlider(
+                    height: 42,
+                    showTrackBorder: true,
+                    labels: _genderLabels,
+                    selectedIndex: genderIdx,
+                    onChanged: (idx) {
+                      setState(() => _gender = _genderValues[idx]);
+                    },
+                  ),
+                  const SizedBox(height: 18),
                 ],
               ),
             ),
           ),
+
+          // Pinned Bouncy Primary CTA
+          const SizedBox(height: 6),
+          TempoBouncyButton(
+            height: 52,
+            onPressed: _saving ? null : _continueToPin,
+            child: _saving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text('Set 4-Digit PIN & Create'),
+          ),
+        ],
+      ),
+    );
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        child: allowBlur
+            ? BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: inner,
+              )
+            : inner,
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String text, AppColors c) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 6, bottom: 7),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: c.textTertiary,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.65,
         ),
       ),
     );
   }
 
-  Widget _label(String text, AppColors c) {
+  Widget _fieldLabel(String text, AppColors c) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6, left: 2),
+      padding: const EdgeInsets.only(left: 2),
       child: Text(
         text,
         style: TextStyle(
           color: c.textSecondary,
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _cleanInput({
+    required TextEditingController controller,
+    required AppColors c,
+    String? hintText,
+    TextInputType? keyboardType,
+    bool tabular = false,
+    ValueChanged<String>? onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 2),
+      decoration: BoxDecoration(
+        color: c.isDark
+            ? Colors.white.withValues(alpha: 0.065)
+            : Colors.black.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        onChanged: onChanged,
+        style: TextStyle(
+          color: c.textPrimary,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          fontFeatures: tabular ? const [FontFeature.tabularFigures()] : null,
+        ),
+        decoration: InputDecoration(
+          hintText: hintText,
+          hintStyle: TextStyle(color: c.textHint),
+          isDense: true,
+          filled: false,
+          fillColor: Colors.transparent,
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 11),
         ),
       ),
     );

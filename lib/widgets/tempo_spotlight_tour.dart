@@ -32,6 +32,7 @@ class TempoSpotlightTour {
   static const List<String> _allScreenIds = [
     'summary',
     'workout',
+    'workout_detail',
     'progress',
     'profile',
   ];

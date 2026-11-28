@@ -1,17 +1,43 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
 import '../services/animation_speed_service.dart';
+import '../services/appearance_service.dart';
 import '../theme/app_colors.dart';
 import 'tempo_spring_physics.dart';
+
+/// Optional controller for two-detent sheets (Expanded <-> Preview Peek).
+///
+/// When passed to [showTempoSheet] alongside [peekHeight], the sheet can glide
+/// smoothly between its full expanded height and a compact preview peek height
+/// so the underlying screen stays unobstructed while adjusting live controls.
+class TempoSheetController extends ChangeNotifier {
+  bool _peeking;
+
+  TempoSheetController({bool initialPeeking = false})
+      : _peeking = initialPeeking;
+
+  bool get isPeeking => _peeking;
+
+  void setPeeking(bool value) {
+    if (_peeking == value) return;
+    _peeking = value;
+    notifyListeners();
+  }
+
+  void togglePeek() => setPeeking(!_peeking);
+}
 
 /// Shows an iOS 26/27-inspired modal bottom sheet with:
 /// - Critically-damped spring opening animation (slide + subtle scale + scrim fade)
 /// - Real rubber-band upward stretch physics (`UISheetPresentationController` feel)
 ///   with a seamless bottom skirt and `SpringSimulation` recoil on release
+/// - Optional two-detent Preview Peek mode ([controller] + [peekHeight]) with
+///   live scrim lightening so underlying previews stay unobstructed
 /// - Smooth interactive drag-to-dismiss with dynamic scrim opacity
 Future<T?> showTempoSheet<T>({
   required BuildContext context,
@@ -23,6 +49,9 @@ Future<T?> showTempoSheet<T>({
   bool enableDrag = true,
   bool showDragHandle = false,
   bool useRootNavigator = false,
+  TempoSheetController? controller,
+  double? peekHeight,
+  double peekScrimAlpha = 0.08,
 }) {
   return Navigator.of(context, rootNavigator: useRootNavigator).push<T>(
     _TempoSpringSheetRoute<T>(
@@ -33,6 +62,9 @@ Future<T?> showTempoSheet<T>({
       isDismissible: isDismissible,
       enableDrag: enableDrag,
       showDragHandle: showDragHandle,
+      sheetController: controller,
+      peekHeight: peekHeight,
+      peekScrimAlpha: peekScrimAlpha,
     ),
   );
 }
@@ -45,6 +77,9 @@ class _TempoSpringSheetRoute<T> extends PopupRoute<T> {
   final bool isDismissible;
   final bool enableDrag;
   final bool showDragHandle;
+  final TempoSheetController? sheetController;
+  final double? peekHeight;
+  final double peekScrimAlpha;
 
   final ValueNotifier<double> _dismissProgress = ValueNotifier<double>(0.0);
 
@@ -56,6 +91,9 @@ class _TempoSpringSheetRoute<T> extends PopupRoute<T> {
     required this.isDismissible,
     required this.enableDrag,
     required this.showDragHandle,
+    this.sheetController,
+    this.peekHeight,
+    required this.peekScrimAlpha,
   });
 
   @override
@@ -112,6 +150,9 @@ class _TempoSpringSheetRoute<T> extends PopupRoute<T> {
       isDismissible: isDismissible,
       enableDrag: enableDrag,
       showDragHandle: showDragHandle,
+      controller: sheetController,
+      peekHeight: peekHeight,
+      peekScrimAlpha: peekScrimAlpha,
       onDismiss: () {
         if (isCurrent) {
           Navigator.of(context).pop();
@@ -131,6 +172,9 @@ class _TempoStretchSheetShell extends StatefulWidget {
   final bool isDismissible;
   final bool enableDrag;
   final bool showDragHandle;
+  final TempoSheetController? controller;
+  final double? peekHeight;
+  final double peekScrimAlpha;
   final VoidCallback onDismiss;
   final Widget child;
 
@@ -143,6 +187,9 @@ class _TempoStretchSheetShell extends StatefulWidget {
     required this.isDismissible,
     required this.enableDrag,
     required this.showDragHandle,
+    required this.controller,
+    required this.peekHeight,
+    required this.peekScrimAlpha,
     required this.onDismiss,
     required this.child,
   });
@@ -157,15 +204,22 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
   final GlobalKey _sheetKey = GlobalKey();
   late final AnimationController _springController;
 
-  /// Negative = stretched upward (rubber-band); Positive = dragged downward (dismiss)
+  /// Negative = stretched upward (rubber-band); Positive = dragged downward (peek/dismiss)
   double _dragOffset = 0.0;
   bool _isDragging = false;
   bool _stretchHapticFired = false;
+  bool _syncingFromDrag = false;
 
   static const _springDesc = SpringDescription(
     mass: 1.0,
     stiffness: 380.0,
     damping: 25.0,
+  );
+
+  static const _detentSpringDesc = SpringDescription(
+    mass: 1.0,
+    stiffness: 360.0,
+    damping: 32.0,
   );
 
   @override
@@ -178,10 +232,30 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
           _syncDismissProgress();
         });
       });
+    widget.controller?.addListener(_onControllerChanged);
+    if (widget.controller?.isPeeking == true && widget.peekHeight != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_hasPeekDetent) return;
+        setState(() {
+          _dragOffset = _peekOffset;
+          _syncDismissProgress();
+        });
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _TempoStretchSheetShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?.removeListener(_onControllerChanged);
+      widget.controller?.addListener(_onControllerChanged);
+    }
   }
 
   @override
   void dispose() {
+    widget.controller?.removeListener(_onControllerChanged);
     _springController.dispose();
     super.dispose();
   }
@@ -189,6 +263,37 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
   double get _sheetHeight {
     final box = _sheetKey.currentContext?.findRenderObject() as RenderBox?;
     return box?.size.height ?? 420.0;
+  }
+
+  double get _peekOffset {
+    final targetPeek = widget.peekHeight;
+    if (targetPeek == null) return 0.0;
+    return math.max(0.0, _sheetHeight - targetPeek);
+  }
+
+  bool get _hasPeekDetent => widget.peekHeight != null && _peekOffset > 24.0;
+
+  void _onControllerChanged() {
+    if (!mounted || _isDragging || _syncingFromDrag || !_hasPeekDetent) return;
+    final target = (widget.controller?.isPeeking ?? false) ? _peekOffset : 0.0;
+    if ((_dragOffset - target).abs() < 0.5) return;
+    final reduceMotion = TempoAppearanceService.instance.reduceAnimation ||
+        MediaQuery.disableAnimationsOf(context);
+    _springController.stop();
+    if (reduceMotion) {
+      setState(() {
+        _dragOffset = target;
+        _syncDismissProgress();
+      });
+      return;
+    }
+    final sim = SpringSimulation(
+      _detentSpringDesc,
+      _dragOffset,
+      target,
+      0.0,
+    );
+    _springController.animateWith(sim);
   }
 
   /// Authentic iOS logarithmic rubber-banding formula:
@@ -230,9 +335,56 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
   }
 
   void _onDragEnd(double velocityY) {
-    if (!widget.enableDrag) return;
+    if (!widget.enableDrag || !_isDragging) return;
     _isDragging = false;
     final h = _sheetHeight;
+
+    if (_hasPeekDetent) {
+      final peek = _peekOffset;
+      final wasPeeking =
+          widget.controller?.isPeeking ?? (_dragOffset > peek * 0.5);
+
+      final shouldDismiss = widget.isDismissible &&
+          _dragOffset > 0 &&
+          (wasPeeking
+              ? (_dragOffset > peek + 64.0 || velocityY > 560.0)
+              : (_dragOffset > peek + 96.0 || velocityY > 1450.0));
+
+      if (shouldDismiss) {
+        HapticFeedback.lightImpact();
+        widget.onDismiss();
+        return;
+      }
+
+      final bool shouldPeek;
+      if (wasPeeking) {
+        shouldPeek = !(_dragOffset < peek - 36.0 || velocityY < -380.0);
+      } else {
+        shouldPeek =
+            _dragOffset > math.min(peek * 0.25, 68.0) || velocityY > 380.0;
+      }
+
+      if (shouldPeek != wasPeeking) {
+        HapticFeedback.selectionClick();
+      }
+
+      if (widget.controller != null &&
+          widget.controller!.isPeeking != shouldPeek) {
+        _syncingFromDrag = true;
+        widget.controller!.setPeeking(shouldPeek);
+        _syncingFromDrag = false;
+      }
+
+      final target = shouldPeek ? peek : 0.0;
+      final sim = SpringSimulation(
+        _detentSpringDesc,
+        _dragOffset,
+        target,
+        velocityY.clamp(-2400.0, 2400.0),
+      );
+      _springController.animateWith(sim);
+      return;
+    }
 
     // Dismiss if dragged down far enough or flicked downward quickly
     final shouldDismiss = widget.isDismissible &&
@@ -321,32 +473,66 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
 
     Widget content = widget.child;
     if (hasExplicitBg || widget.showDragHandle) {
-      content = Material(
-        color: hasExplicitBg ? widget.backgroundColor : Colors.transparent,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(widget.borderRadius),
+      final baseColor = hasExplicitBg ? widget.backgroundColor! : c.card;
+      content = Container(
+        decoration: BoxDecoration(
+          color: baseColor,
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(widget.borderRadius),
+          ),
+          border: Border(
+            top: BorderSide(
+              color: c.isDark
+                  ? Colors.white.withValues(alpha: 0.14)
+                  : Colors.white.withValues(alpha: 0.90),
+              width: 1.0,
+            ),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: c.isDark ? 0.48 : 0.12),
+              blurRadius: 28,
+              spreadRadius: -4,
+              offset: const Offset(0, -6),
+            ),
+          ],
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (widget.showDragHandle)
-              Padding(
-                padding: const EdgeInsets.only(top: 10, bottom: 2),
-                child: Center(
-                  child: Container(
-                    width: 38,
-                    height: 4.5,
-                    decoration: BoxDecoration(
-                      color: c.textTertiary.withValues(alpha: 0.35),
-                      borderRadius: BorderRadius.circular(99),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(widget.borderRadius),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (widget.showDragHandle)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.controller != null && _hasPeekDetent
+                      ? () {
+                          HapticFeedback.selectionClick();
+                          widget.controller!.togglePeek();
+                        }
+                      : null,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 10, bottom: 2),
+                    child: Center(
+                      child: Container(
+                        width: 38,
+                        height: 4.5,
+                        decoration: BoxDecoration(
+                          color: c.textTertiary.withValues(alpha: 0.36),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            Flexible(child: widget.child),
-          ],
+              Flexible(child: widget.child),
+            ],
+          ),
         ),
       );
     } else {
@@ -373,13 +559,35 @@ class _TempoStretchSheetShellState extends State<_TempoStretchSheetShell>
                 .clamp(0.0, 1.0)
             : TempoSpringCurves.sheetOpen.transform(rawT);
 
-        // Backdrop scrim smoothly fades in on open & fades out during downward drag
-        final scrimAlpha = (0.44 * rawT) *
-            (1.0 - widget.dismissProgress.value * 0.85);
+        // Backdrop scrim smoothly fades in on open, lightens in Preview Peek
+        // so live previews above stay vivid, and fades out during dismiss drag.
+        final double baseScrim;
+        if (_hasPeekDetent) {
+          final peek = _peekOffset;
+          if (_dragOffset <= 0) {
+            baseScrim = 0.44;
+          } else if (_dragOffset <= peek) {
+            final p = (_dragOffset / peek).clamp(0.0, 1.0);
+            baseScrim = ui.lerpDouble(
+              0.44,
+              widget.peekScrimAlpha,
+              Curves.easeOut.transform(p),
+            )!;
+          } else {
+            final remaining = math.max(_sheetHeight - peek, 120.0);
+            final d = ((_dragOffset - peek) / remaining).clamp(0.0, 1.0);
+            baseScrim = widget.peekScrimAlpha * (1.0 - d);
+          }
+        } else {
+          baseScrim = 0.44 * (1.0 - widget.dismissProgress.value * 0.85);
+        }
+        final scrimAlpha = baseScrim * rawT;
 
         // Slide smoothly over the sheet's true measured height (zero Opacity
         // around BackdropFilter glass sheets, zero premature cutoff on tall sheets).
-        final travelHeight = math.max(_sheetHeight + 28.0, screenH * 0.42);
+        final travelHeight = isClosing && _dragOffset > 0
+            ? math.max(_sheetHeight - _dragOffset + 32.0, 220.0)
+            : math.max(_sheetHeight + 28.0, screenH * 0.42);
         final openSlideY = (1.0 - t) * travelHeight;
         final openScale = 0.97 + 0.03 * t.clamp(0.0, 1.03);
 

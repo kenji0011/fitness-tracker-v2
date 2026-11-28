@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../widgets/liquid_glass_surface.dart';
+
 class AppTheme {
   static const Color tempoOrangeLight = Color(0xFFFF6A24);
   static const Color tempoOrangeDark = Color(0xFFFF7A33);
@@ -10,7 +12,8 @@ class AppTheme {
     brightness: Brightness.light,
     scaffoldBackgroundColor: const Color(0xFFF2F2F7),
     primaryColor: tempoOrangeLight,
-    splashFactory: InkSparkle.splashFactory,
+    splashFactory: const TempoTouchLightSplashFactory(isDark: false),
+    highlightColor: Colors.transparent,
     appBarTheme: const AppBarTheme(
       backgroundColor: Color(0xFFF2F2F7),
       foregroundColor: Color(0xFF1C1C1E),
@@ -97,7 +100,8 @@ class AppTheme {
     brightness: Brightness.dark,
     scaffoldBackgroundColor: const Color(0xFF000000),
     primaryColor: tempoOrangeDark,
-    splashFactory: InkSparkle.splashFactory,
+    splashFactory: const TempoTouchLightSplashFactory(isDark: true),
+    highlightColor: Colors.transparent,
     appBarTheme: const AppBarTheme(
       backgroundColor: Color(0xFF000000),
       foregroundColor: Colors.white,

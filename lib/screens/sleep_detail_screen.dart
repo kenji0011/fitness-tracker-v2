@@ -8,12 +8,15 @@ import 'package:provider/provider.dart';
 
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
+import '../services/goal_completion_service.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bitchord_segmented_slider.dart';
 import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_jigg_icon.dart';
+import '../widgets/tempo_morph_calendar.dart';
 import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import 'history_calendar_screen.dart';
@@ -31,6 +34,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
 
   final TempoRustDb _db = TempoRustDb.instance;
   final GlobalKey _moreButtonKey = GlobalKey();
+  final GlobalKey _dateButtonKey = GlobalKey();
 
   int _selectedTab = 0; // 0 = Latest, 1 = Week, 2 = M, 3 = Y
   DateTime _anchorDate = DateTime.now();
@@ -162,7 +166,8 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
         .toSet();
     final result = await pushTempoMorphRoute<HistoryCalendarSelection>(
       context: context,
-      sourceBorderRadius: 16,
+      sourceKey: _dateButtonKey,
+      sourceBorderRadius: 14,
       builder: (_) => HistoryCalendarScreen(
         initialDate: _anchorDate,
         initialModeIndex: _selectedTab,
@@ -187,6 +192,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
 
     final ctrl = TextEditingController(text: initialVal.toStringAsFixed(1));
     DateTime selectedDate = _anchorDate;
+    final datePillKey = GlobalKey();
     const presets = [6.0, 7.0, 7.5, 8.0, 9.0];
 
     final saved = await showTempoSheet<bool>(
@@ -217,196 +223,246 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    'Add sleep',
-                    style: TextStyle(
-                      color: mc.textPrimary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   Row(
                     children: [
-                      _SleepStepperCircle(
-                        icon: CupertinoIcons.minus,
-                        onTap: () => adjust(-0.5),
+                      const _PurpleCircleBadge(
+                        icon: CupertinoIcons.bed_double_fill,
+                        color: _sleepPurple,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: TextField(
-                          controller: ctrl,
-                          textAlign: TextAlign.center,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
+                        child: Text(
+                          'Add sleep',
                           style: TextStyle(
                             color: mc.textPrimary,
-                            fontSize: 26,
+                            fontSize: 19.5,
                             fontWeight: FontWeight.w700,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                          decoration: InputDecoration(
-                            suffixText: 'hrs',
-                            suffixStyle: TextStyle(
-                              color: mc.textSecondary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            filled: true,
-                            fillColor: mc.searchBg,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(16),
-                              borderSide: BorderSide.none,
-                            ),
+                            letterSpacing: -0.35,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      _SleepStepperCircle(
-                        icon: CupertinoIcons.add,
-                        onTap: () => adjust(0.5),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: presets.map((h) {
-                      final active =
-                          (double.tryParse(ctrl.text.trim()) ?? -1) == h;
-                      return GestureDetector(
-                        onTap: () {
-                          HapticFeedback.selectionClick();
-                          ctrl.text = h.toStringAsFixed(1);
-                          setModalState(() {});
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 160),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 7,
-                          ),
-                          decoration: BoxDecoration(
-                            color: active
-                                ? _sleepPurple.withValues(alpha: 0.16)
-                                : mc.searchBg,
-                            borderRadius: BorderRadius.circular(12),
-                            border: active
-                                ? Border.all(
-                                    color: _sleepPurple.withValues(alpha: 0.5),
-                                  )
-                                : null,
-                          ),
-                          child: Text(
-                            '${h.toStringAsFixed(h == h.roundToDouble() ? 0 : 1)}h',
-                            style: TextStyle(
-                              color: active ? _sleepPurple : mc.textSecondary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mc.searchBg,
+                      borderRadius: BorderRadius.circular(32),
+                      border: Border.all(color: mc.cardBorder, width: 0.8),
+                    ),
+                    child: Row(
+                      children: [
+                        TempoGlassCircleButton(
+                          size: 50,
+                          tooltip: 'Decrease sleep',
+                          onPressed: () => adjust(-0.5),
+                          icon: Icon(
+                            CupertinoIcons.minus,
+                            color: mc.textPrimary,
+                            size: 20,
                           ),
                         ),
-                      );
-                    }).toList(),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextField(
+                                controller: ctrl,
+                                textAlign: TextAlign.center,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                style: TextStyle(
+                                  color: mc.textPrimary,
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.7,
+                                  height: 1.05,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  filled: false,
+                                  border: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  contentPadding:
+                                      EdgeInsets.symmetric(vertical: 2),
+                                ),
+                              ),
+                              Text(
+                                'hrs',
+                                style: TextStyle(
+                                  color: mc.textTertiary,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        TempoGlassCircleButton(
+                          size: 50,
+                          tooltip: 'Increase sleep',
+                          onPressed: () => adjust(0.5),
+                          icon: Icon(
+                            CupertinoIcons.add,
+                            color: mc.textPrimary,
+                            size: 20,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      for (int i = 0; i < presets.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 8),
+                        Expanded(
+                          child: Builder(
+                            builder: (_) {
+                              final h = presets[i];
+                              final active =
+                                  (double.tryParse(ctrl.text.trim()) ?? -1) ==
+                                      h;
+                              return GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  ctrl.text = h.toStringAsFixed(1);
+                                  setModalState(() {});
+                                },
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 160),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 9),
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: active
+                                        ? _sleepPurple.withValues(
+                                            alpha: mc.isDark ? 0.24 : 0.14,
+                                          )
+                                        : mc.searchBg,
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(
+                                      color: active
+                                          ? _sleepPurple.withValues(alpha: 0.55)
+                                          : mc.cardBorder,
+                                      width: active ? 1.1 : 0.7,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '${h.toStringAsFixed(h == h.roundToDouble() ? 0 : 1)}h',
+                                    style: TextStyle(
+                                      color: active
+                                          ? _sleepPurple
+                                          : mc.textSecondary,
+                                      fontSize: 12.5,
+                                      fontWeight: active
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 14),
-                  GestureDetector(
-                    onTap: () async {
+                  TempoLiquidButton(
+                    key: datePillKey,
+                    primary: false,
+                    borderRadius: 18,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    onPressed: () async {
+                      HapticFeedback.selectionClick();
                       final now = DateTime.now();
-                      final d = await showDatePicker(
+                      final d = await showTempoMorphCalendar(
                         context: ctx,
+                        anchorKey: datePillKey,
                         initialDate:
                             selectedDate.isAfter(now) ? now : selectedDate,
                         firstDate: DateTime(2020),
                         lastDate: now,
+                        accentColor: _sleepPurple,
+                        sourceBorderRadius: 18,
                       );
                       if (d != null) {
                         setModalState(() => selectedDate = d);
                       }
                     },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: mc.searchBg,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        children: [
-                          TempoJiggIcon(
-                            'calendar',
-                            variant: JiggIconVariant.outline,
-                            size: 18,
+                    child: Row(
+                      children: [
+                        TempoJiggIcon(
+                          'calendar',
+                          variant: JiggIconVariant.outline,
+                          size: 18,
+                          color: mc.textSecondary,
+                          trigger: JiggIconTrigger.appear,
+                          fallbackIcon: CupertinoIcons.calendar,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Date',
+                          style: TextStyle(
                             color: mc.textSecondary,
-                            trigger: JiggIconTrigger.appear,
-                            fallbackIcon: CupertinoIcons.calendar,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w500,
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Date',
-                            style: TextStyle(
-                              color: mc.textSecondary,
-                              fontSize: 14.5,
-                            ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          DateFormat('MM/dd/yyyy').format(selectedDate),
+                          style: TextStyle(
+                            color: mc.textPrimary,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
                           ),
-                          const Spacer(),
-                          Text(
-                            DateFormat('MM/dd/yyyy').format(selectedDate),
-                            style: TextStyle(
-                              color: mc.textPrimary,
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 18),
-                  SizedBox(
-                    height: 50,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: mc.accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: () async {
-                        final val = double.tryParse(ctrl.text.trim());
-                        if (val == null || val < 0.5 || val > 16.0) return;
-                        final now = DateTime.now();
-                        final recorded = DateTime(
-                          selectedDate.year,
-                          selectedDate.month,
-                          selectedDate.day,
-                          now.hour,
-                          now.minute,
-                        );
-                        await _db.logBodyMetric(
-                          profileId: pid,
-                          metricType: 'sleep',
-                          value: val,
-                          recordedAt: recorded,
-                        );
-                        if (ctx.mounted) Navigator.of(ctx).pop(true);
-                      },
-                      child: const Text(
-                        'Save sleep',
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
+                  TempoBouncyButton(
+                    onPressed: () async {
+                      HapticFeedback.lightImpact();
+                      final val = double.tryParse(ctrl.text.trim());
+                      if (val == null || val < 0.5 || val > 16.0) return;
+                      final now = DateTime.now();
+                      final recorded = DateTime(
+                        selectedDate.year,
+                        selectedDate.month,
+                        selectedDate.day,
+                        now.hour,
+                        now.minute,
+                      );
+                      await _db.logBodyMetric(
+                        profileId: pid,
+                        metricType: 'sleep',
+                        value: val,
+                        recordedAt: recorded,
+                      );
+                      if (ctx.mounted) Navigator.of(ctx).pop(true);
+                    },
+                    child: const Text('Save sleep'),
                   ),
                 ],
               ),
@@ -420,6 +476,12 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
     if (saved == true && mounted) {
       await context.read<ActiveProfileProvider>().refreshProfiles();
       await _load();
+      if (mounted) {
+        await GoalCompletionService.instance.checkAndCelebrate(
+          context,
+          profileId: pid,
+        );
+      }
     }
   }
 
@@ -436,42 +498,126 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModalState) {
           final mc = AppColors.of(ctx);
+          const presets = [7.0, 7.5, 8.0, 8.5];
+          void adjust(double delta) {
+            HapticFeedback.selectionClick();
+            setModalState(() {
+              tempGoal = ((tempGoal + delta) * 2).round().clamp(10, 21) / 2.0;
+            });
+          }
+
           return Padding(
             padding: EdgeInsets.fromLTRB(
               22,
               10,
               22,
-              MediaQuery.paddingOf(ctx).bottom + 22,
+              MediaQuery.paddingOf(ctx).bottom + 24,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  'Sleep goal',
-                  style: TextStyle(
-                    color: mc.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Most adults recover best between 7 and 9 hours per night.',
-                  style: TextStyle(color: mc.textSecondary, fontSize: 13.5),
-                ),
-                const SizedBox(height: 18),
-                Center(
-                  child: Text(
-                    '${tempGoal.toStringAsFixed(1)} hrs',
-                    style: TextStyle(
-                      color: mc.textPrimary,
-                      fontSize: 32,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                Row(
+                  children: [
+                    const _PurpleCircleBadge(
+                      icon: CupertinoIcons.bed_double_fill,
+                      color: _sleepPurple,
                     ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Sleep goal',
+                            style: TextStyle(
+                              color: mc.textPrimary,
+                              fontSize: 19.5,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.35,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Most adults recover best between 7 and 9 hours per night.',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12.5,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // Recessed pill tray with Liquid Glass - / + buttons
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: mc.searchBg,
+                    borderRadius: BorderRadius.circular(32),
+                    border: Border.all(color: mc.cardBorder, width: 0.8),
+                  ),
+                  child: Row(
+                    children: [
+                      TempoGlassCircleButton(
+                        size: 50,
+                        tooltip: 'Decrease sleep goal',
+                        onPressed: () => adjust(-0.5),
+                        icon: Icon(
+                          CupertinoIcons.minus,
+                          color: mc.textPrimary,
+                          size: 20,
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              tempGoal.toStringAsFixed(1),
+                              style: TextStyle(
+                                color: mc.textPrimary,
+                                fontSize: 30,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.7,
+                                height: 1.05,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              'hrs / night',
+                              style: TextStyle(
+                                color: mc.textTertiary,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TempoGlassCircleButton(
+                        size: 50,
+                        tooltip: 'Increase sleep goal',
+                        onPressed: () => adjust(0.5),
+                        icon: Icon(
+                          CupertinoIcons.add,
+                          color: mc.textPrimary,
+                          size: 20,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                const SizedBox(height: 8),
                 Slider(
                   value: tempGoal,
                   min: 5.0,
@@ -483,26 +629,66 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                     setModalState(() => tempGoal = v);
                   },
                 ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 50,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: mc.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                Row(
+                  children: [
+                    for (int i = 0; i < presets.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setModalState(() => tempGoal = presets[i]);
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 170),
+                            curve: Curves.easeOutCubic,
+                            padding: const EdgeInsets.symmetric(vertical: 9),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: (tempGoal - presets[i]).abs() < 0.05
+                                  ? _sleepPurple.withValues(
+                                      alpha: mc.isDark ? 0.24 : 0.14,
+                                    )
+                                  : mc.searchBg,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: (tempGoal - presets[i]).abs() < 0.05
+                                    ? _sleepPurple.withValues(alpha: 0.55)
+                                    : mc.cardBorder,
+                                width: (tempGoal - presets[i]).abs() < 0.05
+                                    ? 1.1
+                                    : 0.7,
+                              ),
+                            ),
+                            child: Text(
+                              '${presets[i].toStringAsFixed(presets[i] == presets[i].roundToDouble() ? 0 : 1)}h',
+                              style: TextStyle(
+                                color: (tempGoal - presets[i]).abs() < 0.05
+                                    ? _sleepPurple
+                                    : mc.textSecondary,
+                                fontSize: 12.5,
+                                fontWeight: (tempGoal - presets[i]).abs() < 0.05
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                    onPressed: () => Navigator.of(ctx).pop(tempGoal),
-                    child: const Text(
-                      'Save goal',
-                      style: TextStyle(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 18),
+                TempoBouncyButton(
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    Navigator.of(ctx).pop(tempGoal);
+                  },
+                  child: const Text('Save goal'),
                 ),
               ],
             ),
@@ -596,23 +782,19 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                 ),
               ),
               const SizedBox(height: 22),
-              SizedBox(
+              TempoLiquidButton(
+                primary: false,
                 height: 50,
-                child: TextButton(
-                  style: TextButton.styleFrom(
-                    backgroundColor: mc.searchBg,
-                    foregroundColor: mc.textPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text(
-                    'Close',
-                    style: TextStyle(
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                borderRadius: 999,
+                onPressed: () {
+                  HapticFeedback.selectionClick();
+                  Navigator.of(ctx).pop();
+                },
+                child: const Text(
+                  'Close',
+                  style: TextStyle(
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -844,29 +1026,21 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                   height: 1.45,
                 ),
               ),
-              const SizedBox(height: 18),
-              SizedBox(
+              const SizedBox(height: 22),
+              TempoLiquidButton(
+                primary: false,
                 height: 50,
-                child: TextButton(
-                  style: TextButton.styleFrom(
-                    backgroundColor:
-                        mc.isDark ? const Color(0xFF26272B) : mc.searchBg,
-                    foregroundColor: mc.textPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                  ),
-                  onPressed: () {
-                    HapticFeedback.lightImpact();
-                    Navigator.of(ctx).pop();
-                  },
-                  child: Text(
-                    'Collapse',
-                    style: TextStyle(
-                      color: mc.textPrimary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                borderRadius: 999,
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  Navigator.of(ctx).pop();
+                },
+                child: Text(
+                  'Collapse',
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -1037,6 +1211,7 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
                           ),
                           const SizedBox(height: 1),
                           GestureDetector(
+                            key: _dateButtonKey,
                             behavior: HitTestBehavior.opaque,
                             onTap: _pickAnchorDate,
                             child: Row(
@@ -1085,16 +1260,13 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
               ),
             ),
 
-            // 4-Segment Sliding Timeframe Pill (Latest | Week | M | Y)
+            // 4-Segment BitChord Liquid Glass Sliding Timeframe Pill (Latest | Week | M | Y)
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 2, 18, 16),
-              child: _SleepSegmentBar(
-                tabs: _tabs,
+              child: BitChordSegmentedSlider(
+                labels: _tabs,
                 selectedIndex: _selectedTab,
-                onChanged: (idx) {
-                  HapticFeedback.selectionClick();
-                  setState(() => _selectedTab = idx);
-                },
+                onChanged: (idx) => setState(() => _selectedTab = idx),
               ),
             ),
 
@@ -1558,86 +1730,6 @@ class _SleepDetailScreenState extends State<SleepDetailScreen> {
   }
 }
 
-class _SleepSegmentBar extends StatelessWidget {
-  final List<String> tabs;
-  final int selectedIndex;
-  final ValueChanged<int> onChanged;
-
-  const _SleepSegmentBar({
-    required this.tabs,
-    required this.selectedIndex,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.all(3.5),
-      decoration: BoxDecoration(
-        color: c.isDark
-            ? const Color(0xFF1C1C1E)
-            : Colors.black.withValues(alpha: 0.055),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: LayoutBuilder(
-        builder: (_, constraints) {
-          final segW = constraints.maxWidth / tabs.length;
-          return Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                left: selectedIndex * segW,
-                top: 0,
-                bottom: 0,
-                width: segW,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: c.isDark ? const Color(0xFF323338) : c.card,
-                    borderRadius: BorderRadius.circular(11),
-                    boxShadow: c.isDark
-                        ? null
-                        : [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.06),
-                              blurRadius: 6,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                  ),
-                ),
-              ),
-              Row(
-                children: List.generate(tabs.length, (i) {
-                  final sel = i == selectedIndex;
-                  return Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onChanged(i),
-                      child: Center(
-                        child: Text(
-                          tabs[i],
-                          style: TextStyle(
-                            color: sel ? c.textPrimary : c.textSecondary,
-                            fontSize: 13.5,
-                            fontWeight: sel ? FontWeight.w600 : FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
 class _SleepTrendChart extends StatelessWidget {
   final List<BodyMetricPoint> points;
   final Color lineColor;
@@ -1806,30 +1898,6 @@ class _PurpleCircleBadge extends StatelessWidget {
                 fallbackIcon: icon,
               )
             : Icon(icon, color: Colors.white, size: 17),
-      ),
-    );
-  }
-}
-
-class _SleepStepperCircle extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _SleepStepperCircle({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: c.searchBg,
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, color: c.textPrimary, size: 20),
       ),
     );
   }

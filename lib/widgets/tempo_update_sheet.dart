@@ -206,6 +206,7 @@ class _TempoUpdateFloatingModalState extends State<_TempoUpdateFloatingModal>
     }
     return trimmed
         .replaceAll(RegExp(r'^#+\s*', multiLine: true), '')
+        .replaceAll(RegExp(r'^[\-\*•]\s+', multiLine: true), '')
         .replaceAll('**', '')
         .trim();
   }
@@ -420,7 +421,7 @@ class _TempoUpdateFloatingModalState extends State<_TempoUpdateFloatingModal>
                         const Spacer(),
                         Text(
                           _totalBytes > 0
-                              ? '${_formatMb(_receivedBytes)} / ${_formatMb(_totalBytes)} MB · $pct%'
+                              ? '${_formatMb(_receivedBytes)} / ${_formatMb(_totalBytes)} MB ($pct%)'
                               : '${_formatMb(_receivedBytes)} MB',
                           style: TextStyle(
                             color: c.textSecondary,
@@ -472,14 +473,10 @@ class _TempoUpdateFloatingModalState extends State<_TempoUpdateFloatingModal>
                       ),
                     ),
                     const SizedBox(height: 12),
-                    TempoLiquidButton(
-                      primary: true,
+                    TempoBouncyButton(
                       height: 48,
                       onPressed: _openPermissionSettings,
-                      child: const Text(
-                        'Allow in Settings',
-                        style: TextStyle(fontSize: 15.5),
-                      ),
+                      child: const Text('Allow in Settings'),
                     ),
                   ] else ...[
                     if (_phase == _UpdatePhase.error &&
@@ -496,9 +493,8 @@ class _TempoUpdateFloatingModalState extends State<_TempoUpdateFloatingModal>
                         ),
                       ),
                     ],
-                    TempoLiquidButton(
-                      primary: true,
-                      height: 48,
+                    TempoBouncyButton(
+                      height: 50,
                       onPressed: _startDownloadAndInstall,
                       child: Text(
                         _phase == _UpdatePhase.readyToInstall
@@ -506,7 +502,6 @@ class _TempoUpdateFloatingModalState extends State<_TempoUpdateFloatingModal>
                             : (_phase == _UpdatePhase.error
                                 ? 'Retry download'
                                 : 'Update now'),
-                        style: const TextStyle(fontSize: 15.5),
                       ),
                     ),
                     const SizedBox(height: 10),

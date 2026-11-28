@@ -309,64 +309,104 @@ class _WorkoutScreenState extends State<WorkoutScreen>
       backgroundColor: c.card,
       borderRadius: 28,
       showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 26),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              workout.title,
-              style: TextStyle(
-                color: c.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${workout.duration} · ${workout.exerciseList.length} exercises',
-              style: TextStyle(color: c.textSecondary, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 48,
-              child: FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: c.accent,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+      builder: (ctx) {
+        final mc = AppColors.of(ctx);
+        final bottomPad = MediaQuery.paddingOf(ctx).bottom;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(20, 10, 20, bottomPad + 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: mc.accent.withValues(
+                        alpha: mc.isDark ? 0.22 : 0.13,
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      CupertinoIcons.flame_fill,
+                      color: mc.accent,
+                      size: 19,
+                    ),
                   ),
-                ),
-                onPressed: () => Navigator.of(ctx).pop('edit'),
-                child: const Text(
-                  'Edit routine',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 48,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: c.moveRed,
-                  side: BorderSide(color: c.moveRed.withValues(alpha: 0.35)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          workout.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: mc.textPrimary,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${workout.duration}, ${workout.exerciseList.length} exercises',
+                          style: TextStyle(
+                            color: mc.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                onPressed: () => Navigator.of(ctx).pop('delete'),
-                child: const Text(
+                  TempoGlassCircleButton(
+                    size: 34,
+                    enableBlur: false,
+                    enableRefraction: false,
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    icon: Icon(
+                      CupertinoIcons.xmark,
+                      size: 15,
+                      color: mc.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              TempoBouncyButton(
+                height: 50,
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  Navigator.of(ctx).pop('edit');
+                },
+                child: const Text('Edit routine'),
+              ),
+              const SizedBox(height: 10),
+              TempoLiquidButton(
+                primary: false,
+                height: 50,
+                borderRadius: 999,
+                onPressed: () {
+                  HapticFeedback.selectionClick();
+                  Navigator.of(ctx).pop('delete');
+                },
+                child: Text(
                   'Delete routine',
-                  style: TextStyle(fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                    color: mc.moveRed,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+      },
     );
 
     if (!mounted || action == null) return;
@@ -521,21 +561,16 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                       ),
                     ),
                     const SizedBox(width: 8),
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => Navigator.of(ctx).pop(),
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          color: mc.searchBg,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          CupertinoIcons.xmark,
-                          color: mc.textSecondary,
-                          size: 14,
-                        ),
+                    TempoGlassCircleButton(
+                      size: 34,
+                      enableBlur: false,
+                      enableRefraction: false,
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: Icon(
+                        CupertinoIcons.xmark,
+                        color: mc.textSecondary,
+                        size: 15,
                       ),
                     ),
                   ],
@@ -654,6 +689,7 @@ class _WorkoutScreenState extends State<WorkoutScreen>
                               journeyName: q.journeyName,
                               journeySubtitle: q.subtitle,
                               thumbnailAsset: q.thumb,
+                              accentColor: q.color,
                             ),
                           );
                           if (mounted) _loadProgress();

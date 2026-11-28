@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
 import '../services/appearance_service.dart';
+import '../services/goal_completion_service.dart';
 import '../services/step_counter_sync.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
@@ -230,6 +231,12 @@ class _HealthDashboardState extends State<HealthDashboard>
       await _syncPedometerStream();
       if (mounted && TickerMode.of(context)) {
         _maybeShowSpotlight();
+        unawaited(
+          GoalCompletionService.instance.checkAndCelebrate(
+            context,
+            profileId: profileId,
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Failed to load dashboard from Rust DB: $e');
@@ -592,21 +599,21 @@ class _HealthDashboardState extends State<HealthDashboard>
                             padding: const EdgeInsets.symmetric(vertical: 10),
                             child: Divider(height: 1, color: c.divider),
                           ),
-                          // Clean Streak-only footer
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: widget.onSwitchToProgress,
-                            child: Row(
-                              children: [
-                                Text(
-                                  'Streak',
-                                  style: TextStyle(
-                                    color: c.textSecondary,
-                                    fontSize: 13.5,
-                                    fontWeight: FontWeight.w500,
+                            // Clean Streak-only footer
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: widget.onSwitchToProgress,
+                              child: Row(
+                                children: [
+                                  Text(
+                                    'Streak',
+                                    style: TextStyle(
+                                      color: c.textSecondary,
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
-                                ),
-                                const Spacer(),
+                                  const Spacer(),
                                 Text(
                                   '${_summary?.currentStreak ?? 0} ${(_summary?.currentStreak ?? 0) == 1 ? 'day' : 'days'}',
                                   style: TextStyle(
@@ -1046,16 +1053,48 @@ class _RingMetricColumn extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 5),
-            Text(
-              goalText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: c.textTertiary,
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
+            if (progress >= 1.0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: c.isDark ? 0.22 : 0.14),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      CupertinoIcons.checkmark_alt,
+                      size: 11,
+                      color: accentColor,
+                    ),
+                    const SizedBox(width: 2),
+                    Flexible(
+                      child: Text(
+                        'Goal hit',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: accentColor,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Text(
+                goalText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.textTertiary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
           ],
         ),
       ),

@@ -9,10 +9,12 @@ import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bitchord_segmented_slider.dart';
 import '../widgets/bmi_detail_popup.dart';
 import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
+import '../widgets/tempo_morph_calendar.dart';
 import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
 import 'history_calendar_screen.dart';
@@ -32,6 +34,7 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
 
   final TempoRustDb _db = TempoRustDb.instance;
   final GlobalKey _moreButtonKey = GlobalKey();
+  final GlobalKey _dateButtonKey = GlobalKey();
 
   int _selectedTab = 0; // 0 = Latest, 1 = Week, 2 = M, 3 = Y
   DateTime _anchorDate = DateTime.now();
@@ -178,7 +181,8 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
         .toSet();
     final result = await pushTempoMorphRoute<HistoryCalendarSelection>(
       context: context,
-      sourceBorderRadius: 16,
+      sourceKey: _dateButtonKey,
+      sourceBorderRadius: 14,
       builder: (_) => HistoryCalendarScreen(
         initialDate: _anchorDate,
         initialModeIndex: _selectedTab,
@@ -209,6 +213,7 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
 
     final ctrl = TextEditingController(text: initialVal.toStringAsFixed(2));
     DateTime selectedDate = _anchorDate;
+    final datePillKey = GlobalKey();
 
     final saved = await showTempoSheet<bool>(
       context: context,
@@ -238,153 +243,186 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    'Add weight',
-                    style: TextStyle(
-                      color: mc.textPrimary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   Row(
                     children: [
-                      _StepperCircle(
-                        icon: CupertinoIcons.minus,
-                        onTap: () => adjust(-step),
+                      const _GreenCircleBadge(
+                        icon: CupertinoIcons.gauge,
+                        color: _weightGreen,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: TextField(
-                          controller: ctrl,
-                          textAlign: TextAlign.center,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
+                        child: Text(
+                          'Add weight',
                           style: TextStyle(
                             color: mc.textPrimary,
-                            fontSize: 26,
+                            fontSize: 19.5,
                             fontWeight: FontWeight.w700,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                          decoration: InputDecoration(
-                            suffixText: _unit,
-                            suffixStyle: TextStyle(
-                              color: mc.textSecondary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            filled: true,
-                            fillColor: mc.searchBg,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(16),
-                              borderSide: BorderSide.none,
-                            ),
+                            letterSpacing: -0.35,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      _StepperCircle(
-                        icon: CupertinoIcons.add,
-                        onTap: () => adjust(step),
-                      ),
                     ],
                   ),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mc.searchBg,
+                      borderRadius: BorderRadius.circular(32),
+                      border: Border.all(color: mc.cardBorder, width: 0.8),
+                    ),
+                    child: Row(
+                      children: [
+                        TempoGlassCircleButton(
+                          size: 50,
+                          tooltip: 'Decrease weight',
+                          onPressed: () => adjust(-step),
+                          icon: Icon(
+                            CupertinoIcons.minus,
+                            color: mc.textPrimary,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TextField(
+                                controller: ctrl,
+                                textAlign: TextAlign.center,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                style: TextStyle(
+                                  color: mc.textPrimary,
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.7,
+                                  height: 1.05,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  filled: false,
+                                  border: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  contentPadding:
+                                      EdgeInsets.symmetric(vertical: 2),
+                                ),
+                              ),
+                              Text(
+                                _unit,
+                                style: TextStyle(
+                                  color: mc.textTertiary,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        TempoGlassCircleButton(
+                          size: 50,
+                          tooltip: 'Increase weight',
+                          onPressed: () => adjust(step),
+                          icon: Icon(
+                            CupertinoIcons.add,
+                            color: mc.textPrimary,
+                            size: 20,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 14),
-                  GestureDetector(
-                    onTap: () async {
+                  TempoLiquidButton(
+                    key: datePillKey,
+                    primary: false,
+                    borderRadius: 18,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    onPressed: () async {
+                      HapticFeedback.selectionClick();
                       final now = DateTime.now();
-                      final d = await showDatePicker(
+                      final d = await showTempoMorphCalendar(
                         context: ctx,
+                        anchorKey: datePillKey,
                         initialDate:
                             selectedDate.isAfter(now) ? now : selectedDate,
                         firstDate: DateTime(2020),
                         lastDate: now,
+                        accentColor: _weightGreen,
+                        sourceBorderRadius: 18,
                       );
                       if (d != null) {
                         setModalState(() => selectedDate = d);
                       }
                     },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: mc.searchBg,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            CupertinoIcons.calendar,
-                            size: 18,
+                    child: Row(
+                      children: [
+                        Icon(
+                          CupertinoIcons.calendar,
+                          size: 18,
+                          color: mc.textSecondary,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Date',
+                          style: TextStyle(
                             color: mc.textSecondary,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w500,
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Date',
-                            style: TextStyle(
-                              color: mc.textSecondary,
-                              fontSize: 14.5,
-                            ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          DateFormat('MM/dd/yyyy').format(selectedDate),
+                          style: TextStyle(
+                            color: mc.textPrimary,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures(),
+                            ],
                           ),
-                          const Spacer(),
-                          Text(
-                            DateFormat('MM/dd/yyyy').format(selectedDate),
-                            style: TextStyle(
-                              color: mc.textPrimary,
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 18),
-                  SizedBox(
-                    height: 50,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: mc.accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: () async {
-                        final val = double.tryParse(ctrl.text.trim());
-                        if (val == null || val < minVal || val > maxVal) return;
-                        final kgVal = _fromDisplay(val);
-                        final now = DateTime.now();
-                        final recorded = DateTime(
-                          selectedDate.year,
-                          selectedDate.month,
-                          selectedDate.day,
-                          now.hour,
-                          now.minute,
-                        );
-                        await _db.logBodyMetric(
-                          profileId: pid,
-                          metricType: 'weight',
-                          value: kgVal,
-                          recordedAt: recorded,
-                        );
-                        if (ctx.mounted) Navigator.of(ctx).pop(true);
-                      },
-                      child: const Text(
-                        'Save weight',
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
+                  TempoBouncyButton(
+                    onPressed: () async {
+                      HapticFeedback.lightImpact();
+                      final val = double.tryParse(ctrl.text.trim());
+                      if (val == null || val < minVal || val > maxVal) return;
+                      final kgVal = _fromDisplay(val);
+                      final now = DateTime.now();
+                      final recorded = DateTime(
+                        selectedDate.year,
+                        selectedDate.month,
+                        selectedDate.day,
+                        now.hour,
+                        now.minute,
+                      );
+                      await _db.logBodyMetric(
+                        profileId: pid,
+                        metricType: 'weight',
+                        value: kgVal,
+                        recordedAt: recorded,
+                      );
+                      if (ctx.mounted) Navigator.of(ctx).pop(true);
+                    },
+                    child: const Text('Save weight'),
                   ),
                 ],
               ),
@@ -496,23 +534,19 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
                 ),
               ),
               const SizedBox(height: 22),
-              SizedBox(
+              TempoLiquidButton(
+                primary: false,
                 height: 50,
-                child: TextButton(
-                  style: TextButton.styleFrom(
-                    backgroundColor: mc.searchBg,
-                    foregroundColor: mc.textPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text(
-                    'Close',
-                    style: TextStyle(
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                borderRadius: 999,
+                onPressed: () {
+                  HapticFeedback.selectionClick();
+                  Navigator.of(ctx).pop();
+                },
+                child: const Text(
+                  'Close',
+                  style: TextStyle(
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -698,6 +732,7 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
                           ),
                           const SizedBox(height: 1),
                           GestureDetector(
+                            key: _dateButtonKey,
                             behavior: HitTestBehavior.opaque,
                             onTap: _pickAnchorDate,
                             child: Row(
@@ -746,16 +781,13 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
               ),
             ),
 
-            // 4-Segment Sliding Timeframe Pill (Latest | Week | M | Y)
+            // 4-Segment BitChord Liquid Glass Sliding Timeframe Pill (Latest | Week | M | Y)
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 2, 18, 16),
-              child: _WeightSegmentBar(
-                tabs: _tabs,
+              child: BitChordSegmentedSlider(
+                labels: _tabs,
                 selectedIndex: _selectedTab,
-                onChanged: (idx) {
-                  HapticFeedback.selectionClick();
-                  setState(() => _selectedTab = idx);
-                },
+                onChanged: (idx) => setState(() => _selectedTab = idx),
               ),
             ),
 
@@ -1203,86 +1235,6 @@ class _WeightDetailScreenState extends State<WeightDetailScreen> {
   }
 }
 
-class _WeightSegmentBar extends StatelessWidget {
-  final List<String> tabs;
-  final int selectedIndex;
-  final ValueChanged<int> onChanged;
-
-  const _WeightSegmentBar({
-    required this.tabs,
-    required this.selectedIndex,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.all(3.5),
-      decoration: BoxDecoration(
-        color: c.isDark
-            ? const Color(0xFF1C1C1E)
-            : Colors.black.withValues(alpha: 0.055),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: LayoutBuilder(
-        builder: (_, constraints) {
-          final segW = constraints.maxWidth / tabs.length;
-          return Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                left: selectedIndex * segW,
-                top: 0,
-                bottom: 0,
-                width: segW,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: c.isDark ? const Color(0xFF323338) : c.card,
-                    borderRadius: BorderRadius.circular(11),
-                    boxShadow: c.isDark
-                        ? null
-                        : [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.06),
-                              blurRadius: 6,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                  ),
-                ),
-              ),
-              Row(
-                children: List.generate(tabs.length, (i) {
-                  final sel = i == selectedIndex;
-                  return Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onChanged(i),
-                      child: Center(
-                        child: Text(
-                          tabs[i],
-                          style: TextStyle(
-                            color: sel ? c.textPrimary : c.textSecondary,
-                            fontSize: 13.5,
-                            fontWeight: sel ? FontWeight.w600 : FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
 class _WeightTrendChart extends StatelessWidget {
   final List<BodyMetricPoint> points;
   final Color lineColor;
@@ -1427,30 +1379,6 @@ class _GreenCircleBadge extends StatelessWidget {
       height: 32,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       child: Icon(icon, color: Colors.white, size: 17),
-    );
-  }
-}
-
-class _StepperCircle extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _StepperCircle({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: c.searchBg,
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, color: c.textPrimary, size: 20),
-      ),
     );
   }
 }

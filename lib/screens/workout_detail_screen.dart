@@ -10,58 +10,120 @@ import 'package:provider/provider.dart';
 
 import '../models/workout_model.dart';
 import '../services/active_profile_provider.dart';
+import '../services/appearance_service.dart';
+import '../services/goal_completion_service.dart';
 import '../services/journey_progress_service.dart';
 import '../services/live_workout_service.dart';
 import '../services/tempo_rust_db.dart';
+import '../services/workout_anticheat_service.dart';
 import '../services/workout_sound_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/ios_popover_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_jigg_icon.dart';
 import '../widgets/tempo_morph_route.dart';
 import '../widgets/tempo_sliver_header.dart';
+import '../widgets/tempo_spotlight_tour.dart';
 import '../widgets/tempo_toast.dart';
 import 'exercise_detail_screen.dart';
 
 class WorkoutDetailScreen extends StatefulWidget {
   final Workout workout;
 
-  const WorkoutDetailScreen({super.key, required this.workout});
+  /// Optional injectable engine for deterministic widget tests.
+  final WorkoutAntiCheatEngine? engineOverride;
+
+  const WorkoutDetailScreen({
+    super.key,
+    required this.workout,
+    this.engineOverride,
+  });
 
   @override
   State<WorkoutDetailScreen> createState() => _WorkoutDetailScreenState();
 }
 
 class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
-  final Set<int> _checkedExercises = {};
-  Timer? _timer;
-  int _accumulatedSeconds = 0;
-  DateTime? _runStartedAt;
-  bool _isRunning = false;
+  static const int _defaultRestSeconds = 45;
+
+  late final WorkoutAntiCheatEngine _engine;
+  final GlobalKey _menuButtonKey = GlobalKey();
+  final GlobalKey _sessionDeckKey = GlobalKey();
+  final GlobalKey _spotlightCardKey = GlobalKey();
+  final GlobalKey _exerciseQueueKey = GlobalKey();
+  final GlobalKey _bottomCtaKey = GlobalKey();
+
+  Timer? _tickTimer;
   bool _isCountingDown = false;
   bool _isSaving = false;
 
-  int get _elapsedSeconds {
-    if (_isRunning && _runStartedAt != null) {
-      return _accumulatedSeconds +
-          DateTime.now().difference(_runStartedAt!).inSeconds;
-    }
-    return _accumulatedSeconds;
-  }
+  // Optional auto-appearing quick rest countdown between verified exercises
+  int _restRemainingSeconds = 0;
 
   @override
   void initState() {
     super.initState();
+    _engine = widget.engineOverride ??
+        WorkoutAntiCheatEngine(workout: widget.workout);
     LiveWorkoutService.instance.onRemoteTogglePause = () {
       if (mounted && !_isCountingDown) {
         _toggleTimer();
       }
     };
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeShowWorkoutTour();
+    });
+  }
+
+  Future<void> _maybeShowWorkoutTour({bool forceShow = false}) async {
+    final pid = context.read<ActiveProfileProvider>().activeProfileId;
+    if (pid == null || pid.isEmpty) return;
+    await TempoSpotlightTour.showIfNeeded(
+      context: context,
+      profileId: pid,
+      screenId: 'workout_detail',
+      forceShow: forceShow,
+      delay: forceShow
+          ? const Duration(milliseconds: 180)
+          : const Duration(milliseconds: 520),
+      steps: [
+        TempoSpotlightStep(
+          targetKey: _sessionDeckKey,
+          title: 'Start your session timer',
+          description:
+              'Tap Start to run the live workout timer. Tempo tracks your active effort automatically so each verified exercise counts toward streaks and Journey progress.',
+          borderRadius: 28,
+        ),
+        if (widget.workout.exerciseList.isNotEmpty)
+          TempoSpotlightStep(
+            targetKey: _spotlightCardKey,
+            title: 'Follow the active exercise',
+            description:
+                'Tap Watch & Log to view the form video and record weight, sets, and reps, or tap Mark Done once your active effort unlocks verification.',
+            borderRadius: 26,
+          ),
+        TempoSpotlightStep(
+          targetKey: _exerciseQueueKey,
+          title: 'Navigate the exercise list',
+          description:
+              'Tap any exercise row or play button to jump straight to its video and set logger, or tap its numbered badge to verify progress as you finish.',
+          borderRadius: 24,
+        ),
+        TempoSpotlightStep(
+          targetKey: _bottomCtaKey,
+          title: 'Complete or end early',
+          description:
+              'Complete Workout unlocks once all exercises are verified and minimum active time is met. Open the top-right menu anytime to replay this guide, reset, or end early.',
+          borderRadius: 999,
+        ),
+      ],
+    );
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _tickTimer?.cancel();
     LiveWorkoutService.instance.onRemoteTogglePause = null;
     LiveWorkoutService.instance.stop();
     super.dispose();
@@ -74,10 +136,9 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
 
   String get _activeExerciseName {
     final list = widget.workout.exerciseList;
-    for (int i = 0; i < list.length; i++) {
-      if (!_checkedExercises.contains(i)) {
-        return list[i].name;
-      }
+    final idx = _engine.activeExerciseIndex;
+    if (idx != null && idx < list.length) {
+      return list[idx].name;
     }
     return list.isNotEmpty ? list.last.name : '';
   }
@@ -95,102 +156,313 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
       category: _categoryLabel,
       currentExercise: _activeExerciseName,
       kcalPerMin: _avgKcalPerMin,
-      elapsedSeconds: _elapsedSeconds,
-      completedExercises: _checkedExercises.length,
-      totalExercises: widget.workout.exerciseList.length,
+      elapsedSeconds: _engine.elapsedSeconds,
+      completedExercises: _engine.verifiedCount,
+      totalExercises: _engine.totalExercises,
       isPaused: isPaused,
     );
   }
 
-  void _startTimerTicking() {
-    _timer?.cancel();
-    setState(() {
-      _isCountingDown = false;
-      _isRunning = true;
-      _runStartedAt = DateTime.now();
-    });
-    _syncLiveUpdate(isPaused: false);
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+  void _ensureTickTimer() {
+    _tickTimer?.cancel();
+    _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
+      if (_restRemainingSeconds > 0 && _engine.isRunning) {
+        _restRemainingSeconds = math.max(0, _restRemainingSeconds - 1);
+        if (_restRemainingSeconds == 0) {
+          HapticFeedback.mediumImpact();
+        }
+      }
       setState(() {});
     });
+  }
+
+  void _startTimerTicking() {
+    _engine.resume();
+    setState(() => _isCountingDown = false);
+    _syncLiveUpdate(isPaused: false);
+    _ensureTickTimer();
   }
 
   void _toggleTimer() {
     if (_isCountingDown) return;
     HapticFeedback.selectionClick();
-    if (_isRunning) {
-      _timer?.cancel();
-      final totalNow = _elapsedSeconds;
-      setState(() {
-        _accumulatedSeconds = totalNow;
-        _runStartedAt = null;
-        _isRunning = false;
-      });
+    if (_engine.isRunning) {
+      _tickTimer?.cancel();
+      _engine.pause();
+      setState(() {});
       _syncLiveUpdate(isPaused: true);
-    } else if (_elapsedSeconds == 0) {
-      // Request notification permission quietly (non-blocking) for HyperIsland Live Updates
+    } else if (!_engine.hasStarted) {
       LiveWorkoutService.instance.ensureNotificationPermission();
-      // Fresh start -> launch the 3-2-1 countdown animation!
       setState(() => _isCountingDown = true);
     } else {
-      // Resume directly when paused mid-session
       _startTimerTicking();
     }
   }
 
-  void _resetTimer() {
+  void _resetSession() {
     HapticFeedback.selectionClick();
-    _timer?.cancel();
+    _tickTimer?.cancel();
     LiveWorkoutService.instance.stop();
+    _engine.reset();
     setState(() {
-      _isRunning = false;
-      _accumulatedSeconds = 0;
-      _runStartedAt = null;
+      _isCountingDown = false;
+      _restRemainingSeconds = 0;
     });
   }
 
-  String _formatTime(int sec) {
-    final m = (sec ~/ 60).toString().padLeft(2, '0');
-    final s = (sec % 60).toString().padLeft(2, '0');
-    return '$m:$s';
+  void _handleExerciseToggle(int index) {
+    HapticFeedback.selectionClick();
+    if (_engine.isExerciseVerified(index)) {
+      setState(() {
+        _engine.unverifyExercise(index);
+      });
+      if (_engine.hasStarted) {
+        _syncLiveUpdate(isPaused: !_engine.isRunning);
+      }
+      return;
+    }
+
+    final gate = _engine.tryVerifyExercise(index);
+    if (!gate.allowed) {
+      HapticFeedback.heavyImpact();
+      showTempoToast(context, gate.guidanceText(), showIcon: false);
+      return;
+    }
+
+    HapticFeedback.mediumImpact();
+    final hasRemaining = _engine.activeExerciseIndex != null;
+    setState(() {
+      _restRemainingSeconds = hasRemaining ? _defaultRestSeconds : 0;
+    });
+    _syncLiveUpdate(isPaused: !_engine.isRunning);
   }
 
-  int _estimateCalories() {
-    if (widget.workout.exerciseList.isEmpty) {
-      return ((_elapsedSeconds / 60.0) * 7).round().clamp(30, 800);
+  Future<void> _openExerciseDetail(
+    BuildContext sourceContext,
+    int index,
+    Exercise exercise,
+  ) async {
+    HapticFeedback.selectionClick();
+    final logged = await pushTempoMorphRoute<bool>(
+      context: context,
+      sourceContext: sourceContext,
+      sourceBorderRadius: 20,
+      builder: (_) => ExerciseDetailScreen(
+        exercise: exercise,
+        workout: widget.workout,
+      ),
+    );
+    if (!mounted) return;
+    if (logged == true && !_engine.isExerciseVerified(index)) {
+      final gate = _engine.tryVerifyExercise(index);
+      if (gate.allowed) {
+        final hasRemaining = _engine.activeExerciseIndex != null;
+        setState(() {
+          _restRemainingSeconds = hasRemaining ? _defaultRestSeconds : 0;
+        });
+        _syncLiveUpdate(isPaused: !_engine.isRunning);
+      } else {
+        showTempoToast(
+          context,
+          'Set saved. ${gate.guidanceText()} to verify this exercise.',
+          showIcon: false,
+        );
+      }
     }
-    double total = 0;
-    for (int i = 0; i < widget.workout.exerciseList.length; i++) {
-      final ex = widget.workout.exerciseList[i];
-      total += ex.getCaloriesBurned(sets: 3, reps: 10);
-    }
-    return total.round().clamp(45, 950);
   }
 
-  Future<void> _completeWorkout() async {
+  void _openHeaderMenu() {
+    final c = AppColors.of(context, listen: false);
+    final actions = <TempoPopoverAction>[
+      TempoPopoverAction(
+        label: 'Workout guide',
+        onTap: () => _maybeShowWorkoutTour(forceShow: true),
+      ),
+      TempoPopoverAction(
+        label: 'Reset session',
+        onTap: () {
+          _resetSession();
+          showTempoToast(context, 'Session reset', showIcon: false);
+        },
+      ),
+      if (_engine.hasStarted)
+        TempoPopoverAction(
+          label: 'End early',
+          textColor: c.moveRed,
+          onTap: _confirmEndEarly,
+        ),
+    ];
+
+    showTempoPopoverMenu(
+      context: context,
+      anchorKey: _menuButtonKey,
+      actions: actions,
+    );
+  }
+
+  Future<void> _confirmEndEarly() async {
+    final c = AppColors.of(context, listen: false);
+    final proportionalKcal = _engine.estimateVerifiedCalories(
+      kcalPerMin: _avgKcalPerMin,
+    );
+    final confirmed = await showTempoSheet<bool>(
+      context: context,
+      backgroundColor: c.card,
+      borderRadius: 28,
+      showDragHandle: true,
+      builder: (ctx) {
+        final mc = AppColors.of(ctx);
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            22,
+            10,
+            22,
+            MediaQuery.paddingOf(ctx).bottom + 22,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: mc.moveRed.withValues(alpha: mc.isDark ? 0.20 : 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    CupertinoIcons.flag_slash_fill,
+                    color: mc.moveRed,
+                    size: 24,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'End Workout Early?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: mc.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.35,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Ending early saves only your proportional active burn ($proportionalKcal kcal) for ${_engine.verifiedCount} of ${_engine.totalExercises} verified exercises. It will not mark this workout completed or advance Journey progress.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: mc.textSecondary,
+                  fontSize: 13.5,
+                  height: 1.45,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: TempoLiquidButton(
+                      primary: false,
+                      height: 50,
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: const Text('Keep going'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TempoBouncyButton(
+                      height: 50,
+                      backgroundColor: mc.moveRed,
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: const Text('End early'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (confirmed == true && mounted) {
+      await _saveEarlyExit(proportionalKcal);
+    }
+  }
+
+  Future<void> _saveEarlyExit(int proportionalKcal) async {
     final profileProvider = context.read<ActiveProfileProvider>();
     final profileId = profileProvider.activeProfileId;
     if (profileId == null) return;
 
-    _timer?.cancel();
+    _tickTimer?.cancel();
+    _engine.pause();
     LiveWorkoutService.instance.stop();
-    final totalElapsed = _elapsedSeconds;
+    setState(() => _isSaving = true);
+
+    try {
+      final elapsed = math.max(1, _engine.elapsedSeconds);
+      await TempoRustDb.instance.logCompletedWorkout(
+        profileId: profileId,
+        workoutId: widget.workout.id,
+        title: widget.workout.title,
+        durationLabel: widget.workout.duration,
+        exercisesLabel: widget.workout.exercises,
+        level: widget.workout.level,
+        bodyFocus: widget.workout.bodyFocus,
+        journeyId: widget.workout.journeyId ?? '',
+        journeyName: widget.workout.journeyName ?? '',
+        actualDurationSec: elapsed,
+        expectedDurationSec: _engine.expectedTotalSeconds,
+        caloriesBurned: proportionalKcal,
+        isCheated: true, // Marks early/partial exit so Streak & Journey ignore it
+      );
+      profileProvider.notifyDataChanged();
+      if (mounted) {
+        showTempoToast(
+          context,
+          'Ended early, logged $proportionalKcal kcal active burn',
+        );
+        Navigator.of(context).pop(false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSaving = false);
+        showTempoToast(context, 'Could not save session: $e', isError: true);
+      }
+    }
+  }
+
+  Future<void> _completeWorkout() async {
+    final gate = _engine.evaluateCompletion();
+    if (!gate.canComplete) {
+      HapticFeedback.heavyImpact();
+      showTempoToast(context, gate.statusLabel(), showIcon: false);
+      return;
+    }
+
+    final profileProvider = context.read<ActiveProfileProvider>();
+    final profileId = profileProvider.activeProfileId;
+    if (profileId == null) return;
+
+    _tickTimer?.cancel();
+    _engine.pause();
+    LiveWorkoutService.instance.stop();
     setState(() {
-      _accumulatedSeconds = totalElapsed;
-      _runStartedAt = null;
-      _isRunning = false;
       _isCountingDown = false;
+      _restRemainingSeconds = 0;
       _isSaving = true;
     });
 
     try {
-      final expectedSec = widget.workout.exerciseList
-          .fold<int>(0, (sum, e) => sum + e.duration);
-      final actualSec = _elapsedSeconds > 0
-          ? _elapsedSeconds
-          : (expectedSec > 0 ? expectedSec : 1200);
-      final calories = _estimateCalories();
+      final expectedSec = _engine.expectedTotalSeconds;
+      final actualSec = math.max(1, _engine.elapsedSeconds);
+      final calories = _engine.estimateVerifiedCalories(
+        kcalPerMin: _avgKcalPerMin,
+      );
 
       await TempoRustDb.instance.logCompletedWorkout(
         profileId: profileId,
@@ -337,7 +609,7 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Duration',
+                              'Active Time',
                               style: TextStyle(
                                 color: mc.textTertiary,
                                 fontSize: 12,
@@ -363,7 +635,7 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Est. Burn',
+                              'Verified Burn',
                               style: TextStyle(
                                 color: mc.textTertiary,
                                 fontSize: 12,
@@ -376,31 +648,25 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                SizedBox(
+                TempoBouncyButton(
                   height: 52,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: mc.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: const Text(
-                      'Done',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    Navigator.of(ctx).pop();
+                  },
+                  child: const Text('Done'),
                 ),
               ],
             ),
           );
         },
       );
+      if (mounted) {
+        await GoalCompletionService.instance.checkAndCelebrate(
+          context,
+          profileId: profileId,
+        );
+      }
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
@@ -410,14 +676,35 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
     }
   }
 
+  String _formatTime(int sec) {
+    final safe = sec.clamp(0, 86400);
+    final m = (safe ~/ 60).toString().padLeft(2, '0');
+    final s = (safe % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  String _formatDurationCompact(int sec) {
+    final m = sec ~/ 60;
+    final s = sec % 60;
+    if (m == 0) return '${s}s';
+    if (s == 0) return '${m}m';
+    return '${m}m ${s}s';
+  }
+
+  int _estimatedFullPreviewKcal() {
+    final expectedMin = _engine.expectedTotalSeconds / 60.0;
+    return (expectedMin * _avgKcalPerMin).round().clamp(35, 950);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final exercises = widget.workout.exerciseList;
-    final categoryText = (widget.workout.journeyName != null &&
-            widget.workout.journeyName!.isNotEmpty)
-        ? widget.workout.journeyName!
-        : widget.workout.bodyFocus;
+    final completionGate = _engine.evaluateCompletion();
+    final activeIdx = _engine.activeExerciseIndex;
+    final liveKcal = _engine.hasStarted
+        ? _engine.estimateVerifiedCalories(kcalPerMin: _avgKcalPerMin)
+        : _estimatedFullPreviewKcal();
 
     return Scaffold(
       backgroundColor: c.scaffold,
@@ -432,201 +719,63 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                     TempoSliverHeader(
                       title: widget.workout.title,
                       showBackButton: true,
+                      actions: [
+                        TempoHeaderAction(
+                          buttonKey: _menuButtonKey,
+                          tooltip: 'Session options',
+                          icon: Icon(
+                            CupertinoIcons.ellipsis_vertical,
+                            color: c.textPrimary,
+                            size: 19,
+                          ),
+                          onPressed: _openHeaderMenu,
+                        ),
+                      ],
                     ),
                     SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+                      padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
                       sliver: SliverList.list(
                         children: [
-                          // 1. Minimal Overview & Session Timer Card
-                          AppleCard(
-                            borderRadius: 24,
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Minimal category & workout name/level indicators
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        categoryText,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: c.textSecondary,
-                                          fontSize: 13.5,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 2.5,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        border: Border.all(color: c.cardBorder),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        widget.workout.level,
-                                        style: TextStyle(
-                                          color: c.textSecondary,
-                                          fontSize: 11.5,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 14),
-                                // Clean hairline-separated summary metrics
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: _OverviewMetric(
-                                        label: 'Duration',
-                                        value: widget.workout.duration,
-                                      ),
-                                    ),
-                                    Container(
-                                      width: 1,
-                                      height: 28,
-                                      color: c.divider,
-                                    ),
-                                    Expanded(
-                                      child: _OverviewMetric(
-                                        label: 'Exercises',
-                                        value: '${exercises.length}',
-                                      ),
-                                    ),
-                                    Container(
-                                      width: 1,
-                                      height: 28,
-                                      color: c.divider,
-                                    ),
-                                    Expanded(
-                                      child: _OverviewMetric(
-                                        label: 'Est. burn',
-                                        value: '${_estimateCalories()} kcal',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 18),
-                                Divider(height: 1, color: c.divider),
-                                const SizedBox(height: 16),
-
-                                // Session Timer Row
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              AnimatedContainer(
-                                                duration: const Duration(
-                                                  milliseconds: 250,
-                                                ),
-                                                width: 7,
-                                                height: 7,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color: _isRunning
-                                                      ? c.accent
-                                                      : c.textTertiary
-                                                          .withValues(
-                                                              alpha: 0.45),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Text(
-                                                _isRunning
-                                                    ? 'In progress'
-                                                    : 'Session timer',
-                                                style: TextStyle(
-                                                  color: _isRunning
-                                                      ? c.accent
-                                                      : c.textSecondary,
-                                                  fontSize: 12.5,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            _formatTime(_elapsedSeconds),
-                                            style: TextStyle(
-                                              color: c.textPrimary,
-                                              fontSize: 34,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: -1.0,
-                                              fontFeatures: const [
-                                                FontFeature.tabularFigures(),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    if (!_isRunning && _elapsedSeconds > 0) ...[
-                                      GestureDetector(
-                                        onTap: _resetTimer,
-                                        child: Container(
-                                          width: 40,
-                                          height: 40,
-                                          margin:
-                                              const EdgeInsets.only(right: 8),
-                                          decoration: BoxDecoration(
-                                            color: c.searchBg,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Icon(
-                                            CupertinoIcons.refresh,
-                                            size: 17,
-                                            color: c.textSecondary,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                    _SessionActionButton(
-                                      isRunning: _isRunning,
-                                      hasStarted: _elapsedSeconds > 0,
-                                      onTap: _toggleTimer,
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
+                          // 1. Liquid Glass Session Command Deck
+                          _buildSessionCommandDeck(
+                            c: c,
+                            liveKcal: liveKcal,
+                            completionGate: completionGate,
                           ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 16),
 
-                          // 2. Exercises Section Header
+                          // 2. Active Exercise Focus Spotlight Card
+                          if (exercises.isNotEmpty) ...[
+                            _buildActiveSpotlightCard(
+                              c: c,
+                              activeIdx: activeIdx,
+                              exercises: exercises,
+                              completionGate: completionGate,
+                            ),
+                            const SizedBox(height: 22),
+                          ],
+
+                          // 3. Exercise Queue Section Header
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
                             child: Row(
                               children: [
                                 Text(
                                   'Exercises',
                                   style: TextStyle(
                                     color: c.textPrimary,
-                                    fontSize: 19,
-                                    fontWeight: FontWeight.w600,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
                                     letterSpacing: -0.3,
                                   ),
                                 ),
                                 const Spacer(),
                                 Text(
-                                  '${_checkedExercises.length}/${exercises.length} done',
+                                  '${_engine.verifiedCount} of ${exercises.length} verified',
                                   style: TextStyle(
-                                    color: c.textTertiary,
-                                    fontSize: 13.5,
-                                    fontWeight: FontWeight.w500,
+                                    color: c.textSecondary,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
                                     fontFeatures: const [
                                       FontFeature.tabularFigures(),
                                     ],
@@ -636,168 +785,11 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                             ),
                           ),
 
-                          // 3. Clean Grouped Exercises Card
-                          AppleCard(
-                            borderRadius: 24,
-                            padding: EdgeInsets.zero,
-                            child: Column(
-                              children: List.generate(exercises.length, (idx) {
-                                final ex = exercises[idx];
-                                final checked = _checkedExercises.contains(idx);
-                                final isLast = idx == exercises.length - 1;
-                                return Column(
-                                  children: [
-                                    Builder(
-                                      builder: (rowCtx) => InkWell(
-                                        onTap: () async {
-                                          HapticFeedback.selectionClick();
-                                          final logged =
-                                              await pushTempoMorphRoute<bool>(
-                                            context: context,
-                                            sourceContext: rowCtx,
-                                            sourceBorderRadius: 18,
-                                            builder: (_) =>
-                                                ExerciseDetailScreen(
-                                              exercise: ex,
-                                              workout: widget.workout,
-                                            ),
-                                          );
-                                          if (logged == true && mounted) {
-                                            setState(
-                                              () => _checkedExercises.add(idx),
-                                            );
-                                            if (_isRunning ||
-                                                _elapsedSeconds > 0) {
-                                              _syncLiveUpdate(
-                                                isPaused: !_isRunning,
-                                              );
-                                            }
-                                          }
-                                        },
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 15,
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            GestureDetector(
-                                              behavior: HitTestBehavior.opaque,
-                                              onTap: () {
-                                                HapticFeedback.selectionClick();
-                                                setState(() {
-                                                  if (checked) {
-                                                    _checkedExercises
-                                                        .remove(idx);
-                                                  } else {
-                                                    _checkedExercises.add(idx);
-                                                  }
-                                                });
-                                                if (_isRunning ||
-                                                    _elapsedSeconds > 0) {
-                                                  _syncLiveUpdate(
-                                                    isPaused: !_isRunning,
-                                                  );
-                                                }
-                                              },
-                                              child: Padding(
-                                                padding: const EdgeInsets.all(4),
-                                                child: AnimatedContainer(
-                                                  duration: const Duration(
-                                                    milliseconds: 200,
-                                                  ),
-                                                  curve: Curves.easeOutCubic,
-                                                  width: 24,
-                                                  height: 24,
-                                                  decoration: BoxDecoration(
-                                                    shape: BoxShape.circle,
-                                                    color: checked
-                                                        ? c.textPrimary
-                                                        : Colors.transparent,
-                                                    border: Border.all(
-                                                      color: checked
-                                                          ? c.textPrimary
-                                                          : c.textTertiary
-                                                              .withValues(
-                                                                  alpha: 0.6),
-                                                      width: 1.6,
-                                                    ),
-                                                  ),
-                                                  child: checked
-                                                      ? Icon(
-                                                          CupertinoIcons
-                                                              .checkmark_alt,
-                                                          size: 14,
-                                                          color: c.isDark
-                                                              ? Colors.black
-                                                              : Colors.white,
-                                                        )
-                                                      : null,
-                                                ),
-                                              ),
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    ex.name,
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    style: TextStyle(
-                                                      color: checked
-                                                          ? c.textSecondary
-                                                          : c.textPrimary,
-                                                      fontSize: 15.5,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      decoration: checked
-                                                          ? TextDecoration
-                                                              .lineThrough
-                                                          : null,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 2),
-                                                  Text(
-                                                    ex.description,
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    style: TextStyle(
-                                                      color: c.textSecondary,
-                                                      fontSize: 12.5,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            Icon(
-                                              CupertinoIcons.play_circle,
-                                              color: c.textTertiary,
-                                              size: 22,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                    ),
-                                    if (!isLast)
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(left: 56),
-                                        child: Divider(
-                                          height: 1,
-                                          color: c.divider,
-                                        ),
-                                      ),
-                                  ],
-                                );
-                              }),
-                            ),
+                          // 4. Refined Exercise Queue
+                          _buildExerciseQueue(
+                            c: c,
+                            exercises: exercises,
+                            activeIdx: activeIdx,
                           ),
                         ],
                       ),
@@ -806,47 +798,12 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                 ),
               ),
 
-              // Unified Signature Primary Button
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: c.accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: _isSaving ? null : _completeWorkout,
-                      child: _isSaving
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Text(
-                              'Complete Workout (${_checkedExercises.length}/${exercises.length})',
-                              style: const TextStyle(
-                                fontSize: 15.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                    ),
-                  ),
-                ),
-              ),
+              // 5. Anti-Cheat Smart Bottom CTA Bar
+              _buildBottomCtaBar(c: c, gate: completionGate),
             ],
           ),
 
-          // Full-screen iOS 27 Frosted 3 · 2 · 1 · GO Countdown Overlay
+          // Full-screen Impeller-Safe 3-2-1-GO Countdown Overlay
           if (_isCountingDown)
             Positioned.fill(
               child: _SessionCountdownOverlay(
@@ -856,6 +813,801 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSessionCommandDeck({
+    required AppColors c,
+    required int liveKcal,
+    required WorkoutCompletionGate completionGate,
+  }) {
+    final statusText = _engine.isRunning
+        ? 'In progress'
+        : (_engine.hasStarted ? 'Paused' : 'Session timer');
+
+    return LiquidGlassSurface(
+      key: _sessionDeckKey,
+      borderRadius: 28,
+      blurEnabled: false,
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Top Metadata Row
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _categoryLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.textSecondary,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.12),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: Text(
+                  widget.workout.level,
+                  style: TextStyle(
+                    color: c.accent,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (widget.workout.description != null &&
+              widget.workout.description!.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              widget.workout.description!.trim(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.textTertiary,
+                fontSize: 13,
+                height: 1.38,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+
+          // Recessed Metrics Trio
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: c.isDark
+                  ? Colors.white.withValues(alpha: 0.055)
+                  : Colors.black.withValues(alpha: 0.035),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _OverviewMetric(
+                    label: 'Duration',
+                    value: widget.workout.duration,
+                  ),
+                ),
+                Container(width: 1, height: 26, color: c.divider),
+                Expanded(
+                  child: _OverviewMetric(
+                    label: 'Verified',
+                    value:
+                        '${completionGate.verifiedCount}/${completionGate.totalExercises}',
+                  ),
+                ),
+                Container(width: 1, height: 26, color: c.divider),
+                Expanded(
+                  child: _OverviewMetric(
+                    label: _engine.hasStarted ? 'Live Burn' : 'Est. Burn',
+                    value: '$liveKcal kcal',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Live Session Timer + Action Row
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 220),
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _engine.isRunning
+                                ? const Color(0xFF34C759)
+                                : (_engine.hasStarted
+                                    ? c.accent
+                                    : c.textTertiary),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          statusText,
+                          style: TextStyle(
+                            color: _engine.isRunning
+                                ? c.accent
+                                : c.textSecondary,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatTime(_engine.elapsedSeconds),
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -1.1,
+                        height: 1.08,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (!_engine.isRunning && _engine.hasStarted) ...[
+                TempoGlassCircleButton(
+                  size: 42,
+                  tooltip: 'Reset session',
+                  enableBlur: false,
+                  icon: Icon(
+                    CupertinoIcons.arrow_counterclockwise,
+                    color: c.textPrimary,
+                    size: 17,
+                  ),
+                  onPressed: _resetSession,
+                ),
+                const SizedBox(width: 10),
+              ],
+              _engine.isRunning
+                  ? TempoLiquidButton(
+                      primary: false,
+                      height: 44,
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      onPressed: _toggleTimer,
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(CupertinoIcons.pause_fill, size: 15),
+                          SizedBox(width: 6),
+                          Text('Pause', style: TextStyle(fontSize: 14.5)),
+                        ],
+                      ),
+                    )
+                  : TempoBouncyButton(
+                      height: 44,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      onPressed: _toggleTimer,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            CupertinoIcons.play_fill,
+                            color: Colors.white,
+                            size: 15,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _engine.hasStarted ? 'Resume' : 'Start',
+                            style: const TextStyle(fontSize: 14.5),
+                          ),
+                        ],
+                      ),
+                    ),
+            ],
+          ),
+
+          // Auto-Appearing Liquid Glass Rest Banner
+          AnimatedSize(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            child: _restRemainingSeconds > 0
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 14),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: c.accent.withValues(
+                          alpha: c.isDark ? 0.16 : 0.09,
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: c.accent.withValues(alpha: 0.30),
+                          width: 0.9,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.timer,
+                            color: c.accent,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Rest ${_formatTime(_restRemainingSeconds)}',
+                              style: TextStyle(
+                                color: c.textPrimary,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ),
+                          TempoLiquidButton(
+                            primary: false,
+                            height: 32,
+                            padding: const EdgeInsets.symmetric(horizontal: 11),
+                            onPressed: () {
+                              HapticFeedback.selectionClick();
+                              setState(() {
+                                _restRemainingSeconds =
+                                    (_restRemainingSeconds + 15).clamp(0, 300);
+                              });
+                            },
+                            child: const Text(
+                              '+15s',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          TempoLiquidButton(
+                            primary: false,
+                            height: 32,
+                            padding: const EdgeInsets.symmetric(horizontal: 11),
+                            onPressed: () {
+                              HapticFeedback.selectionClick();
+                              setState(() => _restRemainingSeconds = 0);
+                            },
+                            child: const Text(
+                              'Skip',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActiveSpotlightCard({
+    required AppColors c,
+    required int? activeIdx,
+    required List<Exercise> exercises,
+    required WorkoutCompletionGate completionGate,
+  }) {
+    if (activeIdx == null) {
+      return LiquidGlassSurface(
+        key: _spotlightCardKey,
+        borderRadius: 26,
+        blurEnabled: false,
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.13),
+              ),
+              child: Icon(
+                CupertinoIcons.checkmark_seal_fill,
+                color: c.accent,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'All Exercises Verified',
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    completionGate.canComplete
+                        ? 'Tap Complete Workout below to log your session'
+                        : completionGate.statusLabel(),
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final ex = exercises[activeIdx];
+    final gate = _engine.canCheckExercise(activeIdx);
+
+    return LiquidGlassSurface(
+      key: _spotlightCardKey,
+      borderRadius: 26,
+      blurEnabled: false,
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.12),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: Text(
+                  'UP NEXT  ${activeIdx + 1}/${exercises.length}',
+                  style: TextStyle(
+                    color: c.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Text(
+                _formatDurationCompact(ex.duration),
+                style: TextStyle(
+                  color: c.textSecondary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            ex.name,
+            style: TextStyle(
+              color: c.textPrimary,
+              fontSize: 19,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.35,
+            ),
+          ),
+          if (ex.description.trim().isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              ex.description.trim(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.textSecondary,
+                fontSize: 13.5,
+                height: 1.4,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+
+          // Live Anti-Cheat Effort Verification Meter
+          Text(
+            gate.guidanceText(),
+            style: TextStyle(
+              color: gate.allowed ? c.textPrimary : c.textSecondary,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: LinearProgressIndicator(
+              value: gate.progress,
+              minHeight: 5,
+              backgroundColor: c.divider,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                gate.allowed ? const Color(0xFF34C759) : c.accent,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Effortless 1-Tap Controls (Watch & Log + Mark Done)
+          Row(
+            children: [
+              Expanded(
+                child: Builder(
+                  builder: (btnCtx) => TempoLiquidButton(
+                    primary: false,
+                    height: 46,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    onPressed: () => _openExerciseDetail(btnCtx, activeIdx, ex),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(CupertinoIcons.play_circle, size: 17),
+                        SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            'Watch & Log',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: gate.allowed
+                    ? TempoBouncyButton(
+                        height: 46,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        onPressed: () => _handleExerciseToggle(activeIdx),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              CupertinoIcons.checkmark_alt,
+                              color: Colors.white,
+                              size: 17,
+                            ),
+                            SizedBox(width: 6),
+                            Text('Mark Done', style: TextStyle(fontSize: 14)),
+                          ],
+                        ),
+                      )
+                    : TempoLiquidButton(
+                        primary: false,
+                        height: 46,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        onPressed: () => _handleExerciseToggle(activeIdx),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              CupertinoIcons.lock_fill,
+                              size: 14,
+                              color: c.textTertiary,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _engine.hasStarted
+                                    ? 'Wait ${gate.remainingSeconds}s'
+                                    : 'Mark Done',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: c.textSecondary,
+                                  fontSize: 14,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExerciseQueue({
+    required AppColors c,
+    required List<Exercise> exercises,
+    required int? activeIdx,
+  }) {
+    return AppleCard(
+      key: _exerciseQueueKey,
+      borderRadius: 24,
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: List.generate(exercises.length, (idx) {
+          final ex = exercises[idx];
+          final verified = _engine.isExerciseVerified(idx);
+          final isCurrent = activeIdx == idx;
+          final isLast = idx == exercises.length - 1;
+
+          return Column(
+            children: [
+              Builder(
+                builder: (rowCtx) => TempoTouchLightEffect(
+                  borderRadius: 20,
+                  emitLight: true,
+                  receiveScatter: true,
+                  cancelOnScroll: true,
+                  intensity: 0.65,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () => _openExerciseDetail(rowCtx, idx, ex),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 13,
+                      ),
+                      decoration: isCurrent
+                          ? BoxDecoration(
+                              color: c.accent.withValues(
+                                alpha: c.isDark ? 0.10 : 0.055,
+                              ),
+                              borderRadius: BorderRadius.circular(20),
+                            )
+                          : null,
+                      child: Row(
+                        children: [
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => _handleExerciseToggle(idx),
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 12),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 220),
+                                curve: Curves.easeOutCubic,
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: verified
+                                      ? c.accent
+                                      : (isCurrent
+                                          ? c.accent.withValues(
+                                              alpha: c.isDark ? 0.22 : 0.14,
+                                            )
+                                          : c.searchBg),
+                                  border: Border.all(
+                                    color: verified || isCurrent
+                                        ? c.accent
+                                        : c.cardBorder,
+                                    width: 1.2,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: verified
+                                      ? const Icon(
+                                          CupertinoIcons.checkmark_alt,
+                                          color: Colors.white,
+                                          size: 15,
+                                        )
+                                      : Text(
+                                          '${idx + 1}',
+                                          style: TextStyle(
+                                            color: isCurrent
+                                                ? c.accent
+                                                : c.textSecondary,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  ex.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: verified
+                                        ? c.textTertiary
+                                        : c.textPrimary,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                    decoration: verified
+                                        ? TextDecoration.lineThrough
+                                        : null,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Row(
+                                  children: [
+                                    Text(
+                                      _formatDurationCompact(ex.duration),
+                                      style: TextStyle(
+                                        color: c.textSecondary,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      verified
+                                          ? 'Verified'
+                                          : (isCurrent
+                                              ? 'Current exercise'
+                                              : 'Tap for video & log'),
+                                      style: TextStyle(
+                                        color: verified
+                                            ? const Color(0xFF34C759)
+                                            : (isCurrent
+                                                ? c.accent
+                                                : c.textTertiary),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          TempoGlassCircleButton(
+                            size: 36,
+                            enableBlur: false,
+                            tooltip: 'Watch form video',
+                            icon: Icon(
+                              CupertinoIcons.play_fill,
+                              color: isCurrent ? c.accent : c.textPrimary,
+                              size: 14,
+                            ),
+                            onPressed: () =>
+                                _openExerciseDetail(rowCtx, idx, ex),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (!isLast)
+                Padding(
+                  padding: const EdgeInsets.only(left: 54, right: 16),
+                  child: Divider(height: 1, color: c.divider),
+                ),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildBottomCtaBar({
+    required AppColors c,
+    required WorkoutCompletionGate gate,
+  }) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
+        child: KeyedSubtree(
+          key: _bottomCtaKey,
+          child: gate.canComplete
+              ? TempoBouncyButton(
+                  key: const ValueKey('workout_complete_cta'),
+                  height: 54,
+                  onPressed: _isSaving ? null : _completeWorkout,
+                  child: _isSaving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          gate.statusLabel(),
+                          style: const TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                )
+              : LiquidGlassSurface(
+                  key: const ValueKey('workout_locked_cta'),
+                  borderRadius: 999,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 13,
+                  ),
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    showTempoToast(
+                      context,
+                      gate.statusLabel(),
+                      showIcon: false,
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        gate.statusLabel(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: const [
+                            FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          value: gate.overallProgress,
+                          minHeight: 3.5,
+                          backgroundColor: c.divider,
+                          valueColor: AlwaysStoppedAnimation<Color>(c.accent),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
       ),
     );
   }
@@ -879,7 +1631,7 @@ class _OverviewMetric extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: c.textPrimary,
-            fontSize: 15.5,
+            fontSize: 15,
             fontWeight: FontWeight.w700,
             letterSpacing: -0.2,
             fontFeatures: const [FontFeature.tabularFigures()],
@@ -899,81 +1651,8 @@ class _OverviewMetric extends StatelessWidget {
   }
 }
 
-class _SessionActionButton extends StatefulWidget {
-  final bool isRunning;
-  final bool hasStarted;
-  final VoidCallback onTap;
-
-  const _SessionActionButton({
-    required this.isRunning,
-    required this.hasStarted,
-    required this.onTap,
-  });
-
-  @override
-  State<_SessionActionButton> createState() => _SessionActionButtonState();
-}
-
-class _SessionActionButtonState extends State<_SessionActionButton> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final bg = widget.isRunning ? c.searchBg : c.accent;
-    final fg = widget.isRunning ? c.textPrimary : Colors.white;
-    final label = widget.isRunning
-        ? 'Pause'
-        : (widget.hasStarted ? 'Resume' : 'Start');
-
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
-        widget.onTap();
-      },
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 0.94 : 1.0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOutCubic,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(99),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                widget.isRunning
-                    ? CupertinoIcons.pause_fill
-                    : CupertinoIcons.play_fill,
-                color: fg,
-                size: 15,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: fg,
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Frosted-glass Apple Fitness-inspired 3 · 2 · 1 · GO countdown overlay with
-/// radial sweep ring, spring-pop numerals, and progressive haptics.
+/// Impeller-safe frosted 3-2-1-GO countdown overlay (never wraps BackdropFilter
+/// inside FadeTransition/Opacity).
 class _SessionCountdownOverlay extends StatefulWidget {
   final String workoutTitle;
   final VoidCallback onComplete;
@@ -993,7 +1672,7 @@ class _SessionCountdownOverlay extends StatefulWidget {
 class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
     with TickerProviderStateMixin {
   late final AnimationController _beatController;
-  late final AnimationController _fadeController;
+  late final AnimationController _revealController;
 
   /// Steps: 3 -> 2 -> 1 -> 0 ("GO")
   int _step = 3;
@@ -1002,7 +1681,7 @@ class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
   @override
   void initState() {
     super.initState();
-    _fadeController = AnimationController(
+    _revealController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 220),
     )..forward();
@@ -1039,7 +1718,7 @@ class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
   Future<void> _complete() async {
     if (_finished) return;
     _finished = true;
-    await _fadeController.reverse();
+    await _revealController.reverse();
     if (mounted) widget.onComplete();
   }
 
@@ -1048,7 +1727,7 @@ class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
     _finished = true;
     HapticFeedback.selectionClick();
     WorkoutSoundService.instance.stop();
-    await _fadeController.reverse();
+    await _revealController.reverse();
     if (mounted) widget.onCancel();
   }
 
@@ -1056,154 +1735,150 @@ class _SessionCountdownOverlayState extends State<_SessionCountdownOverlay>
   void dispose() {
     WorkoutSoundService.instance.stop();
     _beatController.dispose();
-    _fadeController.dispose();
+    _revealController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final allowBlur = TempoAppearanceService.instance.value.allowDynamicBlur;
     final label = _step > 0 ? '$_step' : 'GO';
 
-    return FadeTransition(
-      opacity: CurvedAnimation(
-        parent: _fadeController,
-        curve: Curves.easeOutCubic,
-      ),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          color: c.isDark
-              ? Colors.black.withValues(alpha: 0.72)
-              : Colors.white.withValues(alpha: 0.78),
-          child: SafeArea(
-            child: Column(
-              children: [
-                const Spacer(flex: 2),
-                Text(
-                  'Get ready',
-                  style: TextStyle(
-                    color: c.textSecondary,
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.2,
-                  ),
+    final body = AnimatedBuilder(
+      animation: _revealController,
+      builder: (context, child) {
+        final v = Curves.easeOutCubic.transform(_revealController.value);
+        final scrimAlpha = (c.isDark ? 0.78 : 0.84) * v;
+        return Container(
+          color: (c.isDark ? Colors.black : Colors.white)
+              .withValues(alpha: scrimAlpha),
+          child: Opacity(opacity: v, child: child),
+        );
+      },
+      child: SafeArea(
+        child: Column(
+          children: [
+            const Spacer(flex: 2),
+            Text(
+              'Get ready',
+              style: TextStyle(
+                color: c.textSecondary,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                widget.workoutTitle,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.4,
                 ),
-                const SizedBox(height: 6),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Text(
-                    widget.workoutTitle,
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: c.textPrimary,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.4,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 44),
-                // Animated sweeping radial ring + spring pop numeral
-                AnimatedBuilder(
-                  animation: _beatController,
-                  builder: (_, __) {
-                    final t = _beatController.value;
-                    final popCurve = Curves.easeOutBack.transform(
-                      (t / 0.35).clamp(0.0, 1.0),
-                    );
-                    final exitT = ((t - 0.78) / 0.22).clamp(0.0, 1.0);
-                    final scale = _step > 0
-                        ? (1.38 - 0.38 * popCurve) * (1.0 - 0.14 * exitT)
-                        : (0.72 + 0.34 * popCurve);
-                    final opacity = (t / 0.14).clamp(0.0, 1.0) *
-                        (1.0 - exitT * 0.85);
-                    final ringProgress = _step > 0 ? (1.0 - t) : 1.0;
+              ),
+            ),
+            const SizedBox(height: 44),
+            AnimatedBuilder(
+              animation: _beatController,
+              builder: (_, __) {
+                final t = _beatController.value;
+                final popCurve = Curves.easeOutBack.transform(
+                  (t / 0.35).clamp(0.0, 1.0),
+                );
+                final exitT = ((t - 0.78) / 0.22).clamp(0.0, 1.0);
+                final scale = _step > 0
+                    ? (1.38 - 0.38 * popCurve) * (1.0 - 0.14 * exitT)
+                    : (0.72 + 0.34 * popCurve);
+                final opacity =
+                    (t / 0.14).clamp(0.0, 1.0) * (1.0 - exitT * 0.85);
+                final ringProgress = _step > 0 ? (1.0 - t) : 1.0;
 
-                    return SizedBox(
-                      width: 196,
-                      height: 196,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // Subtle ambient glow ring
-                          Container(
-                            width: 196,
-                            height: 196,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: c.accent.withValues(
-                                alpha: c.isDark ? 0.08 : 0.06,
-                              ),
-                            ),
+                return SizedBox(
+                  width: 196,
+                  height: 196,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: 196,
+                        height: 196,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: c.accent.withValues(
+                            alpha: c.isDark ? 0.08 : 0.06,
                           ),
-                          CustomPaint(
-                            size: const Size(184, 184),
-                            painter: _CountdownRingPainter(
-                              progress: ringProgress,
-                              trackColor: c.divider,
-                              activeColor: c.accent,
-                            ),
-                          ),
-                          Opacity(
-                            opacity: opacity.clamp(0.0, 1.0),
-                            child: Transform.scale(
-                              scale: scale.clamp(0.5, 1.6),
-                              child: Text(
-                                label,
-                                style: TextStyle(
-                                  color: _step == 0 ? c.accent : c.textPrimary,
-                                  fontSize: _step > 0 ? 78 : 56,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: -2.0,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-                const Spacer(flex: 3),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    TextButton(
-                      onPressed: _cancel,
-                      child: Text(
-                        'Cancel',
-                        style: TextStyle(
-                          color: c.textSecondary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 24),
-                    TextButton(
-                      onPressed: _complete,
-                      child: Text(
-                        'Skip',
-                        style: TextStyle(
-                          color: c.accent,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                      CustomPaint(
+                        size: const Size(184, 184),
+                        painter: _CountdownRingPainter(
+                          progress: ringProgress,
+                          trackColor: c.divider,
+                          activeColor: c.accent,
                         ),
                       ),
-                    ),
-                  ],
+                      Opacity(
+                        opacity: opacity.clamp(0.0, 1.0),
+                        child: Transform.scale(
+                          scale: scale.clamp(0.5, 1.6),
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              color: _step == 0 ? c.accent : c.textPrimary,
+                              fontSize: _step > 0 ? 78 : 56,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -2.0,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const Spacer(flex: 3),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TempoLiquidButton(
+                  primary: false,
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  onPressed: _cancel,
+                  child: const Text('Cancel', style: TextStyle(fontSize: 14.5)),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(width: 14),
+                TempoBouncyButton(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 26),
+                  onPressed: _complete,
+                  child: const Text('Skip', style: TextStyle(fontSize: 14.5)),
+                ),
               ],
             ),
-          ),
+            const SizedBox(height: 24),
+          ],
         ),
+      ),
+    );
+
+    if (!allowBlur) return body;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: body,
       ),
     );
   }

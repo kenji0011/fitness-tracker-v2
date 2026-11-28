@@ -9,11 +9,13 @@ class MainActivity : FlutterActivity() {
     private val APP_UPDATER_CHANNEL = "com.tempo.fitness/app_updater"
     private val PROGRESS_SHARE_CHANNEL = "com.tempo.fitness/progress_share"
     private val WORKOUT_SOUND_CHANNEL = "com.tempo.fitness/workout_sound"
+    private val DEVICE_HARDWARE_CHANNEL = "com.tempo.fitness/device_hardware"
 
     private lateinit var liveUpdateManager: WorkoutLiveUpdateManager
     private lateinit var appUpdateInstaller: AppUpdateInstaller
     private lateinit var shareImageHelper: ShareImageHelper
     private lateinit var workoutSoundHelper: WorkoutSoundHelper
+    private lateinit var deviceHardwareHelper: DeviceHardwareHelper
     private var liveChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -77,6 +79,21 @@ class MainActivity : FlutterActivity() {
                     "stop" -> {
                         workoutSoundHelper.stop()
                         result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        deviceHardwareHelper = DeviceHardwareHelper(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_HARDWARE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getHardwareProfile" -> {
+                        try {
+                            result.success(deviceHardwareHelper.getHardwareProfile())
+                        } catch (e: Exception) {
+                            result.error("HARDWARE_PROFILE_ERROR", e.message, null)
+                        }
                     }
                     else -> result.notImplemented()
                 }

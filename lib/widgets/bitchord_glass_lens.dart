@@ -304,100 +304,104 @@ class RenderBitChordGlassLens extends RenderProxyBox {
   }
 }
 
-/// Seamless single-pass GPU progressive backdrop blur + smooth scaffold fade
-/// powered by `shaders/progressive_blur.frag`.
+/// True 2-pass separable 25×25 (625-tap equivalent) progressive Gaussian faded
+/// frosted blur powered by `shaders/frosted_fade_blur.frag`.
 ///
-/// Decays both blur radius (`smoothT^2`) and scaffold tint (`smoothT`) smoothly
-/// to exact `0.0` before the bottom clip boundary so scrolled typography never
-/// exhibits a hard horizontal cut seam.
-class ProgressiveBlurBackdrop extends SingleChildRenderObjectWidget {
+/// Matches BitChord's `TopFadeBlur`: creamy frosted blur strongest along the
+/// status bar and easing via quintic `smootherStep` (`6t⁵ - 15t⁴ + 10t³`) down
+/// to exact `0.0 px` below the toolbar — with ZERO bottom border and ZERO
+/// sparse-ring ghosting!
+class FrostedFadeBlurBackdrop extends SingleChildRenderObjectWidget {
   final ui.FragmentProgram? program;
   final double strength;
-  final double maxBlurDp;
+  final double maxRadiusDp;
   final Color scrimColor;
   final double scrimAlpha;
   final double softKnee;
   final double dpr;
-  final bool enableProgressiveBlur;
+  final bool enableFrostedBlur;
 
-  const ProgressiveBlurBackdrop({
+  const FrostedFadeBlurBackdrop({
     super.key,
     required this.program,
     required this.strength,
-    required this.maxBlurDp,
+    required this.maxRadiusDp,
     required this.scrimColor,
     required this.scrimAlpha,
-    this.softKnee = 0.42,
+    this.softKnee = 0.34,
     required this.dpr,
-    required this.enableProgressiveBlur,
+    required this.enableFrostedBlur,
     super.child,
   });
 
   @override
-  RenderProgressiveBlurBackdrop createRenderObject(BuildContext context) {
-    return RenderProgressiveBlurBackdrop(
+  RenderFrostedFadeBlurBackdrop createRenderObject(BuildContext context) {
+    return RenderFrostedFadeBlurBackdrop(
       program: program,
       strength: strength,
-      maxBlurDp: maxBlurDp,
+      maxRadiusDp: maxRadiusDp,
       scrimColor: scrimColor,
       scrimAlpha: scrimAlpha,
       softKnee: softKnee,
       dpr: dpr,
-      enableProgressiveBlur: enableProgressiveBlur,
+      enableFrostedBlur: enableFrostedBlur,
     );
   }
 
   @override
   void updateRenderObject(
     BuildContext context,
-    covariant RenderProgressiveBlurBackdrop renderObject,
+    covariant RenderFrostedFadeBlurBackdrop renderObject,
   ) {
     renderObject
       ..program = program
       ..strength = strength
-      ..maxBlurDp = maxBlurDp
+      ..maxRadiusDp = maxRadiusDp
       ..scrimColor = scrimColor
       ..scrimAlpha = scrimAlpha
       ..softKnee = softKnee
       ..dpr = dpr
-      ..enableProgressiveBlur = enableProgressiveBlur;
+      ..enableFrostedBlur = enableFrostedBlur;
   }
 }
 
-class RenderProgressiveBlurBackdrop extends RenderProxyBox {
+class RenderFrostedFadeBlurBackdrop extends RenderProxyBox {
   ui.FragmentProgram? _program;
-  ui.FragmentShader? _shader;
-  final LayerHandle<BackdropFilterLayer> _backdropHandle =
+  ui.FragmentShader? _horizShader;
+  ui.FragmentShader? _vertShader;
+  final LayerHandle<BackdropFilterLayer> _horizHandle =
+      LayerHandle<BackdropFilterLayer>();
+  final LayerHandle<BackdropFilterLayer> _vertHandle =
       LayerHandle<BackdropFilterLayer>();
 
   double _strength;
-  double _maxBlurDp;
+  double _maxRadiusDp;
   Color _scrimColor;
   double _scrimAlpha;
   double _softKnee;
   double _dpr;
-  bool _enableProgressiveBlur;
+  bool _enableFrostedBlur;
 
-  RenderProgressiveBlurBackdrop({
+  RenderFrostedFadeBlurBackdrop({
     required ui.FragmentProgram? program,
     required double strength,
-    required double maxBlurDp,
+    required double maxRadiusDp,
     required Color scrimColor,
     required double scrimAlpha,
     required double softKnee,
     required double dpr,
-    required bool enableProgressiveBlur,
+    required bool enableFrostedBlur,
   })  : _program = program,
         _strength = strength,
-        _maxBlurDp = maxBlurDp,
+        _maxRadiusDp = maxRadiusDp,
         _scrimColor = scrimColor,
         _scrimAlpha = scrimAlpha,
         _softKnee = softKnee,
         _dpr = dpr,
-        _enableProgressiveBlur = enableProgressiveBlur;
+        _enableFrostedBlur = enableFrostedBlur;
 
   bool get _canRunGpuShader =>
-      _enableProgressiveBlur &&
+      _enableFrostedBlur &&
       _program != null &&
       ui.ImageFilter.isShaderFilterSupported;
 
@@ -406,9 +410,12 @@ class RenderProgressiveBlurBackdrop extends RenderProxyBox {
 
   @override
   void dispose() {
-    _backdropHandle.layer = null;
-    _shader?.dispose();
-    _shader = null;
+    _horizHandle.layer = null;
+    _vertHandle.layer = null;
+    _horizShader?.dispose();
+    _vertShader?.dispose();
+    _horizShader = null;
+    _vertShader = null;
     super.dispose();
   }
 
@@ -416,8 +423,10 @@ class RenderProgressiveBlurBackdrop extends RenderProxyBox {
     if (identical(_program, value)) return;
     final wasCompositing = _canRunGpuShader;
     _program = value;
-    _shader?.dispose();
-    _shader = null;
+    _horizShader?.dispose();
+    _vertShader?.dispose();
+    _horizShader = null;
+    _vertShader = null;
     if (wasCompositing != _canRunGpuShader) markNeedsCompositingBitsUpdate();
     markNeedsPaint();
   }
@@ -428,9 +437,9 @@ class RenderProgressiveBlurBackdrop extends RenderProxyBox {
     markNeedsPaint();
   }
 
-  set maxBlurDp(double value) {
-    if (_maxBlurDp == value) return;
-    _maxBlurDp = value;
+  set maxRadiusDp(double value) {
+    if (_maxRadiusDp == value) return;
+    _maxRadiusDp = value;
     markNeedsPaint();
   }
 
@@ -458,27 +467,36 @@ class RenderProgressiveBlurBackdrop extends RenderProxyBox {
     markNeedsPaint();
   }
 
-  set enableProgressiveBlur(bool value) {
-    if (_enableProgressiveBlur == value) return;
+  set enableFrostedBlur(bool value) {
+    if (_enableFrostedBlur == value) return;
     final wasCompositing = _canRunGpuShader;
-    _enableProgressiveBlur = value;
+    _enableFrostedBlur = value;
     if (wasCompositing != _canRunGpuShader) markNeedsCompositingBitsUpdate();
     markNeedsPaint();
+  }
+
+  static double _smootherStep(double x) {
+    final t = x.clamp(0.0, 1.0);
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
   }
 
   @override
   void paint(PaintingContext context, Offset offset) {
     final s = _strength.clamp(0.0, 1.0);
     if (s <= 0.005 || size.isEmpty) {
-      _backdropHandle.layer = null;
+      _horizHandle.layer = null;
+      _vertHandle.layer = null;
       layer = null;
       super.paint(context, offset);
       return;
     }
 
     if (_canRunGpuShader) {
-      _shader ??= _program!.fragmentShader();
-      final shader = _shader!;
+      _horizShader ??= _program!.fragmentShader();
+      _vertShader ??= _program!.fragmentShader();
+      final hShader = _horizShader!;
+      final vShader = _vertShader!;
+
       final localRect = Offset.zero & size;
       final globalRect = MatrixUtils.transformRect(
         getTransformTo(null),
@@ -491,28 +509,54 @@ class RenderProgressiveBlurBackdrop extends RenderProxyBox {
       final topPx = globalRect.top * _dpr;
       final bottomPx =
           math.max(topPx + 1.0, (globalRect.bottom - 2.0) * _dpr);
+      final radiusPx = _maxRadiusDp * s * pxScale;
+      final knee = _softKnee.clamp(0.0, 0.65);
 
-      // Indices 0 & 1 are u_size (populated automatically by Impeller)
-      shader.setFloat(2, topPx);
-      shader.setFloat(3, bottomPx);
-      shader.setFloat(4, _maxBlurDp * s * pxScale);
-      shader.setFloat(5, _scrimColor.r);
-      shader.setFloat(6, _scrimColor.g);
-      shader.setFloat(7, _scrimColor.b);
-      shader.setFloat(8, (_scrimAlpha * s).clamp(0.0, 1.0));
-      shader.setFloat(9, _softKnee.clamp(0.0, 0.75));
+      // Pass 1: Horizontal 25-tap progressive Gaussian blur (scrim = 0.0)
+      hShader.setFloat(2, topPx);
+      hShader.setFloat(3, bottomPx);
+      hShader.setFloat(4, radiusPx);
+      hShader.setFloat(5, 1.0);
+      hShader.setFloat(6, 0.0);
+      hShader.setFloat(7, _scrimColor.r);
+      hShader.setFloat(8, _scrimColor.g);
+      hShader.setFloat(9, _scrimColor.b);
+      hShader.setFloat(10, 0.0);
+      hShader.setFloat(11, knee);
+
+      // Pass 2: Vertical 25-tap progressive Gaussian blur + subtle faded mist
+      vShader.setFloat(2, topPx);
+      vShader.setFloat(3, bottomPx);
+      vShader.setFloat(4, radiusPx);
+      vShader.setFloat(5, 0.0);
+      vShader.setFloat(6, 1.0);
+      vShader.setFloat(7, _scrimColor.r);
+      vShader.setFloat(8, _scrimColor.g);
+      vShader.setFloat(9, _scrimColor.b);
+      vShader.setFloat(10, (_scrimAlpha * s).clamp(0.0, 1.0));
+      vShader.setFloat(11, knee);
 
       layer = context.pushClipRect(
         needsCompositing,
         offset,
         localRect,
         (innerCtx, innerOffset) {
-          final bLayer = _backdropHandle.layer ?? BackdropFilterLayer();
-          bLayer
-            ..filter = ui.ImageFilter.shader(shader)
+          final hLayer = _horizHandle.layer ?? BackdropFilterLayer();
+          hLayer
+            ..filter = ui.ImageFilter.shader(hShader)
             ..blendMode = BlendMode.srcOver;
-          _backdropHandle.layer = bLayer;
-          innerCtx.pushLayer(bLayer, super.paint, innerOffset);
+          _horizHandle.layer = hLayer;
+
+          final vLayer = _vertHandle.layer ?? BackdropFilterLayer();
+          vLayer
+            ..filter = ui.ImageFilter.shader(vShader)
+            ..blendMode = BlendMode.srcOver;
+          _vertHandle.layer = vLayer;
+
+          // Push horizontal pass, then vertical pass on top of its output!
+          innerCtx.pushLayer(hLayer, (ctx2, off2) {
+            ctx2.pushLayer(vLayer, super.paint, off2);
+          }, innerOffset);
         },
         oldLayer: layer as ClipRectLayer?,
       );
@@ -520,22 +564,27 @@ class RenderProgressiveBlurBackdrop extends RenderProxyBox {
     }
 
     // Fallback (Progressive Blur OFF, Reduce Dynamic Blur ON, or headless test):
-    // clean smooth vertical scaffold fade to 0.0 alpha (zero hard edge).
-    _backdropHandle.layer = null;
+    // 16-stop smootherStep faded mist with zero hard border (exact FadeCurve.kt).
+    _horizHandle.layer = null;
+    _vertHandle.layer = null;
     layer = null;
     final rect = offset & size;
-    final topA = (_enableProgressiveBlur ? _scrimAlpha : 0.94) * s;
-    final midA = (_enableProgressiveBlur ? _scrimAlpha * 0.56 : 0.78) * s;
+    final peakAlpha = (_enableFrostedBlur ? _scrimAlpha : 0.94) * s;
+    const stopCount = 16;
+    final colors = <Color>[];
+    final stops = <double>[];
+    for (int i = 0; i < stopCount; i++) {
+      final t = i / (stopCount - 1);
+      final fade = 1.0 - _smootherStep(t);
+      colors.add(_scrimColor.withValues(alpha: (peakAlpha * fade).clamp(0.0, 1.0)));
+      stops.add(t);
+    }
     final paint = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [
-          _scrimColor.withValues(alpha: topA.clamp(0.0, 1.0)),
-          _scrimColor.withValues(alpha: midA.clamp(0.0, 1.0)),
-          _scrimColor.withValues(alpha: 0.0),
-        ],
-        stops: const [0.0, 0.66, 1.0],
+        colors: colors,
+        stops: stops,
       ).createShader(rect);
     context.canvas.drawRect(rect, paint);
     super.paint(context, offset);

@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'device_performance_service.dart';
+
 /// Immutable snapshot of Tempo's user-configurable Appearance & Liquid Glass
 /// visual preferences (modeled after BitChord's Appearance settings).
 @immutable
@@ -100,21 +102,54 @@ class TempoAppearanceService {
   bool get betterGlassPerformance => value.betterGlassPerformance;
   bool get progressiveBlur => value.progressiveBlur;
 
+  /// True when the active appearance toggles match the chipset's recommended
+  /// defaults from [DevicePerformanceService].
+  bool get isUsingRecommendedDefaults =>
+      value == DevicePerformanceService.instance.recommendedSettings;
+
   Future<void> initialize({bool forceReload = false}) async {
     if (_loaded && !forceReload) return;
     _loaded = true;
+    final defaults = DevicePerformanceService.instance.recommendedSettings;
     try {
       final prefs = await SharedPreferences.getInstance();
       final next = TempoAppearanceSettings(
-        reduceAnimation: prefs.getBool(_kReduceAnimation) ?? false,
-        reduceDynamicBlur: prefs.getBool(_kReduceDynamicBlur) ?? false,
-        liquidGlass: prefs.getBool(_kLiquidGlass) ?? true,
-        betterGlassPerformance: prefs.getBool(_kBetterGlassPerf) ?? false,
-        progressiveBlur: prefs.getBool(_kProgressiveBlur) ?? true,
+        reduceAnimation:
+            prefs.getBool(_kReduceAnimation) ?? defaults.reduceAnimation,
+        reduceDynamicBlur:
+            prefs.getBool(_kReduceDynamicBlur) ?? defaults.reduceDynamicBlur,
+        liquidGlass: prefs.getBool(_kLiquidGlass) ?? defaults.liquidGlass,
+        betterGlassPerformance: prefs.getBool(_kBetterGlassPerf) ??
+            defaults.betterGlassPerformance,
+        progressiveBlur:
+            prefs.getBool(_kProgressiveBlur) ?? defaults.progressiveBlur,
       );
       if (notifier.value != next) {
         notifier.value = next;
       }
+    } catch (_) {
+      if (notifier.value != defaults) {
+        notifier.value = defaults;
+      }
+    }
+  }
+
+  /// Restores the chipset-recommended default configuration and clears manual
+  /// overrides so future launches continue following the device profile.
+  Future<void> resetToDeviceDefaults() async {
+    final defaults = DevicePerformanceService.instance.recommendedSettings;
+    if (notifier.value != defaults) {
+      notifier.value = defaults;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await Future.wait([
+        prefs.remove(_kReduceAnimation),
+        prefs.remove(_kReduceDynamicBlur),
+        prefs.remove(_kLiquidGlass),
+        prefs.remove(_kBetterGlassPerf),
+        prefs.remove(_kProgressiveBlur),
+      ]);
     } catch (_) {}
   }
 

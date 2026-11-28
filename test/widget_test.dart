@@ -1064,23 +1064,23 @@ void main() {
     expect(find.text('Log Health Data'), findsOneWidget);
     expect(find.text('Save sleep'), findsOneWidget);
     expect(find.text('Date'), findsOneWidget);
-    // Sleep uses HyperOS-style drum wheels for hrs : min
-    expect(find.text('hrs'), findsOneWidget);
-    expect(find.text('min'), findsOneWidget);
+    // Sleep uses 3D cylindrical drum wheels for HRS : MIN
+    expect(find.text('HRS'), findsOneWidget);
+    expect(find.text('MIN'), findsOneWidget);
 
-    // Switch metric to Steps -> hides Date, shows always-visible 'steps' wheel unit
+    // Switch metric to Steps -> keeps unified morphing Date pill & shows 'steps' unit
     await tester.tap(find.text('Steps'));
     await tester.pumpAndSettle();
     expect(find.text('Save steps'), findsOneWidget);
-    expect(find.text('steps'), findsOneWidget);
-    expect(find.text('Date'), findsNothing);
+    expect(find.text('steps'), findsAtLeastNWidgets(1));
+    expect(find.text('Date'), findsOneWidget);
 
-    // Switch metric to Activity -> shows hrs : min drum wheels
+    // Switch metric to Activity -> shows HRS : MIN 3D drum wheels
     await tester.tap(find.text('Activity'));
     await tester.pumpAndSettle();
     expect(find.text('Save activity'), findsOneWidget);
-    expect(find.text('hrs'), findsOneWidget);
-    expect(find.text('min'), findsOneWidget);
+    expect(find.text('HRS'), findsOneWidget);
+    expect(find.text('MIN'), findsOneWidget);
 
     await themeProvider.toggleTheme(true);
     await tester.pumpAndSettle();
@@ -2375,8 +2375,26 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Customize Template'), findsOneWidget);
 
+    final expandedSheetTop = tester.getTopLeft(find.text('Customize Template')).dy;
+
+    // Tapping a Layout Style lowers the sheet into Layout Preview Peek so the
+    // live poster above stays unobstructed while comparing layouts.
     await tester.tap(find.text('Centered'));
     await tester.pumpAndSettle();
+    final peekingSheetTop = tester.getTopLeft(find.text('Customize Template')).dy;
+    expect(peekingSheetTop, greaterThan(expandedSheetTop + 80));
+    expect(find.text('Classic'), findsOneWidget);
+    expect(find.text('Minimal'), findsOneWidget);
+
+    // Expanding back (via the header chevron or peeking METRICS SHOWN bar)
+    // restores full customization controls.
+    await tester.tap(find.byTooltip('Expand options'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.text('Customize Template')).dy,
+      lessThan(peekingSheetTop - 80),
+    );
+
     await tester.tap(find.text('Water'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Done'));
@@ -2672,6 +2690,11 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
+
+    // Animation speed now lives inside Appearance (moved out of Profile Preferences)
+    expect(find.text('Animation speed'), findsNothing);
+    await tester.tap(find.text('Appearance'));
     await tester.pumpAndSettle();
 
     expect(find.text('Animation speed'), findsOneWidget);

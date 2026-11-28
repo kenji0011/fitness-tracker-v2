@@ -16,6 +16,7 @@ import '../services/local_media_service.dart';
 import '../services/share_template_service.dart';
 import '../services/tempo_rust_db.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bitchord_segmented_slider.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/oval_activity_rings.dart';
@@ -113,6 +114,7 @@ class _ProgressShareScreenState extends State<ProgressShareScreen> {
 
   final TempoRustDb _db = TempoRustDb.instance;
   final GlobalKey _posterKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
 
   late DateTime _selectedDate;
   late String _mode; // 'day' | 'month'
@@ -146,6 +148,12 @@ class _ProgressShareScreenState extends State<ProgressShareScreen> {
     _selectedDate = DateTime(base.year, base.month, base.day);
     _mode = widget.initialMode == 'month' ? 'month' : 'day';
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   String _dayKey(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
@@ -453,43 +461,85 @@ class _ProgressShareScreenState extends State<ProgressShareScreen> {
     showTempoToast(context, 'Removed "${tpl.name}"');
   }
 
+  void _framePosterAtTop() {
+    if (!_scrollController.hasClients || _scrollController.offset <= 1.0) {
+      return;
+    }
+    _scrollController.animateTo(
+      0.0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  double _computeCustomizePeekHeight(BuildContext ctx) {
+    final mq = MediaQuery.of(ctx);
+    final screenH = mq.size.height;
+    final bottomPad = mq.padding.bottom;
+    final minLayoutPeek = 186.0 + math.max(bottomPad, 14.0);
+    final posterBox =
+        _posterKey.currentContext?.findRenderObject() as RenderBox?;
+    if (posterBox != null && posterBox.hasSize) {
+      final scrollOffset =
+          _scrollController.hasClients ? _scrollController.offset : 0.0;
+      final posterBottomAtTop =
+          posterBox.localToGlobal(Offset(0, posterBox.size.height)).dy +
+              scrollOffset;
+      final spaceBelowPoster = screenH - posterBottomAtTop - 10.0;
+      final maxComfortable = math.max(minLayoutPeek, 224.0 + bottomPad);
+      return spaceBelowPoster.clamp(178.0 + bottomPad, maxComfortable);
+    }
+    return minLayoutPeek.clamp(178.0, screenH * 0.34);
+  }
+
   Future<void> _openCustomizeSheet() async {
     HapticFeedback.selectionClick();
-    await showTempoSheet<void>(
-      context: context,
-      backgroundColor: AppColors.of(context, listen: false).card,
-      borderRadius: 28,
-      showDragHandle: true,
-      builder: (ctx) => _CustomizeTemplateSheetBody(
-        initialLayout: _layout,
-        initialMetrics: List<String>.from(_selectedMetrics),
-        initialShowRings: _showRings,
-        initialShowProfile: _showProfile,
-        initialShowDate: _showDate,
-        initialShowBrandBadge: _showBrandBadge,
-        initialCaption: _caption,
-        onChanged: ({
-          required String layout,
-          required List<String> metrics,
-          required bool showRings,
-          required bool showProfile,
-          required bool showDate,
-          required bool showBrandBadge,
-          required String caption,
-        }) {
-          if (!mounted) return;
-          setState(() {
-            _layout = layout;
-            _selectedMetrics = metrics;
-            _showRings = showRings;
-            _showProfile = showProfile;
-            _showDate = showDate;
-            _showBrandBadge = showBrandBadge;
-            _caption = caption;
-          });
-        },
-      ),
-    );
+    final sheetController = TempoSheetController();
+    final peekHeight = _computeCustomizePeekHeight(context);
+    try {
+      await showTempoSheet<void>(
+        context: context,
+        backgroundColor: AppColors.of(context, listen: false).card,
+        borderRadius: 28,
+        showDragHandle: true,
+        controller: sheetController,
+        peekHeight: peekHeight,
+        peekScrimAlpha: 0.06,
+        builder: (ctx) => _CustomizeTemplateSheetBody(
+          initialLayout: _layout,
+          initialMetrics: List<String>.from(_selectedMetrics),
+          initialShowRings: _showRings,
+          initialShowProfile: _showProfile,
+          initialShowDate: _showDate,
+          initialShowBrandBadge: _showBrandBadge,
+          initialCaption: _caption,
+          sheetController: sheetController,
+          onRequestPosterFraming: _framePosterAtTop,
+          onChanged: ({
+            required String layout,
+            required List<String> metrics,
+            required bool showRings,
+            required bool showProfile,
+            required bool showDate,
+            required bool showBrandBadge,
+            required String caption,
+          }) {
+            if (!mounted) return;
+            setState(() {
+              _layout = layout;
+              _selectedMetrics = metrics;
+              _showRings = showRings;
+              _showProfile = showProfile;
+              _showDate = showDate;
+              _showBrandBadge = showBrandBadge;
+              _caption = caption;
+            });
+          },
+        ),
+      );
+    } finally {
+      sheetController.dispose();
+    }
   }
 
   ({IconData icon, Color color, String label, String value, String unit})
@@ -612,6 +662,7 @@ class _ProgressShareScreenState extends State<ProgressShareScreen> {
         ),
       ),
       body: CustomScrollView(
+        controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
@@ -931,26 +982,34 @@ class _ProgressShareScreenState extends State<ProgressShareScreen> {
 
             Padding(
               padding: const EdgeInsets.all(22),
-              child: _layout == 'centered'
-                  ? _buildCenteredDayContent(
-                      metrics: metrics,
-                      calProgress: calProgress,
-                      stepProgress: stepProgress,
-                      minProgress: minProgress,
-                    )
-                  : _layout == 'minimal'
-                      ? _buildMinimalDayContent(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: KeyedSubtree(
+                  key: ValueKey<String>(_layout),
+                  child: _layout == 'centered'
+                      ? _buildCenteredDayContent(
                           metrics: metrics,
                           calProgress: calProgress,
                           stepProgress: stepProgress,
                           minProgress: minProgress,
                         )
-                      : _buildClassicDayContent(
-                          metrics: metrics,
-                          calProgress: calProgress,
-                          stepProgress: stepProgress,
-                          minProgress: minProgress,
-                        ),
+                      : _layout == 'minimal'
+                          ? _buildMinimalDayContent(
+                              metrics: metrics,
+                              calProgress: calProgress,
+                              stepProgress: stepProgress,
+                              minProgress: minProgress,
+                            )
+                          : _buildClassicDayContent(
+                              metrics: metrics,
+                              calProgress: calProgress,
+                              stepProgress: stepProgress,
+                              minProgress: minProgress,
+                            ),
+                ),
+              ),
             ),
           ],
         ),
@@ -1391,7 +1450,7 @@ class _ProgressShareScreenState extends State<ProgressShareScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildPosterHeader(),
+                _buildPosterHeader(centered: _layout == 'centered'),
                 if (_caption.trim().isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -1679,85 +1738,12 @@ class _ShareModeSwitcher extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final selectedIdx = mode == 'month' ? 1 : 0;
-
-    return Container(
+    return BitChordSegmentedSlider(
       height: 44,
-      padding: const EdgeInsets.all(3.5),
-      decoration: BoxDecoration(
-        color: c.isDark
-            ? const Color(0xFF1C1C1E)
-            : Colors.black.withValues(alpha: 0.055),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: LayoutBuilder(
-        builder: (_, constraints) {
-          final segW = constraints.maxWidth / 2;
-          return Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                left: selectedIdx * segW,
-                top: 0,
-                bottom: 0,
-                width: segW,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: c.isDark ? const Color(0xFF323338) : c.card,
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                ),
-              ),
-              Row(
-                children: [
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onChanged('day'),
-                      child: Center(
-                        child: Text(
-                          'Day',
-                          style: TextStyle(
-                            color: selectedIdx == 0
-                                ? c.textPrimary
-                                : c.textSecondary,
-                            fontSize: 14,
-                            fontWeight: selectedIdx == 0
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onChanged('month'),
-                      child: Center(
-                        child: Text(
-                          'Month',
-                          style: TextStyle(
-                            color: selectedIdx == 1
-                                ? c.textPrimary
-                                : c.textSecondary,
-                            fontSize: 14,
-                            fontWeight: selectedIdx == 1
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
+      fontSize: 14,
+      labels: const ['Day', 'Month'],
+      selectedIndex: mode == 'month' ? 1 : 0,
+      onChanged: (idx) => onChanged(idx == 1 ? 'month' : 'day'),
     );
   }
 }
@@ -1816,64 +1802,6 @@ class _ShareActionButton extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ElementToggleChip extends StatelessWidget {
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  const _ElementToggleChip({
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: active
-              ? c.accent.withValues(alpha: c.isDark ? 0.24 : 0.14)
-              : c.searchBg,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: active ? c.accent : Colors.transparent,
-            width: 1.2,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              active
-                  ? CupertinoIcons.checkmark_circle_fill
-                  : CupertinoIcons.circle,
-              size: 15,
-              color: active ? c.accent : c.textTertiary,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: active ? c.accent : c.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -2095,15 +2023,50 @@ class _SaveTemplateSheetBodyState extends State<_SaveTemplateSheetBody> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Save Template Locally',
-            style: TextStyle(
-              color: mc.textPrimary,
-              fontSize: 19,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF6366F1).withValues(
+                    alpha: mc.isDark ? 0.22 : 0.13,
+                  ),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  CupertinoIcons.bookmark_fill,
+                  color: Color(0xFF6366F1),
+                  size: 19,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Save Template Locally',
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ),
+              TempoGlassCircleButton(
+                size: 34,
+                enableBlur: false,
+                enableRefraction: false,
+                tooltip: 'Close',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: Icon(
+                  CupertinoIcons.xmark,
+                  size: 15,
+                  color: mc.textSecondary,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 10),
           Text(
             'Save your chosen layout, background, and visible metrics so you can reuse this style anytime.',
             style: TextStyle(
@@ -2113,22 +2076,32 @@ class _SaveTemplateSheetBodyState extends State<_SaveTemplateSheetBody> {
             ),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _nameCtrl,
-            textCapitalization: TextCapitalization.words,
-            style: TextStyle(
-              color: mc.textPrimary,
-              fontSize: 15.5,
-              fontWeight: FontWeight.w600,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            decoration: BoxDecoration(
+              color: mc.searchBg,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: mc.isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.045),
+              ),
             ),
-            decoration: InputDecoration(
-              hintText: 'Template name',
-              hintStyle: TextStyle(color: mc.textTertiary),
-              filled: true,
-              fillColor: mc.searchBg,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
+            child: TextField(
+              controller: _nameCtrl,
+              textCapitalization: TextCapitalization.words,
+              style: TextStyle(
+                color: mc.textPrimary,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
+              ),
+              decoration: InputDecoration(
+                hintText: 'Template name',
+                hintStyle: TextStyle(color: mc.textTertiary),
+                filled: false,
+                border: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                enabledBorder: InputBorder.none,
               ),
             ),
           ),
@@ -2136,52 +2109,33 @@ class _SaveTemplateSheetBodyState extends State<_SaveTemplateSheetBody> {
           Row(
             children: [
               Expanded(
-                child: SizedBox(
-                  height: 48,
-                  child: TextButton(
-                    style: TextButton.styleFrom(
-                      backgroundColor: mc.searchBg,
-                      foregroundColor: mc.textPrimary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                    ),
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text(
-                      'Cancel',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
+                child: TempoLiquidButton(
+                  primary: false,
+                  height: 50,
+                  borderRadius: 999,
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'Cancel',
+                    style: TextStyle(
+                      color: mc.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: SizedBox(
-                  height: 48,
-                  child: TextButton(
-                    style: TextButton.styleFrom(
-                      backgroundColor: mc.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                    ),
-                    onPressed: () {
-                      final trimmed = _nameCtrl.text.trim();
-                      if (trimmed.isEmpty) return;
-                      Navigator.of(context).pop(trimmed);
-                    },
-                    child: const Text(
-                      'Save template',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
+                flex: 2,
+                child: TempoBouncyButton(
+                  height: 50,
+                  onPressed: () {
+                    final trimmed = _nameCtrl.text.trim();
+                    if (trimmed.isEmpty) return;
+                    HapticFeedback.lightImpact();
+                    Navigator.of(context).pop(trimmed);
+                  },
+                  child: const Text('Save template'),
                 ),
               ),
             ],
@@ -2200,6 +2154,8 @@ class _CustomizeTemplateSheetBody extends StatefulWidget {
   final bool initialShowDate;
   final bool initialShowBrandBadge;
   final String initialCaption;
+  final TempoSheetController sheetController;
+  final VoidCallback onRequestPosterFraming;
   final void Function({
     required String layout,
     required List<String> metrics,
@@ -2218,6 +2174,8 @@ class _CustomizeTemplateSheetBody extends StatefulWidget {
     required this.initialShowDate,
     required this.initialShowBrandBadge,
     required this.initialCaption,
+    required this.sheetController,
+    required this.onRequestPosterFraming,
     required this.onChanged,
   });
 
@@ -2235,6 +2193,7 @@ class _CustomizeTemplateSheetBodyState
   late bool _showDate;
   late bool _showBrandBadge;
   late final TextEditingController _captionCtrl;
+  final ScrollController _bodyScrollCtrl = ScrollController();
 
   @override
   void initState() {
@@ -2246,10 +2205,33 @@ class _CustomizeTemplateSheetBodyState
     _showDate = widget.initialShowDate;
     _showBrandBadge = widget.initialShowBrandBadge;
     _captionCtrl = TextEditingController(text: widget.initialCaption);
+    widget.sheetController.addListener(_onSheetDetentChanged);
+  }
+
+  void _onSheetDetentChanged() {
+    if (!mounted) return;
+    if (widget.sheetController.isPeeking) {
+      widget.onRequestPosterFraming();
+      if (_bodyScrollCtrl.hasClients && _bodyScrollCtrl.offset > 0.5) {
+        _bodyScrollCtrl.animateTo(
+          0.0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
+    setState(() {});
+  }
+
+  void _enterLayoutPreviewPeek() {
+    widget.onRequestPosterFraming();
+    widget.sheetController.setPeeking(true);
   }
 
   @override
   void dispose() {
+    widget.sheetController.removeListener(_onSheetDetentChanged);
+    _bodyScrollCtrl.dispose();
     _captionCtrl.dispose();
     super.dispose();
   }
@@ -2286,34 +2268,48 @@ class _CustomizeTemplateSheetBodyState
   @override
   Widget build(BuildContext context) {
     final mc = AppColors.of(context);
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        8,
-        20,
-        math.max(
-              MediaQuery.viewInsetsOf(context).bottom,
-              MediaQuery.paddingOf(context).bottom,
-            ) +
-            24,
-      ),
+    final isPeeking = widget.sheetController.isPeeking;
+    final bottomInset = math.max(
+      MediaQuery.viewInsetsOf(context).bottom,
+      MediaQuery.paddingOf(context).bottom,
+    );
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 8, 20, bottomInset + 20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Pinned header with circular icon badge, Reset chip, and Peek/Expand toggle
           Row(
             children: [
-              Text(
-                'Customize Template',
-                style: TextStyle(
-                  color: mc.textPrimary,
-                  fontSize: 19,
-                  fontWeight: FontWeight.w700,
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: mc.accent.withValues(alpha: mc.isDark ? 0.22 : 0.13),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  CupertinoIcons.slider_horizontal_3,
+                  color: mc.accent,
+                  size: 19,
                 ),
               ),
-              const Spacer(),
-              TextButton(
-                onPressed: () {
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Customize Template',
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.35,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
                   HapticFeedback.selectionClick();
                   _captionCtrl.clear();
                   setState(() {
@@ -2328,228 +2324,399 @@ class _CustomizeTemplateSheetBodyState
                   });
                   _emit();
                 },
-                child: Text(
-                  'Reset',
-                  style: TextStyle(
-                    color: mc.accent,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          Text(
-            'Layout style',
-            style: TextStyle(
-              color: mc.textSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              for (final opt in const [
-                ('classic', 'Classic'),
-                ('centered', 'Centered'),
-                ('minimal', 'Minimal'),
-              ]) ...[
-                if (opt.$1 != 'classic') const SizedBox(width: 8),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      setState(() => _layout = opt.$1);
-                      _emit();
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      padding: const EdgeInsets.symmetric(vertical: 11),
-                      alignment: Alignment.center,
+                child: TempoTouchLightEffect(
+                  borderRadius: 999,
+                  intensity: 0.9,
+                  child: CustomPaint(
+                    foregroundPainter: LiquidGlassRimPainter(
+                      borderRadius: 999,
+                      isDark: mc.isDark,
+                      intensity: 0.72,
+                      strokeWidth: 0.85,
+                      showTopMeniscus: false,
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 7,
+                      ),
                       decoration: BoxDecoration(
-                        color: _layout == opt.$1
-                            ? mc.accent.withValues(
-                                alpha: mc.isDark ? 0.24 : 0.14,
-                              )
-                            : mc.searchBg,
-                        borderRadius: BorderRadius.circular(13),
-                        border: Border.all(
-                          color: _layout == opt.$1
-                              ? mc.accent
-                              : Colors.transparent,
-                          width: 1.3,
-                        ),
+                        color: mc.searchBg,
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
-                        opt.$2,
+                        'Reset',
                         style: TextStyle(
-                          color: _layout == opt.$1
-                              ? mc.accent
-                              : mc.textPrimary,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
+                          color: mc.accent,
+                          fontSize: 12.8,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
                   ),
                 ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 18),
-
-          Row(
-            children: [
-              Text(
-                'Metrics shown',
-                style: TextStyle(
-                  color: mc.textSecondary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
               ),
-              const Spacer(),
-              Text(
-                '${_metrics.length}/4 selected',
-                style: TextStyle(
-                  color: mc.textTertiary,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: ShareMetricOption.all.map((opt) {
-              final active = _metrics.contains(opt.key);
-              return GestureDetector(
-                onTap: () => _toggleMetric(opt.key),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 160),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 13,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: active ? mc.accent : mc.searchBg,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    opt.label,
-                    style: TextStyle(
-                      color: active ? Colors.white : mc.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+              const SizedBox(width: 8),
+              Tooltip(
+                message: isPeeking ? 'Expand options' : 'Preview poster',
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    if (!isPeeking) {
+                      widget.onRequestPosterFraming();
+                    }
+                    widget.sheetController.togglePeek();
+                  },
+                  child: TempoTouchLightEffect(
+                    borderRadius: 999,
+                    intensity: 0.85,
+                    child: CustomPaint(
+                      foregroundPainter: LiquidGlassRimPainter(
+                        borderRadius: 999,
+                        isDark: mc.isDark,
+                        intensity: 0.72,
+                        strokeWidth: 0.85,
+                        showTopMeniscus: false,
+                      ),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: mc.searchBg,
+                          shape: BoxShape.circle,
+                        ),
+                        child: AnimatedRotation(
+                          turns: isPeeking ? 0.5 : 0.0,
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          child: Icon(
+                            CupertinoIcons.chevron_down,
+                            size: 14,
+                            color: mc.textSecondary,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 18),
-
-          Text(
-            'Poster elements',
-            style: TextStyle(
-              color: mc.textSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _ElementToggleChip(
-                label: 'Activity rings',
-                active: _showRings,
-                onTap: () {
-                  setState(() => _showRings = !_showRings);
-                  _emit();
-                },
-              ),
-              _ElementToggleChip(
-                label: 'Profile avatar',
-                active: _showProfile,
-                onTap: () {
-                  setState(() => _showProfile = !_showProfile);
-                  _emit();
-                },
-              ),
-              _ElementToggleChip(
-                label: 'Date label',
-                active: _showDate,
-                onTap: () {
-                  setState(() => _showDate = !_showDate);
-                  _emit();
-                },
-              ),
-              _ElementToggleChip(
-                label: 'Tempo mark',
-                active: _showBrandBadge,
-                onTap: () {
-                  setState(() => _showBrandBadge = !_showBrandBadge);
-                  _emit();
-                },
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
 
-          Text(
-            'Custom note (optional)',
-            style: TextStyle(
-              color: mc.textSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _captionCtrl,
-            maxLength: 48,
-            onChanged: (_) => _emit(),
-            style: TextStyle(color: mc.textPrimary, fontSize: 14.5),
-            decoration: InputDecoration(
-              counterText: '',
-              hintText: 'e.g. Morning workout complete',
-              hintStyle: TextStyle(color: mc.textTertiary),
-              filled: true,
-              fillColor: mc.searchBg,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: BorderSide.none,
+          // Scrollable customization controls
+          Flexible(
+            child: SingleChildScrollView(
+              controller: _bodyScrollCtrl,
+              physics: isPeeking
+                  ? const NeverScrollableScrollPhysics()
+                  : const BouncingScrollPhysics(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Layout Style using unified BitChord Liquid Glass slider.
+                  // Interacting lowers the sheet into Preview Peek so the live
+                  // Share poster above stays completely visible while comparing.
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 8),
+                    child: Text(
+                      'LAYOUT STYLE',
+                      style: TextStyle(
+                        color: mc.textTertiary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.65,
+                      ),
+                    ),
+                  ),
+                  BitChordSegmentedSlider(
+                    labels: const ['Classic', 'Centered', 'Minimal'],
+                    selectedIndex: switch (_layout) {
+                      'centered' => 1,
+                      'minimal' => 2,
+                      _ => 0,
+                    },
+                    height: 40,
+                    trackColor: mc.searchBg,
+                    onInteract: _enterLayoutPreviewPeek,
+                    onChanged: (idx) {
+                      const layouts = ['classic', 'centered', 'minimal'];
+                      setState(() => _layout = layouts[idx]);
+                      _emit();
+                      _enterLayoutPreviewPeek();
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Metrics Shown (tapping while peeking smoothly expands the sheet)
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: isPeeking
+                        ? () {
+                            HapticFeedback.selectionClick();
+                            widget.sheetController.setPeeking(false);
+                          }
+                        : null,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
+                      child: Row(
+                        children: [
+                          Text(
+                            'METRICS SHOWN',
+                            style: TextStyle(
+                              color: mc.textTertiary,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.65,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${_metrics.length} of 4 selected',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: ShareMetricOption.all.map((opt) {
+                      final active = _metrics.contains(opt.key);
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _toggleMetric(opt.key),
+                        child: TempoTouchLightEffect(
+                          borderRadius: 999,
+                          isAccentSurface: active,
+                          intensity: 0.92,
+                          scatterGain: 1.05,
+                          child: CustomPaint(
+                            foregroundPainter: LiquidGlassRimPainter(
+                              borderRadius: 999,
+                              isDark: mc.isDark,
+                              intensity: active ? 1.12 : 0.65,
+                              strokeWidth: 0.9,
+                              showTopMeniscus: false,
+                              tintColor: active ? mc.accent : null,
+                            ),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 160),
+                              curve: Curves.easeOutCubic,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 9,
+                              ),
+                              decoration: BoxDecoration(
+                                color: active ? mc.accent : mc.searchBg,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                opt.label,
+                                style: TextStyle(
+                                  color: active ? Colors.white : mc.textPrimary,
+                                  fontSize: 13.2,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Poster Elements (clean 2x2 Liquid Glass toggle tiles)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 8),
+                    child: Text(
+                      'POSTER ELEMENTS',
+                      style: TextStyle(
+                        color: mc.textTertiary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.65,
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _posterToggleTile(
+                          c: mc,
+                          label: 'Activity rings',
+                          active: _showRings,
+                          onTap: () {
+                            setState(() => _showRings = !_showRings);
+                            _emit();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _posterToggleTile(
+                          c: mc,
+                          label: 'Profile avatar',
+                          active: _showProfile,
+                          onTap: () {
+                            setState(() => _showProfile = !_showProfile);
+                            _emit();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _posterToggleTile(
+                          c: mc,
+                          label: 'Date label',
+                          active: _showDate,
+                          onTap: () {
+                            setState(() => _showDate = !_showDate);
+                            _emit();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _posterToggleTile(
+                          c: mc,
+                          label: 'Tempo mark',
+                          active: _showBrandBadge,
+                          onTap: () {
+                            setState(() => _showBrandBadge = !_showBrandBadge);
+                            _emit();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 8),
+                    child: Text(
+                      'CUSTOM NOTE',
+                      style: TextStyle(
+                        color: mc.textTertiary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.65,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mc.searchBg,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: mc.isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.045),
+                      ),
+                    ),
+                    child: TextField(
+                      controller: _captionCtrl,
+                      maxLength: 48,
+                      onChanged: (_) => _emit(),
+                      style: TextStyle(color: mc.textPrimary, fontSize: 14.5),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        hintText: 'Optional note on poster',
+                        hintStyle: TextStyle(color: mc.textTertiary),
+                        filled: false,
+                        border: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
               ),
             ),
           ),
-          const SizedBox(height: 18),
 
-          SizedBox(
+          const SizedBox(height: 14),
+
+          // Pinned bouncy Done CTA (always reachable without scrolling)
+          TempoBouncyButton(
             height: 50,
-            child: TextButton(
-              style: TextButton.styleFrom(
-                backgroundColor: mc.accent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text(
-                'Done',
-                style: TextStyle(
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              Navigator.of(context).pop();
+            },
+            child: const Text('Done'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _posterToggleTile({
+    required AppColors c,
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: TempoTouchLightEffect(
+        borderRadius: 999,
+        isAccentSurface: active,
+        intensity: 0.9,
+        scatterGain: 1.05,
+        child: CustomPaint(
+          foregroundPainter: LiquidGlassRimPainter(
+            borderRadius: 999,
+            isDark: c.isDark,
+            intensity: active ? 1.08 : 0.62,
+            strokeWidth: 0.9,
+            showTopMeniscus: false,
+            tintColor: active ? c.accent : null,
+          ),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active ? c.accent : c.searchBg,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: active ? Colors.white : c.textPrimary,
+                fontSize: 13.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

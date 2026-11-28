@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/bitchord_segmented_slider.dart';
+import '../widgets/liquid_glass_surface.dart';
 import '../widgets/tempo_sliver_header.dart';
 
 class HistoryCalendarSelection {
@@ -41,7 +43,6 @@ class HistoryCalendarScreen extends StatefulWidget {
 }
 
 class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
-  static const Color _accentCoral = Color(0xFFD95B5B);
   static const List<String> _weekdays = [
     'MON',
     'TUE',
@@ -217,48 +218,17 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
               ),
             ),
 
-            // 4-Mode Row: Day | Week | Month | Year
+            // 4-Mode Liquid Glass Slider: Day | Week | Month | Year
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Row(
-                children: [
-                  _ModeTab(
-                    icon: Icons.calendar_today_rounded,
-                    label: 'Day',
-                    selected: _modeIndex == 0,
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      setState(() => _modeIndex = 0);
-                    },
-                  ),
-                  _ModeTab(
-                    icon: Icons.view_week_rounded,
-                    label: 'Week',
-                    selected: _modeIndex == 1,
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      setState(() => _modeIndex = 1);
-                    },
-                  ),
-                  _ModeTab(
-                    icon: Icons.calendar_month_rounded,
-                    label: 'Month',
-                    selected: _modeIndex == 2,
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      setState(() => _modeIndex = 2);
-                    },
-                  ),
-                  _ModeTab(
-                    icon: Icons.date_range_rounded,
-                    label: 'Year',
-                    selected: _modeIndex == 3,
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      setState(() => _modeIndex = 3);
-                    },
-                  ),
-                ],
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: BitChordSegmentedSlider(
+                labels: const ['Day', 'Week', 'Month', 'Year'],
+                selectedIndex: _modeIndex,
+                height: 44,
+                onChanged: (idx) {
+                  if (idx == _modeIndex) return;
+                  setState(() => _modeIndex = idx);
+                },
               ),
             ),
             const SizedBox(height: 16),
@@ -340,10 +310,10 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
                 padding: const EdgeInsets.only(left: 10, bottom: 14),
                 child: Text(
                   monthLabel,
-                  style: const TextStyle(
-                    color: _accentCoral,
+                  style: TextStyle(
+                    color: c.accent,
                     fontSize: 22,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                     letterSpacing: -0.3,
                   ),
                 ),
@@ -397,8 +367,8 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
                                   Container(
                                     height: 36,
                                     decoration: BoxDecoration(
-                                      color: _accentCoral.withValues(
-                                        alpha: c.isDark ? 0.34 : 0.20,
+                                      color: c.accent.withValues(
+                                        alpha: c.isDark ? 0.30 : 0.18,
                                       ),
                                       borderRadius: BorderRadius.horizontal(
                                         left: Radius.circular(
@@ -416,24 +386,35 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     color: (!isWeekMode && isSelected)
-                                        ? _accentCoral
+                                        ? c.accent
                                         : Colors.transparent,
                                     border: (!isWeekMode && isSelected)
                                         ? Border.all(
                                             color: c.isDark
                                                 ? Colors.white
-                                                    .withValues(alpha: 0.85)
-                                                : _accentCoral,
-                                            width: 1.4,
+                                                    .withValues(alpha: 0.72)
+                                                : c.accent,
+                                            width: 1.3,
                                           )
                                         : (isToday && !isSelected
                                             ? Border.all(
-                                                color: _accentCoral.withValues(
-                                                  alpha: 0.65,
+                                                color: c.accent.withValues(
+                                                  alpha: 0.72,
                                                 ),
-                                                width: 1.2,
+                                                width: 1.3,
                                               )
                                             : null),
+                                    boxShadow: (!isWeekMode && isSelected)
+                                        ? [
+                                            BoxShadow(
+                                              color: c.accent.withValues(
+                                                alpha: 0.32,
+                                              ),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 3),
+                                            ),
+                                          ]
+                                        : null,
                                   ),
                                   alignment: Alignment.center,
                                   child: Text(
@@ -444,7 +425,9 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
                                           : (isFuture
                                               ? c.textTertiary
                                                   .withValues(alpha: 0.45)
-                                              : c.textPrimary),
+                                              : (isToday
+                                                  ? c.accent
+                                                  : c.textPrimary)),
                                       fontSize: 16,
                                       fontWeight: isSelected || isToday
                                           ? FontWeight.w600
@@ -461,8 +444,8 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
                                     child: Container(
                                       width: 4,
                                       height: 4,
-                                      decoration: const BoxDecoration(
-                                        color: _accentCoral,
+                                      decoration: BoxDecoration(
+                                        color: c.accent,
                                         shape: BoxShape.circle,
                                       ),
                                     ),
@@ -498,10 +481,10 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
             children: [
               Text(
                 '$year',
-                style: const TextStyle(
-                  color: _accentCoral,
+                style: TextStyle(
+                  color: c.accent,
                   fontSize: 20,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 12),
@@ -534,29 +517,42 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
                               2,
                             );
                           },
-                    child: Container(
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? _accentCoral
-                            : (c.isDark
-                                ? const Color(0xFF1C1C1E)
-                                : c.card),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: isSelected ? _accentCoral : c.cardBorder,
+                    child: TempoTouchLightEffect(
+                      borderRadius: 14,
+                      enabled: !isFuture,
+                      isAccentSurface: isSelected,
+                      intensity: 0.92,
+                      child: CustomPaint(
+                        foregroundPainter: LiquidGlassRimPainter(
+                          borderRadius: 14,
+                          isDark: c.isDark,
+                          intensity: isSelected ? 1.1 : 0.62,
+                          strokeWidth: 0.9,
+                          showTopMeniscus: false,
+                          tintColor: isSelected ? c.accent : null,
                         ),
-                      ),
-                      child: Text(
-                        label,
-                        style: TextStyle(
-                          color: isSelected
-                              ? Colors.white
-                              : (isFuture
-                                  ? c.textTertiary.withValues(alpha: 0.45)
-                                  : c.textPrimary),
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                        child: Container(
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? c.accent
+                                : (c.isDark
+                                    ? const Color(0xFF1C1C1E)
+                                    : c.card),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              color: isSelected
+                                  ? Colors.white
+                                  : (isFuture
+                                      ? c.textTertiary.withValues(alpha: 0.45)
+                                      : c.textPrimary),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -582,86 +578,52 @@ class _HistoryCalendarScreenState extends State<HistoryCalendarScreen> {
         final isSelected = _selectedDate.year == year;
         return GestureDetector(
           onTap: () => _commitSelection(DateTime(year, 12, 31), 3),
-          child: Container(
-            height: 56,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? _accentCoral
-                  : (c.isDark ? const Color(0xFF1C1C1E) : c.card),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isSelected ? _accentCoral : c.cardBorder,
+          child: TempoTouchLightEffect(
+            borderRadius: 16,
+            isAccentSurface: isSelected,
+            intensity: 0.92,
+            child: CustomPaint(
+              foregroundPainter: LiquidGlassRimPainter(
+                borderRadius: 16,
+                isDark: c.isDark,
+                intensity: isSelected ? 1.1 : 0.65,
+                strokeWidth: 0.9,
+                showTopMeniscus: false,
+                tintColor: isSelected ? c.accent : null,
               ),
-            ),
-            child: Row(
-              children: [
-                Text(
-                  '$year',
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : c.textPrimary,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+              child: Container(
+                height: 56,
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? c.accent
+                      : (c.isDark ? const Color(0xFF1C1C1E) : c.card),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                const Spacer(),
-                Icon(
-                  CupertinoIcons.chevron_right,
-                  size: 16,
-                  color: isSelected ? Colors.white70 : c.textTertiary,
+                child: Row(
+                  children: [
+                    Text(
+                      '$year',
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : c.textPrimary,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 16,
+                      color: isSelected ? Colors.white70 : c.textTertiary,
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         );
       },
-    );
-  }
-}
-
-class _ModeTab extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _ModeTab({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final color = selected ? c.textPrimary : c.textTertiary;
-    return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 22, color: color),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

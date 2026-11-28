@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../models/local_profile.dart';
 import '../theme/app_colors.dart';
 import 'ios_stretch_sheet.dart';
+import 'liquid_glass_surface.dart';
 
 /// Displays the animated BMI breakdown popup using Tempo's iOS spring
 /// & upward rubber-band stretch sheet.
@@ -330,28 +331,20 @@ class _BmiDetailPopupBody extends StatelessWidget {
 
           const SizedBox(height: 22),
 
-          SizedBox(
-            height: 52,
-            child: TextButton(
-              style: TextButton.styleFrom(
-                backgroundColor:
-                    c.isDark ? const Color(0xFF26272B) : c.searchBg,
-                foregroundColor: c.textPrimary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                ),
-              ),
-              onPressed: () {
-                HapticFeedback.lightImpact();
-                Navigator.of(context).pop();
-              },
-              child: Text(
-                'Collapse',
-                style: TextStyle(
-                  color: c.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
+          TempoLiquidButton(
+            primary: false,
+            height: 50,
+            borderRadius: 999,
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              Navigator.of(context).pop();
+            },
+            child: Text(
+              'Collapse',
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),

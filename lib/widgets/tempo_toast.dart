@@ -17,6 +17,7 @@ void showTempoToast(
   String message, {
   bool isError = false,
   IconData? icon,
+  bool showIcon = true,
   Duration duration = const Duration(milliseconds: 2400),
 }) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
@@ -35,6 +36,7 @@ void showTempoToast(
       message: message,
       isError: isError,
       icon: icon,
+      showIcon: showIcon,
       colors: c,
       duration: duration,
       onDismissed: () {
@@ -54,6 +56,7 @@ class _TempoToastOverlay extends StatefulWidget {
   final String message;
   final bool isError;
   final IconData? icon;
+  final bool showIcon;
   final AppColors colors;
   final Duration duration;
   final VoidCallback onDismissed;
@@ -62,6 +65,7 @@ class _TempoToastOverlay extends StatefulWidget {
     required this.message,
     required this.isError,
     required this.icon,
+    required this.showIcon,
     required this.colors,
     required this.duration,
     required this.onDismissed,
@@ -112,15 +116,68 @@ class _TempoToastOverlayState extends State<_TempoToastOverlay>
     super.dispose();
   }
 
+  (IconData, Color) _resolveContextualBadge(AppColors c) {
+    if (widget.icon != null) {
+      return (widget.icon!, widget.isError ? c.moveRed : c.accent);
+    }
+    if (widget.isError) {
+      return (CupertinoIcons.xmark_circle_fill, c.moveRed);
+    }
+
+    final lower = widget.message.toLowerCase();
+    const disabledOrOffTokens = <String>[
+      'paused',
+      'disabled',
+      'turned off',
+      ' off',
+      'stopped',
+      'removed',
+      'deleted',
+      'cleared',
+      'cancelled',
+      'canceled',
+      'ended early',
+      'reset',
+      'hidden',
+    ];
+    for (final token in disabledOrOffTokens) {
+      if (lower.contains(token)) {
+        final isDestructive = lower.contains('deleted') ||
+            lower.contains('removed') ||
+            lower.contains('ended early');
+        return (
+          CupertinoIcons.xmark_circle_fill,
+          isDestructive ? c.moveRed : c.textSecondary,
+        );
+      }
+    }
+
+    const infoOrGuidanceTokens = <String>[
+      'start ',
+      'keep going',
+      'wait ',
+      'permission',
+      'please ',
+      'select ',
+      'already ',
+      'could not',
+      'unable ',
+      'no ',
+    ];
+    for (final token in infoOrGuidanceTokens) {
+      if (lower.contains(token)) {
+        return (CupertinoIcons.info_circle_fill, c.accent);
+      }
+    }
+
+    return (CupertinoIcons.checkmark_circle_fill, c.accent);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.colors;
     final topPad = MediaQuery.paddingOf(context).top;
-    final badgeColor = widget.isError ? c.moveRed : c.accent;
-    final iconData = widget.icon ??
-        (widget.isError
-            ? CupertinoIcons.exclamationmark_circle_fill
-            : CupertinoIcons.checkmark_circle_fill);
+    final (iconData, badgeColor) = _resolveContextualBadge(c);
 
     return Positioned(
       top: topPad + 10,
@@ -166,8 +223,10 @@ class _TempoToastOverlayState extends State<_TempoToastOverlay>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(iconData, size: 18, color: badgeColor),
-                          const SizedBox(width: 9),
+                          if (widget.showIcon) ...[
+                            Icon(iconData, size: 18, color: badgeColor),
+                            const SizedBox(width: 9),
+                          ],
                           Flexible(
                             child: Text(
                               widget.message,

@@ -163,15 +163,50 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Delete photo?',
-                style: TextStyle(
-                  color: mc.textPrimary,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: mc.moveRed.withValues(
+                        alpha: mc.isDark ? 0.22 : 0.13,
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      CupertinoIcons.trash_fill,
+                      color: mc.moveRed,
+                      size: 19,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Delete photo?',
+                      style: TextStyle(
+                        color: mc.textPrimary,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                  TempoGlassCircleButton(
+                    size: 34,
+                    enableBlur: false,
+                    enableRefraction: false,
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    icon: Icon(
+                      CupertinoIcons.xmark,
+                      size: 15,
+                      color: mc.textSecondary,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 10),
               Text(
                 'This removes the progress photo permanently from local device storage.',
                 style: TextStyle(
@@ -184,48 +219,31 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: SizedBox(
+                    child: TempoLiquidButton(
+                      primary: false,
                       height: 48,
-                      child: TextButton(
-                        style: TextButton.styleFrom(
-                          backgroundColor: mc.searchBg,
-                          foregroundColor: mc.textPrimary,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        onPressed: () => Navigator.of(ctx).pop(false),
-                        child: const Text(
-                          'Cancel',
-                          style: TextStyle(
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w600,
-                          ),
+                      borderRadius: 999,
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          color: mc.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: SizedBox(
+                    child: TempoBouncyButton(
                       height: 48,
-                      child: FilledButton(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: mc.moveRed,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        onPressed: () => Navigator.of(ctx).pop(true),
-                        child: const Text(
-                          'Delete',
-                          style: TextStyle(
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
+                      backgroundColor: mc.moveRed,
+                      onPressed: () {
+                        HapticFeedback.lightImpact();
+                        Navigator.of(ctx).pop(true);
+                      },
+                      child: const Text('Delete'),
                     ),
                   ),
                 ],
@@ -268,118 +286,197 @@ class _ProgressAlbumScreenState extends State<ProgressAlbumScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 2, 4, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: mc.accent.withValues(
+                        alpha: mc.isDark ? 0.22 : 0.13,
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      CupertinoIcons.camera_fill,
+                      color: mc.accent,
+                      size: 19,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Add progress photo',
+                          style: TextStyle(
+                            color: mc.textPrimary,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Stored privately on your phone',
+                          style: TextStyle(
+                            color: mc.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  TempoGlassCircleButton(
+                    size: 34,
+                    enableBlur: false,
+                    enableRefraction: false,
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    icon: Icon(
+                      CupertinoIcons.xmark,
+                      size: 15,
+                      color: mc.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              TempoLiquidButton(
+                primary: false,
+                borderRadius: 20,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  _addPhoto(ImageSource.camera);
+                },
+                child: Row(
                   children: [
-                    Text(
-                      'Add progress photo',
-                      style: TextStyle(
-                        color: mc.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.2,
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: mc.accent,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Center(
+                        child: TempoJiggIcon(
+                          'camera',
+                          variant: JiggIconVariant.solid,
+                          size: 17,
+                          color: Colors.white,
+                          trigger: JiggIconTrigger.appear,
+                          fallbackIcon: CupertinoIcons.camera_fill,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'Stored privately on your phone',
-                      style: TextStyle(
-                        color: mc.textSecondary,
-                        fontSize: 13.5,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Take photo',
+                            style: TextStyle(
+                              color: mc.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            'Capture a new check-in with camera',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
                       ),
+                    ),
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 15,
+                      color: mc.textTertiary,
                     ),
                   ],
                 ),
               ),
-              Material(
-                color: mc.searchBg,
-                borderRadius: BorderRadius.circular(18),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
+              const SizedBox(height: 10),
+              TempoLiquidButton(
+                primary: false,
+                borderRadius: 20,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  _addPhoto(ImageSource.gallery);
+                },
+                child: Row(
                   children: [
-                    ListTile(
-                      leading: TempoJiggIcon(
-                        'camera',
-                        variant: JiggIconVariant.outline,
-                        size: 22,
-                        color: mc.textPrimary,
-                        trigger: JiggIconTrigger.appear,
-                        fallbackIcon: Icons.photo_camera_outlined,
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF4B9EF7),
+                        shape: BoxShape.circle,
                       ),
-                      title: Text(
-                        'Take photo',
-                        style: TextStyle(
-                          color: mc.textPrimary,
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w500,
-                        ),
+                      child: const Icon(
+                        CupertinoIcons.photo_fill,
+                        color: Colors.white,
+                        size: 17,
                       ),
-                      subtitle: Text(
-                        'Capture a new check-in with camera',
-                        style: TextStyle(
-                          color: mc.textTertiary,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        _addPhoto(ImageSource.camera);
-                      },
                     ),
-                    Divider(
-                      height: 1,
-                      indent: 56,
-                      color: mc.divider,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Choose from gallery',
+                            style: TextStyle(
+                              color: mc.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            'Pick an existing photo from your device',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    ListTile(
-                      leading: Icon(
-                        Icons.photo_library_outlined,
-                        color: mc.textPrimary,
-                      ),
-                      title: Text(
-                        'Choose from gallery',
-                        style: TextStyle(
-                          color: mc.textPrimary,
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Pick an existing photo from your device',
-                        style: TextStyle(
-                          color: mc.textTertiary,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        _addPhoto(ImageSource.gallery);
-                      },
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 15,
+                      color: mc.textTertiary,
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 12),
-              SizedBox(
+              TempoLiquidButton(
+                primary: false,
                 height: 48,
-                child: TextButton(
-                  style: TextButton.styleFrom(
-                    backgroundColor: mc.searchBg,
-                    foregroundColor: mc.textPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  child: Text(
-                    'Cancel',
-                    style: TextStyle(
-                      color: mc.textPrimary,
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                borderRadius: 999,
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(
+                    color: mc.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -1120,6 +1217,9 @@ class _PhotoMorphViewerRoute extends PageRoute<void> {
         ? 1.0
         : (1.0 - Curves.easeOutCubic.transform(flightT)).clamp(0.0, 1.0);
 
+    final c = AppColors.of(context, listen: false);
+    final viewerBg = c.isDark ? const Color(0xFF000000) : c.scaffold;
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -1129,7 +1229,7 @@ class _PhotoMorphViewerRoute extends PageRoute<void> {
         if (bgAlpha > 0.004)
           IgnorePointer(
             child: ColoredBox(
-              color: const Color(0xFF0A0A0C).withValues(alpha: bgAlpha),
+              color: viewerBg.withValues(alpha: bgAlpha),
             ),
           ),
         Positioned.fromRect(
@@ -1334,6 +1434,7 @@ class _ProgressPhotoViewerScreenState extends State<_ProgressPhotoViewerScreen>
   @override
   Widget build(BuildContext context) {
     if (_items.isEmpty) return const SizedBox.shrink();
+    final c = AppColors.of(context);
     final photo = _items[_currentIndex];
     final topPad = MediaQuery.paddingOf(context).top;
     final bottomPad = MediaQuery.paddingOf(context).bottom;
@@ -1343,271 +1444,291 @@ class _ProgressPhotoViewerScreenState extends State<_ProgressPhotoViewerScreen>
     final dragScale = lerpDouble(1.0, 0.80, dragProgress)!;
     final dragRadius = lerpDouble(0.0, 22.0, dragProgress)!;
     final bgAlpha = (1.0 - dragProgress * 0.72).clamp(0.0, 1.0);
+    final viewerBg = c.isDark ? const Color(0xFF000000) : c.scaffold;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0C).withValues(alpha: bgAlpha),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Swipeable pinch-to-zoom & pull-down-to-dismiss photo canvas
-          GestureDetector(
-            onTap: () {
-              setState(() => _showChrome = !_showChrome);
-              if (_showChrome) {
-                _chromeCtrl.forward();
-              } else {
-                _chromeCtrl.reverse();
-              }
-            },
-            onVerticalDragStart: _onVerticalDragStart,
-            onVerticalDragUpdate: _onVerticalDragUpdate,
-            onVerticalDragEnd: _onVerticalDragEnd,
-            child: PageView.builder(
-              controller: _pageCtrl,
-              physics: _isZoomed || _isDraggingDismiss
-                  ? const NeverScrollableScrollPhysics()
-                  : const BouncingScrollPhysics(),
-              itemCount: _items.length,
-              onPageChanged: (i) {
-                HapticFeedback.selectionClick();
-                _transformCtrl.value = Matrix4.identity();
-                setState(() {
-                  _currentIndex = i;
-                  _isZoomed = false;
-                  _syncFlightState();
-                });
-                _prewarmHiResForIndex(i);
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: c.isDark
+          ? SystemUiOverlayStyle.light
+          : SystemUiOverlayStyle.dark,
+      child: Scaffold(
+        backgroundColor: viewerBg.withValues(alpha: bgAlpha),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Swipeable pinch-to-zoom & pull-down-to-dismiss photo canvas
+            GestureDetector(
+              onTap: () {
+                setState(() => _showChrome = !_showChrome);
+                if (_showChrome) {
+                  _chromeCtrl.forward();
+                } else {
+                  _chromeCtrl.reverse();
+                }
               },
-              itemBuilder: (_, i) {
-                final item = _items[i];
-                final exists =
-                    LocalMediaService.fileExistsCached(item.filePath);
-                final isActive = i == _currentIndex;
-                return Center(
-                  child: Transform.translate(
-                    offset: isActive ? _dragOffset : Offset.zero,
-                    child: Transform.scale(
-                      scale: isActive ? dragScale : 1.0,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(
-                          isActive ? dragRadius : 0.0,
-                        ),
-                        child: InteractiveViewer(
-                          transformationController:
-                              isActive ? _transformCtrl : null,
-                          minScale: 1.0,
-                          maxScale: 4.0,
-                          child: exists
-                              ? _ViewerPhotoImage(
-                                  filePath: item.filePath,
-                                  tileDecodePx: widget.tileDecodePx,
-                                  viewerDecodePx: viewerPx,
-                                  onAspectRatioResolved: (aspect) {
-                                    widget.aspectRatios[item.id] = aspect;
-                                  },
-                                )
-                              : const Icon(
-                                  CupertinoIcons.photo,
-                                  color: Colors.white38,
-                                  size: 64,
-                                ),
+              onVerticalDragStart: _onVerticalDragStart,
+              onVerticalDragUpdate: _onVerticalDragUpdate,
+              onVerticalDragEnd: _onVerticalDragEnd,
+              child: PageView.builder(
+                controller: _pageCtrl,
+                physics: _isZoomed || _isDraggingDismiss
+                    ? const NeverScrollableScrollPhysics()
+                    : const BouncingScrollPhysics(),
+                itemCount: _items.length,
+                onPageChanged: (i) {
+                  HapticFeedback.selectionClick();
+                  _transformCtrl.value = Matrix4.identity();
+                  setState(() {
+                    _currentIndex = i;
+                    _isZoomed = false;
+                    _syncFlightState();
+                  });
+                  _prewarmHiResForIndex(i);
+                },
+                itemBuilder: (_, i) {
+                  final item = _items[i];
+                  final exists =
+                      LocalMediaService.fileExistsCached(item.filePath);
+                  final isActive = i == _currentIndex;
+                  return Center(
+                    child: Transform.translate(
+                      offset: isActive ? _dragOffset : Offset.zero,
+                      child: Transform.scale(
+                        scale: isActive ? dragScale : 1.0,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(
+                            isActive ? dragRadius : 0.0,
+                          ),
+                          child: InteractiveViewer(
+                            transformationController:
+                                isActive ? _transformCtrl : null,
+                            minScale: 1.0,
+                            maxScale: 4.0,
+                            child: exists
+                                ? _ViewerPhotoImage(
+                                    filePath: item.filePath,
+                                    tileDecodePx: widget.tileDecodePx,
+                                    viewerDecodePx: viewerPx,
+                                    onAspectRatioResolved: (aspect) {
+                                      widget.aspectRatios[item.id] = aspect;
+                                    },
+                                  )
+                                : Icon(
+                                    CupertinoIcons.photo,
+                                    color: c.textTertiary,
+                                    size: 64,
+                                  ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
-          ),
 
-          // Floating top & bottom chrome isolated in their own AnimatedBuilder
-          // so PageView & InteractiveViewer never rebuild on chrome transitions.
-          AnimatedBuilder(
-            animation: _chromeCtrl,
-            builder: (context, _) {
-              final chromeT = Curves.easeOutCubic.transform(_chromeCtrl.value) *
-                  (1.0 - dragProgress * 2.4).clamp(0.0, 1.0);
-              final showChromeNow =
-                  _showChrome && !_isDraggingDismiss && chromeT > 0.02;
+            // Floating theme-adaptive Liquid Glass top & bottom chrome
+            AnimatedBuilder(
+              animation: _chromeCtrl,
+              builder: (context, _) {
+                final chromeT =
+                    Curves.easeOutCubic.transform(_chromeCtrl.value) *
+                        (1.0 - dragProgress * 2.4).clamp(0.0, 1.0);
+                final showChromeNow =
+                    _showChrome && !_isDraggingDismiss && chromeT > 0.02;
 
-              return Stack(
-                fit: StackFit.expand,
-                children: [
-                  // Floating top bar (Back | Date & Pose | Delete)
-                  Positioned(
-                    top: lerpDouble(-(topPad + 88), 0, chromeT)!,
-                    left: 0,
-                    right: 0,
-                    child: IgnorePointer(
-                      ignoring: !showChromeNow,
-                      child: Container(
-                        padding: EdgeInsets.fromLTRB(14, topPad + 10, 14, 18),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.black.withValues(alpha: 0.72 * chromeT),
-                              Colors.transparent,
-                            ],
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Floating Liquid Glass Top Bar (Back | Date & Counter Pill | Delete)
+                    Positioned(
+                      top: lerpDouble(-(topPad + 96), 0, chromeT)!,
+                      left: 0,
+                      right: 0,
+                      child: IgnorePointer(
+                        ignoring: !showChromeNow,
+                        child: Container(
+                          padding: EdgeInsets.fromLTRB(
+                            14,
+                            topPad + 10,
+                            14,
+                            18,
                           ),
-                        ),
-                        child: Row(
-                          children: [
-                            _ViewerGlassButton(
-                              icon: const TempoBackChevron(
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                              onTap: () => Navigator.of(context).pop(),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                viewerBg.withValues(alpha: 0.78 * chromeT),
+                                viewerBg.withValues(alpha: 0.0),
+                              ],
                             ),
-                            Expanded(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    DateFormat('MMM d, yyyy')
-                                        .format(photo.takenAt.toLocal()),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: -0.2,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    _items.length > 1
-                                        ? '${photo.category} · ${_currentIndex + 1} of ${_items.length}'
-                                        : photo.category,
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            _ViewerGlassButton(
-                              icon: const Icon(
-                                CupertinoIcons.trash,
-                                color: Color(0xFFFF5E57),
-                                size: 19,
-                              ),
-                              onTap: _handleDelete,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  // Floating frosted bottom metadata pill (zero Opacity around BackdropFilter)
-                  Positioned(
-                    bottom: lerpDouble(-170, bottomPad + 18, chromeT)!,
-                    left: 18,
-                    right: 18,
-                    child: IgnorePointer(
-                      ignoring: !showChromeNow,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(22),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(
-                            sigmaX: (22 * chromeT).clamp(0.0, 22.0),
-                            sigmaY: (22 * chromeT).clamp(0.0, 22.0),
                           ),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 14,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF1C1C20)
-                                  .withValues(alpha: 0.78 * chromeT),
-                              borderRadius: BorderRadius.circular(22),
-                              border: Border.all(
-                                color: Colors.white
-                                    .withValues(alpha: 0.12 * chromeT),
+                          child: Row(
+                            children: [
+                              TempoGlassCircleButton(
+                                size: 42,
+                                tooltip: 'Close',
+                                enableRefraction: true,
+                                icon: TempoBackChevron(
+                                  color: c.textPrimary,
+                                  size: 20,
+                                ),
+                                onPressed: () => Navigator.of(context).pop(),
                               ),
-                            ),
-                            child: Opacity(
-                              opacity: chromeT,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 10,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white
-                                              .withValues(alpha: 0.12),
-                                          borderRadius:
-                                              BorderRadius.circular(999),
-                                        ),
-                                        child: Text(
-                                          photo.category,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Center(
+                                  child: LiquidGlassSurface(
+                                    borderRadius: 999,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 7,
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          DateFormat('MMM d, yyyy')
+                                              .format(photo.takenAt.toLocal()),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: c.textPrimary,
+                                            fontSize: 14.5,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: -0.2,
                                           ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                        DateFormat('h:mm a')
-                                            .format(photo.takenAt.toLocal()),
-                                        style: const TextStyle(
-                                          color: Colors.white60,
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      if (photo.weightKg != null)
+                                        const SizedBox(height: 1),
                                         Text(
-                                          widget.formatWeight(photo.weightKg!),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 15.5,
-                                            fontWeight: FontWeight.w700,
-                                            fontFeatures: [
+                                          _items.length > 1
+                                              ? '${photo.category}  ${_currentIndex + 1} of ${_items.length}'
+                                              : photo.category,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: c.textSecondary,
+                                            fontSize: 11.5,
+                                            fontWeight: FontWeight.w600,
+                                            fontFeatures: const [
                                               FontFeature.tabularFigures(),
                                             ],
                                           ),
                                         ),
-                                    ],
-                                  ),
-                                  if (photo.caption.isNotEmpty) ...[
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      photo.caption,
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 13.5,
-                                        height: 1.4,
-                                      ),
+                                      ],
                                     ),
-                                  ],
-                                ],
+                                  ),
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 10),
+                              TempoGlassCircleButton(
+                                size: 42,
+                                tooltip: 'Delete photo',
+                                enableRefraction: true,
+                                icon: Icon(
+                                  CupertinoIcons.trash,
+                                  color: c.moveRed,
+                                  size: 19,
+                                ),
+                                onPressed: _handleDelete,
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ],
+
+                    // Floating Theme-Adaptive Liquid Glass Bottom Metadata Dock
+                    // (slides offscreen via Positioned — zero Opacity around BackdropFilter)
+                    Positioned(
+                      bottom: lerpDouble(-180, bottomPad + 18, chromeT)!,
+                      left: 18,
+                      right: 18,
+                      child: IgnorePointer(
+                        ignoring: !showChromeNow,
+                        child: LiquidGlassSurface(
+                          borderRadius: 26,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 13,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 11,
+                                      vertical: 4.5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: c.accent.withValues(
+                                        alpha: c.isDark ? 0.22 : 0.13,
+                                      ),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      photo.category,
+                                      style: TextStyle(
+                                        color: c.accent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    DateFormat('h:mm a')
+                                        .format(photo.takenAt.toLocal()),
+                                    style: TextStyle(
+                                      color: c.textSecondary,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures(),
+                                      ],
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (photo.weightKg != null)
+                                    Text(
+                                      widget.formatWeight(photo.weightKg!),
+                                      style: TextStyle(
+                                        color: c.textPrimary,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: -0.3,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              if (photo.caption.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  photo.caption,
+                                  style: TextStyle(
+                                    color: c.textSecondary,
+                                    fontSize: 13.5,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1724,41 +1845,6 @@ class _ViewerPhotoImageState extends State<_ViewerPhotoImage> {
           height: double.infinity,
         );
       },
-    );
-  }
-}
-
-class _ViewerGlassButton extends StatelessWidget {
-  final Widget icon;
-  final VoidCallback onTap;
-
-  const _ViewerGlassButton({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
-      child: ClipOval(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.42),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.16),
-              ),
-            ),
-            child: Center(child: icon),
-          ),
-        ),
-      ),
     );
   }
 }

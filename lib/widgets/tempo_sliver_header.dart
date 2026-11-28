@@ -79,13 +79,10 @@ class TempoHeaderAction {
   });
 }
 
-/// Circular optical Liquid Glass icon button with dual-lobe specular rim,
-/// curved top meniscus sheen, and BitChord droplet squish-and-spring physics.
-///
-/// Uses local-space `ImageFilter.blur` rather than screen-space shader rects so
-/// buttons inside `CustomScrollView` lists (e.g. Workout Search, Profile Edit)
-/// and sliding `CupertinoPageRoute` headers track movement with 0px lag and
-/// never leave a ghost circle behind when scrolled.
+/// Circular BitChord-calibrated Liquid Glass icon button with crystal-clear
+/// translucent blur (`sigma = 8.5`), optional live circular dome refraction
+/// (enabled on pinned header controls once route transitions settle), jewel-crisp
+/// 45° specular glass rim, and droplet squish-and-spring press physics.
 class TempoGlassCircleButton extends StatefulWidget {
   final Widget icon;
   final VoidCallback onPressed;
@@ -94,6 +91,7 @@ class TempoGlassCircleButton extends StatefulWidget {
   final String? tooltip;
   final Color? tintColor;
   final bool enableBlur;
+  final bool enableRefraction;
 
   const TempoGlassCircleButton({
     super.key,
@@ -104,6 +102,7 @@ class TempoGlassCircleButton extends StatefulWidget {
     this.tooltip,
     this.tintColor,
     this.enableBlur = true,
+    this.enableRefraction = false,
   });
 
   @override
@@ -112,65 +111,83 @@ class TempoGlassCircleButton extends StatefulWidget {
 
 class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
   bool _pressed = false;
+  Animation<double>? _routeAnim;
+  bool _routeSettled = true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final nextAnim = ModalRoute.of(context)?.animation;
+    if (!identical(_routeAnim, nextAnim)) {
+      _routeAnim?.removeStatusListener(_onRouteStatus);
+      _routeAnim = nextAnim;
+      _routeAnim?.addStatusListener(_onRouteStatus);
+      _routeSettled = _routeAnim == null ||
+          _routeAnim!.status == AnimationStatus.completed;
+    }
+  }
+
+  void _onRouteStatus(AnimationStatus status) {
+    final settled = status == AnimationStatus.completed;
+    if (settled != _routeSettled && mounted) {
+      setState(() => _routeSettled = settled);
+    }
+  }
+
+  @override
+  void dispose() {
+    _routeAnim?.removeStatusListener(_onRouteStatus);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final isDark = c.isDark;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
     final appearance = TempoAppearanceService.instance.value;
     final useBlur = widget.enableBlur && appearance.allowDynamicBlur;
     final useRim = appearance.useLiquidGlass;
+    final useLens = widget.enableRefraction &&
+        useBlur &&
+        appearance.useGlassRefraction &&
+        _routeSettled;
     final scrollBoost = widget.glassOpacity.clamp(0.0, 1.0);
-    final rimIntensity = _pressed ? 1.25 : (0.98 + 0.14 * scrollBoost);
-    final shadowAlpha = (isDark ? 0.40 : 0.095) * (0.88 + 0.12 * scrollBoost);
+    final rimIntensity = _pressed ? 1.30 : (1.08 + 0.10 * scrollBoost);
+    final shadowAlpha = (isDark ? 0.36 : 0.085) * (0.88 + 0.12 * scrollBoost);
+    // BitChord LiquidGlass.kt calibration: transparent lively blur (8.5 dp)
+    // so colors behind glow right through the circle; 14 dp under Better Perf.
     final blurSigma = _pressed
-        ? 18.0
-        : (appearance.betterGlassPerformance
-            ? 12.0
-            : (14.0 + 3.0 * scrollBoost));
+        ? 11.5
+        : (appearance.betterGlassPerformance ? 14.0 : 8.5);
 
     final innerFill = AnimatedContainer(
       duration: const Duration(milliseconds: 140),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: !useBlur ? c.card : null,
-        border: !useRim ? Border.all(color: c.cardBorder, width: 0.8) : null,
-        gradient: !useBlur
-            ? null
+        color: !useBlur
+            ? c.card
             : (widget.tintColor != null
-                ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      widget.tintColor!.withValues(
-                        alpha: isDark
-                            ? (_pressed ? 0.36 : 0.24)
-                            : (_pressed ? 0.24 : 0.15),
-                      ),
-                      widget.tintColor!.withValues(
-                        alpha: isDark
-                            ? (_pressed ? 0.24 : 0.14)
-                            : (_pressed ? 0.16 : 0.09),
-                      ),
-                    ],
+                ? widget.tintColor!.withValues(
+                    alpha: isDark
+                        ? (_pressed ? 0.34 : 0.24)
+                        : (_pressed ? 0.24 : 0.16),
                   )
-                : LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: isDark
-                        ? [
-                            const Color(0xFF363842)
-                                .withValues(alpha: _pressed ? 0.84 : 0.72),
-                            const Color(0xFF17181E)
-                                .withValues(alpha: _pressed ? 0.88 : 0.76),
-                          ]
-                        : [
-                            Colors.white
-                                .withValues(alpha: _pressed ? 0.88 : 0.78),
-                            const Color(0xFFF3F5FA)
-                                .withValues(alpha: _pressed ? 0.78 : 0.68),
-                          ],
-                  )),
+                : (isDark
+                    ? const Color(0xFF121212)
+                        .withValues(alpha: _pressed ? 0.40 : 0.28)
+                    : const Color(0xFFFAFAFA)
+                        .withValues(alpha: _pressed ? 0.44 : 0.34))),
+        border: Border.all(
+          color: useRim
+              ? (widget.tintColor != null
+                  ? widget.tintColor!.withValues(alpha: isDark ? 0.40 : 0.30)
+                  : (isDark
+                      ? Colors.white.withValues(alpha: 0.16)
+                      : Colors.white.withValues(alpha: 0.68)))
+              : c.cardBorder,
+          width: useRim ? 0.6 : 0.8,
+        ),
       ),
       child: Center(child: widget.icon),
     );
@@ -181,12 +198,38 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
               borderRadius: widget.size / 2,
               isDark: isDark,
               intensity: rimIntensity,
-              strokeWidth: 1.2,
+              strokeWidth: 1.25,
+              showTopMeniscus: false,
               tintColor: widget.tintColor,
             ),
             child: innerFill,
           )
         : innerFill;
+
+    final refractedChild = useLens
+        ? BitChordGlassLensBox(
+            program: TempoLiquidShaderCache.program,
+            isDark: isDark,
+            dpr: dpr,
+            useRefractionShader: true,
+            frameBuilder: (sz) {
+              if (sz.isEmpty) return BitChordLensFrame.inactive;
+              return BitChordLensFrame(
+                active: true,
+                rect: Offset.zero & sz,
+                borderRadius: sz.shortestSide * 0.5,
+                refractionHeightDp: 9.0,
+                refractionAmountDp: 11.0,
+                depthEffect: 0.45,
+                aberration: 0.55,
+                rimAlpha: 0.35,
+                shadowAlpha: 0.0,
+                material: 1.0,
+              );
+            },
+            child: glassInner,
+          )
+        : glassInner;
 
     Widget btn = GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -214,31 +257,37 @@ class _TempoGlassCircleButtonState extends State<TempoGlassCircleButton> {
         child: SizedBox(
           width: widget.size,
           height: widget.size,
-          child: Container(
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: widget.tintColor != null
-                      ? widget.tintColor!
-                          .withValues(alpha: _pressed ? 0.28 : 0.18)
-                      : Colors.black.withValues(alpha: shadowAlpha),
-                  blurRadius: _pressed ? 18 : 14,
-                  spreadRadius: -2,
-                  offset: Offset(0, _pressed ? 3 : 5),
-                ),
-              ],
-            ),
-            child: ClipOval(
-              child: useBlur
-                  ? BackdropFilter(
-                      filter: ui.ImageFilter.blur(
-                        sigmaX: blurSigma,
-                        sigmaY: blurSigma,
-                      ),
-                      child: glassInner,
-                    )
-                  : glassInner,
+          child: TempoTouchLightEffect(
+            borderRadius: widget.size * 0.5,
+            isAccentSurface: widget.tintColor != null,
+            intensity: 1.08,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: widget.tintColor != null
+                        ? widget.tintColor!
+                            .withValues(alpha: _pressed ? 0.28 : 0.18)
+                        : Colors.black.withValues(alpha: shadowAlpha),
+                    blurRadius: _pressed ? 18 : 14,
+                    spreadRadius: -2,
+                    offset: Offset(0, _pressed ? 3 : 5),
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: useBlur
+                    ? BackdropFilter(
+                        filter: ui.ImageFilter.blur(
+                          sigmaX: blurSigma,
+                          sigmaY: blurSigma,
+                          tileMode: ui.TileMode.clamp,
+                        ),
+                        child: refractedChild,
+                      )
+                    : glassInner,
+              ),
             ),
           ),
         ),
@@ -370,9 +419,10 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
     final largeTitleOpacity = (1.0 - (rawT / 0.55)).clamp(0.0, 1.0);
     final compactTitleOpacity = ((rawT - 0.50) / 0.40).clamp(0.0, 1.0);
 
-    // Circular glass bubbles fade in cleanly as user scrolls up
+    // Circular glass bubbles & borderless faded frosted blur ramp in smoothly
     final glassOpacity = ((rawT - 0.15) / 0.65).clamp(0.0, 1.0);
-    final barScrimOpacity = ((rawT - 0.20) / 0.72).clamp(0.0, 1.0);
+    final barScrimOpacity = ((rawT - 0.18) / 0.65).clamp(0.0, 1.0);
+    final frostT = Curves.easeOutCubic.transform(barScrimOpacity);
 
     final sideClearance = (actions.length * 48.0 + 20.0).clamp(68.0, 140.0);
 
@@ -381,25 +431,25 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
         fit: StackFit.expand,
         clipBehavior: Clip.none,
         children: [
-          // Seamless single-pass continuous progressive blur + scaffold mist
-          // extending slightly below the toolbar and decaying to exact 0.0 px
-          // blur before its bottom edge (zero hard horizontal cut seam!).
-          if (barScrimOpacity > 0.01)
+          // Borderless 2-pass separable 625-tap Gaussian faded frosted blur
+          // matching BitChord's TopFadeBlur (zero border line, melts invisibly
+          // into crisp content 20 dp below the toolbar!).
+          if (frostT > 0.01)
             Positioned(
               top: 0,
               left: 0,
               right: 0,
-              bottom: -18,
+              bottom: -20,
               child: IgnorePointer(
-                child: ProgressiveBlurBackdrop(
-                  program: TempoLiquidShaderCache.progressiveBlurProgram,
-                  strength: barScrimOpacity,
-                  maxBlurDp: betterGlassPerformance ? 10.5 : 16.0,
+                child: FrostedFadeBlurBackdrop(
+                  program: TempoLiquidShaderCache.frostedFadeBlurProgram,
+                  strength: frostT,
+                  maxRadiusDp: betterGlassPerformance ? 9.5 : 15.0,
                   scrimColor: c.scaffold,
-                  scrimAlpha: c.isDark ? 0.74 : 0.80,
-                  softKnee: 0.44,
+                  scrimAlpha: c.isDark ? 0.50 : 0.56,
+                  softKnee: 0.34,
                   dpr: dpr,
-                  enableProgressiveBlur: progressiveBlur,
+                  enableFrostedBlur: progressiveBlur,
                 ),
               ),
             ),
@@ -470,6 +520,7 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
                 if (showBackButton)
                   TempoGlassCircleButton(
                     glassOpacity: glassOpacity,
+                    enableRefraction: true,
                     tooltip: 'Back',
                     onPressed: onBack,
                     icon: TempoBackChevron(color: c.textPrimary, size: 22),
@@ -480,6 +531,7 @@ class _TempoSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
                   TempoGlassCircleButton(
                     key: actions[i].buttonKey,
                     glassOpacity: glassOpacity,
+                    enableRefraction: true,
                     tooltip: actions[i].tooltip,
                     onPressed: actions[i].onPressed,
                     icon: actions[i].icon,

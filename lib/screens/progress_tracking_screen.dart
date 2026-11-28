@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/cupertino.dart';
@@ -17,6 +16,7 @@ import '../services/tempo_rust_db.dart';
 import '../services/weight_unit_helper.dart';
 import '../services/workout_history_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bitchord_segmented_slider.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/streak_heatmap_card.dart';
 import '../widgets/tempo_jigg_icon.dart';
@@ -227,13 +227,16 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
     );
     return AnimatedBuilder(
       animation: anim,
-      builder: (context, c) => Opacity(
-        opacity: anim.value,
-        child: Transform.translate(
-          offset: Offset(0, 18 * (1.0 - anim.value)),
-          child: c,
-        ),
-      ),
+      builder: (context, c) {
+        if (anim.value >= 0.999) return c!;
+        return Opacity(
+          opacity: anim.value,
+          child: Transform.translate(
+            offset: Offset(0, 18 * (1.0 - anim.value)),
+            child: c,
+          ),
+        );
+      },
       child: child,
     );
   }
@@ -348,7 +351,7 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                         ),
                         const SizedBox(height: 14),
 
-                        // 3. 2-Column Bento Highlights (Top Lift PR + Private Photo Album Preview)
+                        // 3. Overhauled 2-Column Liquid Glass Bento Highlights
                         _stagger(
                           2,
                           Row(
@@ -374,7 +377,7 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                                       await pushTempoMorphRoute<void>(
                                         context: context,
                                         sourceContext: cardCtx,
-                                        sourceBorderRadius: 22,
+                                        sourceBorderRadius: 26,
                                         builder: (_) =>
                                             const ProgressAlbumScreen(),
                                       );
@@ -386,40 +389,88 @@ class _ProgressTrackingScreenState extends State<ProgressTrackingScreen>
                             ],
                           ),
                         ),
-                        const SizedBox(height: 22),
+                        const SizedBox(height: 24),
 
-                        // 4. iOS 27 Liquid Glass Sliding Segmented Control
+                        // 4. Training Records Hub Header & Liquid Glass Segmented Slider
                         _stagger(
                           3,
-                          _LiquidGlassSegmentBar(
-                            selectedIndex: _selectedSegment,
-                            labels: [
-                              'Exercise PRs (${_records.length})',
-                              'Sessions (${_workoutHistory.length})',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      'Training Records',
+                                      style: TextStyle(
+                                        color: c.textPrimary,
+                                        fontSize: 18.5,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: -0.3,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: c.accent.withValues(
+                                          alpha: c.isDark ? 0.18 : 0.11,
+                                        ),
+                                        borderRadius: BorderRadius.circular(99),
+                                      ),
+                                      child: Text(
+                                        _selectedSegment == 0
+                                            ? '${_records.length} ${_records.length == 1 ? 'record' : 'records'}'
+                                            : '${_workoutHistory.where((w) => !w.isCheated).length} verified',
+                                        style: TextStyle(
+                                          color: c.accent,
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w700,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              BitChordSegmentedSlider(
+                                height: 46,
+                                showTrackBorder: true,
+                                selectedIndex: _selectedSegment,
+                                labels: [
+                                  'Exercise PRs (${_records.length})',
+                                  'Sessions (${_workoutHistory.length})',
+                                ],
+                                onChanged: (idx) {
+                                  setState(() {
+                                    _selectedSegment = idx;
+                                    _expandedCardIndex = null;
+                                  });
+                                },
+                              ),
                             ],
-                            onChanged: (idx) {
-                              HapticFeedback.selectionClick();
-                              setState(() {
-                                _selectedSegment = idx;
-                                _expandedCardIndex = null;
-                              });
-                            },
                           ),
                         ),
                         const SizedBox(height: 14),
 
-                        // 5. Animated Tab Body (Exercise PRs or Session Timeline)
+                        // 5. Animated Tab Body (Exercise PRs or Verified Session Timeline)
                         AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 280),
+                          duration: const Duration(milliseconds: 240),
                           switchInCurve: Curves.easeOutCubic,
                           switchOutCurve: Curves.easeInCubic,
-                          transitionBuilder: (child, anim) => FadeTransition(
-                            opacity: anim,
-                            child: SlideTransition(
-                              position: Tween<Offset>(
-                                begin: const Offset(0, 0.04),
-                                end: Offset.zero,
-                              ).animate(anim),
+                          transitionBuilder: (child, anim) => SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0, 0.03),
+                              end: Offset.zero,
+                            ).animate(anim),
+                            child: FadeTransition(
+                              opacity: anim,
                               child: child,
                             ),
                           ),
@@ -890,50 +941,17 @@ class _ActivityTrendCard extends StatelessWidget {
                   ],
                 ),
               ),
-              // Compact sliding timeframe pill (7D / 14D / 30D)
-              Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: c.searchBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: List.generate(rangeLabels.length, (i) {
-                    final sel = i == rangeIndex;
-                    return GestureDetector(
-                      onTap: () => onRangeChanged(i),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: sel ? c.card : Colors.transparent,
-                          borderRadius: BorderRadius.circular(9),
-                          boxShadow: sel && !c.isDark
-                              ? [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.06),
-                                    blurRadius: 6,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Text(
-                          rangeLabels[i],
-                          style: TextStyle(
-                            color: sel ? c.textPrimary : c.textTertiary,
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
+              // Compact BitChord Liquid Glass timeframe slider (7D / 14D / 30D)
+              SizedBox(
+                width: 126,
+                child: BitChordSegmentedSlider(
+                  height: 30,
+                  fontSize: 11.5,
+                  labels: rangeLabels,
+                  selectedIndex: rangeIndex,
+                  trackColor: c.searchBg,
+                  thumbColor: c.isDark ? const Color(0xFF2E3038) : c.card,
+                  onChanged: onRangeChanged,
                 ),
               ),
             ],
@@ -1109,77 +1127,101 @@ class _TopLiftBentoCard extends StatelessWidget {
     final weightKg = highestWeight?.weightUsed ?? 0.0;
     final displayWeight = WeightUnitHelper.toDisplay(weightKg, weightUnit);
 
-    return _TactileScaleCard(
+    return LiquidGlassSurface(
+      borderRadius: 26,
+      blurEnabled: false,
+      padding: const EdgeInsets.all(16),
       onTap: onTap,
-      child: AppleCard(
-        borderRadius: 24,
-        padding: const EdgeInsets.all(16),
-        child: SizedBox(
-          height: 112,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    CupertinoIcons.chart_bar,
-                    color: c.textPrimary,
+      child: SizedBox(
+        height: 128,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.13),
+                  ),
+                  child: Icon(
+                    CupertinoIcons.rosette,
+                    color: c.accent,
                     size: 16,
                   ),
-                  const SizedBox(width: 6),
-                  Expanded(
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Top Lift',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.1,
+                    ),
+                  ),
+                ),
+                Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 13,
+                  color: c.textTertiary,
+                ),
+              ],
+            ),
+            const Spacer(),
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0, end: displayWeight),
+              duration: const Duration(milliseconds: 650),
+              curve: Curves.easeOutCubic,
+              builder: (_, val, __) => Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Flexible(
                     child: Text(
-                      'Top Lift',
+                      weightKg > 0 ? val.toStringAsFixed(1) : '--',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: c.textSecondary,
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.1,
+                        color: c.textPrimary,
+                        fontSize: 27,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.9,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                   ),
-                  Icon(
-                    CupertinoIcons.chevron_right,
-                    size: 13,
-                    color: c.textTertiary,
+                  const SizedBox(width: 4),
+                  Text(
+                    weightUnit,
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
-              const Spacer(),
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0, end: displayWeight),
-                duration: const Duration(milliseconds: 650),
-                curve: Curves.easeOutCubic,
-                builder: (_, val, __) => Text(
-                  weightKg > 0
-                      ? '${val.toStringAsFixed(1)} $weightUnit'
-                      : '-- $weightUnit',
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.7,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              highestWeight != null && weightKg > 0
+                  ? highestWeight!.exerciseName
+                  : 'Log weighted sets',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.textTertiary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
               ),
-              const SizedBox(height: 3),
-              Text(
-                highestWeight != null && weightKg > 0
-                    ? highestWeight!.exerciseName
-                    : 'Log weighted sets',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: c.textTertiary,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1205,223 +1247,213 @@ class _PhotoAlbumBentoCard extends StatelessWidget {
         latestPhotoPath!.isNotEmpty &&
         File(latestPhotoPath!).existsSync();
 
-    return _TactileScaleCard(
-      onTap: onTap,
-      child: hasThumb
-          ? Container(
-              height: 144,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: c.cardBorder),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
+    if (hasThumb) {
+      return _TactileScaleCard(
+        onTap: onTap,
+        child: TempoTouchLightEffect(
+          borderRadius: 26,
+          emitLight: true,
+          receiveScatter: true,
+          intensity: 0.9,
+          child: Container(
+            height: 160,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: c.isDark ? 0.34 : 0.10),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(26),
+              child: CustomPaint(
+                foregroundPainter: LiquidGlassRimPainter(
+                  borderRadius: 26,
+                  isDark: true,
+                  intensity: 0.95,
+                  strokeWidth: 1.2,
+                  showTopMeniscus: false,
+                ),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
                     Image.file(File(latestPhotoPath!), fit: BoxFit.cover),
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.black.withValues(alpha: 0.05),
-                            Colors.black.withValues(alpha: 0.72),
-                          ],
+                    Positioned(
+                      top: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.52),
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.24),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Text(
+                          '$photoCount ${photoCount == 1 ? 'photo' : 'photos'}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
                         ),
                       ),
                     ),
                     Positioned(
-                      left: 14,
-                      right: 14,
-                      bottom: 14,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Photo Album',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          Text(
-                            '$photoCount private ${photoCount == 1 ? 'photo' : 'photos'}',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          : AppleCard(
-              borderRadius: 24,
-              padding: const EdgeInsets.all(16),
-              child: SizedBox(
-                height: 112,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          CupertinoIcons.photo_on_rectangle,
-                          color: c.textPrimary,
-                          size: 16,
+                      left: 10,
+                      right: 10,
+                      bottom: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 9,
                         ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'Photos',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: c.textSecondary,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: -0.1,
-                            ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.56),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.22),
+                            width: 0.8,
                           ),
                         ),
-                        Icon(
-                          CupertinoIcons.chevron_right,
-                          size: 13,
-                          color: c.textTertiary,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Photo Album',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              'Private on-device album',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.78),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    const Spacer(),
-                    Text(
-                      '$photoCount ${photoCount == 1 ? 'photo' : 'photos'}',
-                      style: TextStyle(
-                        color: c.textPrimary,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.7,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'On-device album',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: c.textTertiary,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-    );
-  }
-}
+          ),
+        ),
+      );
+    }
 
-/// iOS 27 Liquid Glass sliding segmented control with spring-gliding glass pill.
-class _LiquidGlassSegmentBar extends StatelessWidget {
-  final int selectedIndex;
-  final List<String> labels;
-  final ValueChanged<int> onChanged;
-
-  const _LiquidGlassSegmentBar({
-    required this.selectedIndex,
-    required this.labels,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return Container(
-      height: 46,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: c.isDark
-            ? const Color(0xFF1C1C1E)
-            : Colors.black.withValues(alpha: 0.055),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: c.cardBorder),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final segW = constraints.maxWidth / labels.length;
-          return Stack(
-            children: [
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.easeOutCubic,
-                left: selectedIndex * segW,
-                top: 0,
-                bottom: 0,
-                width: segW,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: c.card,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: c.isDark
-                              ? Colors.white.withValues(alpha: 0.14)
-                              : Colors.white,
-                        ),
-                        boxShadow: c.isDark
-                            ? null
-                            : [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.07),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                      ),
+    return LiquidGlassSurface(
+      borderRadius: 26,
+      blurEnabled: false,
+      padding: const EdgeInsets.all(16),
+      onTap: onTap,
+      child: SizedBox(
+        height: 128,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF56B7FF)
+                        .withValues(alpha: c.isDark ? 0.22 : 0.14),
+                  ),
+                  child: const Icon(
+                    CupertinoIcons.photo_on_rectangle,
+                    color: Color(0xFF56B7FF),
+                    size: 15,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Photos',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.1,
                     ),
                   ),
                 ),
+                Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 13,
+                  color: c.textTertiary,
+                ),
+              ],
+            ),
+            const Spacer(),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  '$photoCount',
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 27,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.9,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  photoCount == 1 ? 'photo' : 'photos',
+                  style: TextStyle(
+                    color: c.textSecondary,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            Text(
+              'Private on-device album',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.textTertiary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
               ),
-              Row(
-                children: List.generate(labels.length, (i) {
-                  final sel = i == selectedIndex;
-                  return Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onChanged(i),
-                      child: Center(
-                        child: AnimatedDefaultTextStyle(
-                          duration: const Duration(milliseconds: 200),
-                          style: TextStyle(
-                            color: sel ? c.textPrimary : c.textSecondary,
-                            fontSize: 13.5,
-                            fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
-                          ),
-                          child: Text(labels[i]),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ],
-          );
-        },
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _AnimatedFilterChip extends StatelessWidget {
+class _AnimatedFilterChip extends StatefulWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -1433,29 +1465,62 @@ class _AnimatedFilterChip extends StatelessWidget {
   });
 
   @override
+  State<_AnimatedFilterChip> createState() => _AnimatedFilterChipState();
+}
+
+class _AnimatedFilterChipState extends State<_AnimatedFilterChip> {
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.94 : 1.0,
+        duration: const Duration(milliseconds: 110),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? c.textPrimary : c.card,
-          borderRadius: BorderRadius.circular(99),
-          border: Border.all(
-            color: selected ? c.textPrimary : c.cardBorder,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected
-                ? (c.isDark ? Colors.black : Colors.white)
-                : c.textPrimary,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
+        child: TempoTouchLightEffect(
+          borderRadius: 999,
+          isAccentSurface: widget.selected,
+          emitLight: true,
+          receiveScatter: true,
+          cancelOnScroll: true,
+          intensity: 0.92,
+          child: CustomPaint(
+            foregroundPainter: LiquidGlassRimPainter(
+              borderRadius: 999,
+              isDark: c.isDark,
+              intensity: widget.selected ? 1.05 : 0.78,
+              strokeWidth: 1.0,
+              showTopMeniscus: false,
+              tintColor: widget.selected ? c.accent : null,
+            ),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
+              decoration: BoxDecoration(
+                color: widget.selected
+                    ? c.accent
+                    : (c.isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.white.withValues(alpha: 0.82)),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  color: widget.selected ? Colors.white : c.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -1484,15 +1549,18 @@ class _ExpandableExerciseCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final ratio = record.weightUsed > 0
-        ? (record.weightUsed / maxWeight).clamp(0.12, 1.0)
+        ? (record.weightUsed / maxWeight).clamp(0.14, 1.0)
         : 0.35;
     final estVolumeKg =
         record.weightUsed * record.setsPerformed * record.repsPerformed;
     final estVolumeDisplay =
         WeightUnitHelper.toDisplay(estVolumeKg, weightUnit);
+    final focusText =
+        record.bodyFocus.isNotEmpty ? record.bodyFocus : 'Workout';
 
-    return AppleCard(
-      borderRadius: 20,
+    return LiquidGlassSurface(
+      borderRadius: 22,
+      blurEnabled: false,
       padding: const EdgeInsets.all(15),
       onTap: onTap,
       child: AnimatedSize(
@@ -1504,6 +1572,24 @@ class _ExpandableExerciseCard extends StatelessWidget {
           children: [
             Row(
               children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isTopPr
+                        ? c.accent.withValues(alpha: c.isDark ? 0.24 : 0.14)
+                        : (c.isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.05)),
+                  ),
+                  child: Icon(
+                    isTopPr ? CupertinoIcons.rosette : CupertinoIcons.bolt_fill,
+                    color: isTopPr ? c.accent : c.textSecondary,
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1519,6 +1605,7 @@ class _ExpandableExerciseCard extends StatelessWidget {
                                 color: c.textPrimary,
                                 fontSize: 15.5,
                                 fontWeight: FontWeight.w700,
+                                letterSpacing: -0.2,
                               ),
                             ),
                           ),
@@ -1526,21 +1613,21 @@ class _ExpandableExerciseCard extends StatelessWidget {
                             const SizedBox(width: 7),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 1.5,
+                                horizontal: 7,
+                                vertical: 2,
                               ),
                               decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: c.textPrimary.withValues(alpha: 0.28),
+                                color: c.accent.withValues(
+                                  alpha: c.isDark ? 0.24 : 0.14,
                                 ),
-                                borderRadius: BorderRadius.circular(5),
+                                borderRadius: BorderRadius.circular(99),
                               ),
                               child: Text(
-                                'PR',
+                                'TOP PR',
                                 style: TextStyle(
-                                  color: c.textPrimary,
+                                  color: c.accent,
                                   fontSize: 9.5,
-                                  fontWeight: FontWeight.w700,
+                                  fontWeight: FontWeight.w800,
                                   letterSpacing: 0.4,
                                 ),
                               ),
@@ -1548,42 +1635,79 @@ class _ExpandableExerciseCard extends StatelessWidget {
                           ],
                         ],
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        '${record.bodyFocus.isNotEmpty ? record.bodyFocus : 'Workout'} · ${record.setsPerformed} × ${record.repsPerformed} reps',
-                        style: TextStyle(
-                          color: c.textSecondary,
-                          fontSize: 12.5,
-                        ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Text(
+                            focusText,
+                            style: TextStyle(
+                              color: c.textSecondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 1.5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: c.isDark
+                                  ? Colors.white.withValues(alpha: 0.07)
+                                  : Colors.black.withValues(alpha: 0.045),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: Text(
+                              '${record.setsPerformed} × ${record.repsPerformed} reps',
+                              style: TextStyle(
+                                color: c.textSecondary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  record.weightUsed > 0
-                      ? WeightUnitHelper.format(record.weightUsed, weightUnit)
-                      : 'Bodyweight',
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 15.5,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(width: 6),
-                AnimatedRotation(
-                  turns: isExpanded ? 0.5 : 0.0,
-                  duration: const Duration(milliseconds: 220),
-                  child: Icon(
-                    CupertinoIcons.chevron_down,
-                    size: 14,
-                    color: c.textTertiary,
-                  ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      record.weightUsed > 0
+                          ? WeightUnitHelper.format(
+                              record.weightUsed,
+                              weightUnit,
+                            )
+                          : 'Bodyweight',
+                      style: TextStyle(
+                        color: isTopPr ? c.accent : c.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    AnimatedRotation(
+                      turns: isExpanded ? 0.5 : 0.0,
+                      duration: const Duration(milliseconds: 220),
+                      child: Icon(
+                        CupertinoIcons.chevron_down,
+                        size: 13,
+                        color: c.textTertiary,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 11),
             ClipRRect(
               borderRadius: BorderRadius.circular(99),
               child: TweenAnimationBuilder<double>(
@@ -1592,40 +1716,46 @@ class _ExpandableExerciseCard extends StatelessWidget {
                 curve: Curves.easeOutCubic,
                 builder: (_, v, __) => LinearProgressIndicator(
                   value: v,
-                  minHeight: 3.5,
+                  minHeight: 4.5,
                   backgroundColor: c.divider,
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    isTopPr ? c.textPrimary : c.accent,
+                    isTopPr ? c.accent : c.accent.withValues(alpha: 0.65),
                   ),
                 ),
               ),
             ),
             if (isExpanded) ...[
               const SizedBox(height: 12),
-              Divider(height: 1, color: c.divider),
-              const SizedBox(height: 10),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _detailPair(
-                    'Date',
-                    record.timestamp != null
-                        ? DateFormat('MMM d, h:mm a')
-                            .format(record.timestamp!.toLocal())
-                        : 'Recent',
-                    c,
+                  Expanded(
+                    child: _RecessedStatTile(
+                      label: 'Date',
+                      value: record.timestamp != null
+                          ? DateFormat('MMM d')
+                              .format(record.timestamp!.toLocal())
+                          : 'Recent',
+                      c: c,
+                    ),
                   ),
-                  _detailPair(
-                    'Volume',
-                    estVolumeKg > 0
-                        ? '${estVolumeDisplay.toStringAsFixed(0)} $weightUnit'
-                        : '${record.setsPerformed * record.repsPerformed} reps',
-                    c,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _RecessedStatTile(
+                      label: 'Volume',
+                      value: estVolumeKg > 0
+                          ? '${estVolumeDisplay.toStringAsFixed(0)} $weightUnit'
+                          : '${record.setsPerformed * record.repsPerformed} reps',
+                      c: c,
+                    ),
                   ),
-                  _detailPair(
-                    'Level',
-                    record.level.isNotEmpty ? record.level : 'Standard',
-                    c,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _RecessedStatTile(
+                      label: 'Level',
+                      value:
+                          record.level.isNotEmpty ? record.level : 'Standard',
+                      c: c,
+                    ),
                   ),
                 ],
               ),
@@ -1633,27 +1763,6 @@ class _ExpandableExerciseCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _detailPair(String label, String val, AppColors c) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(color: c.textTertiary, fontSize: 11),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          val,
-          style: TextStyle(
-            color: c.textPrimary,
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
     );
   }
 }
@@ -1673,10 +1782,14 @@ class _ExpandableSessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final mins = (item.actualDuration / 60).ceil().clamp(1, 300);
+    final isVerified = !item.isCheated;
+    final statusColor =
+        isVerified ? const Color(0xFF34C759) : c.textSecondary;
 
-    return AppleCard(
-      borderRadius: 20,
-      padding: const EdgeInsets.all(15),
+    return LiquidGlassSurface(
+      borderRadius: 22,
+      blurEnabled: false,
+      padding: const EdgeInsets.all(14),
       onTap: onTap,
       child: AnimatedSize(
         duration: const Duration(milliseconds: 240),
@@ -1686,19 +1799,28 @@ class _ExpandableSessionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                SizedBox(
-                  width: 38,
+                Container(
+                  width: 44,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: isVerified
+                        ? c.accent.withValues(alpha: c.isDark ? 0.20 : 0.11)
+                        : (c.isDark
+                            ? Colors.white.withValues(alpha: 0.07)
+                            : Colors.black.withValues(alpha: 0.045)),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         DateFormat('MMM')
                             .format(item.completedAt.toLocal())
                             .toUpperCase(),
                         style: TextStyle(
-                          color: c.textTertiary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
+                          color: isVerified ? c.accent : c.textTertiary,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
                           letterSpacing: 0.4,
                         ),
                       ),
@@ -1706,21 +1828,16 @@ class _ExpandableSessionCard extends StatelessWidget {
                         DateFormat('d').format(item.completedAt.toLocal()),
                         style: TextStyle(
                           color: c.textPrimary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          height: 1.15,
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
                           fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
                     ],
                   ),
                 ),
-                Container(
-                  width: 1,
-                  height: 30,
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  color: c.divider,
-                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1733,25 +1850,69 @@ class _ExpandableSessionCard extends StatelessWidget {
                           color: c.textPrimary,
                           fontSize: 15.5,
                           fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '$mins min · ${DateFormat('h:mm a').format(item.completedAt.toLocal())}',
-                        style: TextStyle(
-                          color: c.textSecondary,
-                          fontSize: 12.5,
-                        ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusColor.withValues(
+                                alpha: c.isDark ? 0.20 : 0.12,
+                              ),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: Text(
+                              isVerified ? 'Verified' : 'Ended early',
+                              style: TextStyle(
+                                color: statusColor,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '$mins min',
+                            style: TextStyle(
+                              color: c.textSecondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              DateFormat('h:mm a')
+                                  .format(item.completedAt.toLocal()),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: c.textTertiary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 6),
                 AnimatedRotation(
                   turns: isExpanded ? 0.5 : 0.0,
                   duration: const Duration(milliseconds: 220),
                   child: Icon(
                     CupertinoIcons.chevron_down,
-                    size: 14,
+                    size: 13.5,
                     color: c.textTertiary,
                   ),
                 ),
@@ -1759,25 +1920,30 @@ class _ExpandableSessionCard extends StatelessWidget {
             ),
             if (isExpanded) ...[
               const SizedBox(height: 12),
-              Divider(height: 1, color: c.divider),
-              const SizedBox(height: 10),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'Focus: ${item.workout.bodyFocus}',
-                    style: TextStyle(
-                      color: c.textSecondary,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: _RecessedStatTile(
+                      label: 'Focus',
+                      value: item.workout.bodyFocus,
+                      c: c,
                     ),
                   ),
-                  Text(
-                    'Level: ${item.workout.level}',
-                    style: TextStyle(
-                      color: c.accent,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _RecessedStatTile(
+                      label: 'Level',
+                      value: item.workout.level,
+                      accent: true,
+                      c: c,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _RecessedStatTile(
+                      label: 'Status',
+                      value: isVerified ? 'Verified' : 'Partial',
+                      c: c,
                     ),
                   ),
                 ],
@@ -1785,6 +1951,58 @@ class _ExpandableSessionCard extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _RecessedStatTile extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool accent;
+  final AppColors c;
+
+  const _RecessedStatTile({
+    required this.label,
+    required this.value,
+    required this.c,
+    this.accent = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.isDark
+            ? Colors.white.withValues(alpha: 0.055)
+            : Colors.black.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: c.textTertiary,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: accent ? c.accent : c.textPrimary,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1805,22 +2023,32 @@ class _EmptyProgressCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return AppleCard(
-      borderRadius: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 26),
+    return LiquidGlassSurface(
+      borderRadius: 26,
+      blurEnabled: false,
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
       child: Column(
         children: [
-          Icon(icon, color: c.textTertiary, size: 28),
-          const SizedBox(height: 10),
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.accent.withValues(alpha: c.isDark ? 0.18 : 0.11),
+            ),
+            child: Icon(icon, color: c.accent, size: 24),
+          ),
+          const SizedBox(height: 12),
           Text(
             title,
             style: TextStyle(
               color: c.textPrimary,
-              fontSize: 15.5,
-              fontWeight: FontWeight.w600,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.2,
             ),
           ),
-          const SizedBox(height: 5),
+          const SizedBox(height: 6),
           Text(
             subtitle,
             textAlign: TextAlign.center,

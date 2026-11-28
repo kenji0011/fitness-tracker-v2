@@ -10,7 +10,6 @@ import 'package:provider/provider.dart';
 import '../config/app_version.dart';
 import '../models/local_profile.dart';
 import '../services/active_profile_provider.dart';
-import '../services/animation_speed_service.dart';
 import '../services/app_update_service.dart';
 import '../services/local_backup_service.dart';
 import '../services/local_media_service.dart';
@@ -19,7 +18,6 @@ import '../services/tempo_rust_db.dart';
 import '../services/weight_unit_helper.dart';
 import '../theme/app_colors.dart';
 import '../theme/theme_provider.dart';
-import '../widgets/hyperos_dropdown_menu.dart';
 import '../widgets/ios_stretch_sheet.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/pin_pad_sheet.dart';
@@ -62,10 +60,8 @@ class _MyProfileState extends State<MyProfile> {
   bool _checkingUpdates = false;
   bool _wasTickerEnabled = false;
   bool _needsRefresh = false;
-  bool _animSpeedMenuOpen = false;
   final GlobalKey _avatarHintKey = GlobalKey();
   final GlobalKey _identityHintKey = GlobalKey();
-  final GlobalKey _animSpeedRowKey = GlobalKey();
   final JiggIconController _autoUpdateJiggController = JiggIconController();
   final Map<String, JiggIconController> _settingJiggControllers = {};
 
@@ -266,56 +262,179 @@ class _MyProfileState extends State<MyProfile> {
       showDragHandle: true,
       builder: (ctx) {
         final mc = AppColors.of(ctx);
+        final bottomPad = MediaQuery.paddingOf(ctx).bottom;
         return Padding(
-          padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
+          padding: EdgeInsets.fromLTRB(20, 10, 20, bottomPad + 22),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Update profile photo',
-                style: TextStyle(
-                  color: mc.textPrimary,
-                  fontSize: 19,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                height: 48,
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: mc.accent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: mc.accent.withValues(
+                        alpha: mc.isDark ? 0.22 : 0.13,
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      CupertinoIcons.camera_fill,
+                      color: mc.accent,
+                      size: 19,
                     ),
                   ),
-                  onPressed: () => Navigator.of(ctx).pop(ImageSource.gallery),
-                  icon: const Icon(CupertinoIcons.photo_fill, size: 18),
-                  label: const Text(
-                    'Choose from gallery',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Update profile photo',
+                          style: TextStyle(
+                            color: mc.textPrimary,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Stored privately on this device',
+                          style: TextStyle(
+                            color: mc.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  TempoGlassCircleButton(
+                    size: 34,
+                    enableBlur: false,
+                    enableRefraction: false,
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    icon: Icon(
+                      CupertinoIcons.xmark,
+                      size: 15,
+                      color: mc.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              TempoLiquidButton(
+                primary: false,
+                borderRadius: 20,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                onPressed: () => Navigator.of(ctx).pop(ImageSource.gallery),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF4B9EF7),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        CupertinoIcons.photo_fill,
+                        color: Colors.white,
+                        size: 17,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Choose from gallery',
+                            style: TextStyle(
+                              color: mc.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            'Pick an existing photo and crop',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 15,
+                      color: mc.textTertiary,
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 10),
-              SizedBox(
-                height: 48,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: mc.textPrimary,
-                    side: BorderSide(color: mc.cardBorder),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+              TempoLiquidButton(
+                primary: false,
+                borderRadius: 20,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                onPressed: () => Navigator.of(ctx).pop(ImageSource.camera),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: mc.accent,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        CupertinoIcons.camera_fill,
+                        color: Colors.white,
+                        size: 17,
+                      ),
                     ),
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(ImageSource.camera),
-                  icon: const Icon(CupertinoIcons.camera_fill, size: 18),
-                  label: const Text(
-                    'Take photo',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Take photo',
+                            style: TextStyle(
+                              color: mc.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            'Capture a fresh portrait with camera',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      CupertinoIcons.chevron_right,
+                      size: 15,
+                      color: mc.textTertiary,
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -376,70 +495,180 @@ class _MyProfileState extends State<MyProfile> {
       backgroundColor: c.card,
       borderRadius: 28,
       showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          12,
-          20,
-          MediaQuery.of(ctx).viewInsets.bottom + 24,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Edit Profile & Daily Goals',
-                style: TextStyle(
-                  color: c.textPrimary,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _dialogField('Display Name', nameCtrl, c, numeric: false),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: _dialogField('Height (cm)', heightCtrl, c)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _dialogField('Weight ($_weightUnit)', weightCtrl, c),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: _dialogField('Calorie Goal', calGoalCtrl, c)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _dialogField('Minutes Goal', minGoalCtrl, c)),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _dialogField('Daily Steps Goal', stepsGoalCtrl, c),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 50,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: c.accent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+      builder: (ctx) {
+        final mc = AppColors.of(ctx);
+        final bottomInset = MediaQuery.viewInsetsOf(ctx).bottom > 0
+            ? MediaQuery.viewInsetsOf(ctx).bottom
+            : MediaQuery.paddingOf(ctx).bottom;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(20, 10, 20, bottomInset + 22),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Modal Header
+                Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: mc.accent.withValues(
+                          alpha: mc.isDark ? 0.22 : 0.13,
+                        ),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        CupertinoIcons.person_crop_circle_fill,
+                        color: mc.accent,
+                        size: 20,
+                      ),
                     ),
-                  ),
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  child: const Text(
-                    'Save Changes',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Edit Profile & Daily Goals',
+                            style: TextStyle(
+                              color: mc.textPrimary,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.35,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Personal details and daily ring targets',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12.8,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    TempoGlassCircleButton(
+                      size: 34,
+                      enableBlur: false,
+                      enableRefraction: false,
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      icon: Icon(
+                        CupertinoIcons.xmark,
+                        size: 15,
+                        color: mc.textSecondary,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 18),
+
+                // Section 1: Profile Details
+                _modalSectionLabel('PROFILE', mc),
+                _modalGroupedTray(
+                  mc,
+                  children: [
+                    _sheetInputRow(
+                      label: 'Display Name',
+                      ctrl: nameCtrl,
+                      c: mc,
+                      icon: CupertinoIcons.person_fill,
+                      badgeColor: const Color(0xFF7A6FF0),
+                      numeric: false,
+                    ),
+                    _sheetSplitRow(
+                      left: _sheetCompactField(
+                        label: 'Height',
+                        unit: 'cm',
+                        ctrl: heightCtrl,
+                        c: mc,
+                      ),
+                      right: _sheetCompactField(
+                        label: 'Weight',
+                        unit: _weightUnit,
+                        ctrl: weightCtrl,
+                        c: mc,
+                      ),
+                      c: mc,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Section 2: Daily Goals
+                _modalSectionLabel('DAILY GOALS', mc),
+                _modalGroupedTray(
+                  mc,
+                  children: [
+                    _sheetInputRow(
+                      label: 'Calories',
+                      unit: 'kcal',
+                      ctrl: calGoalCtrl,
+                      c: mc,
+                      icon: CupertinoIcons.flame_fill,
+                      badgeColor: const Color(0xFFF36432),
+                    ),
+                    _sheetInputRow(
+                      label: 'Activity time',
+                      unit: 'min',
+                      ctrl: minGoalCtrl,
+                      c: mc,
+                      icon: CupertinoIcons.clock_fill,
+                      badgeColor: const Color(0xFF56B7FF),
+                    ),
+                    _sheetInputRow(
+                      label: 'Daily steps',
+                      unit: 'steps',
+                      ctrl: stepsGoalCtrl,
+                      c: mc,
+                      icon: Icons.directions_walk_rounded,
+                      badgeColor: const Color(0xFF93DC2A),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: TempoLiquidButton(
+                        primary: false,
+                        height: 50,
+                        borderRadius: 999,
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        child: Text(
+                          'Cancel',
+                          style: TextStyle(
+                            color: mc.textPrimary,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: TempoBouncyButton(
+                        height: 50,
+                        onPressed: () {
+                          HapticFeedback.lightImpact();
+                          Navigator.of(ctx).pop(true);
+                        },
+                        child: const Text('Save Changes'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
 
     if (saved == true && mounted) {
@@ -467,32 +696,203 @@ class _MyProfileState extends State<MyProfile> {
     stepsGoalCtrl.dispose();
   }
 
-  Widget _dialogField(
-    String label,
-    TextEditingController ctrl,
+  Widget _modalSectionLabel(String text, AppColors c) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 0, 6, 7),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: c.textTertiary,
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.65,
+        ),
+      ),
+    );
+  }
+
+  Widget _modalGroupedTray(
     AppColors c, {
+    required List<Widget> children,
+  }) {
+    final items = <Widget>[];
+    for (int i = 0; i < children.length; i++) {
+      if (i > 0) {
+        items.add(
+          Divider(
+            height: 0.6,
+            thickness: 0.6,
+            indent: 14,
+            endIndent: 14,
+            color: c.divider,
+          ),
+        );
+      }
+      items.add(children[i]);
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: c.searchBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: c.isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.045),
+          width: 0.8,
+        ),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: items),
+    );
+  }
+
+  Widget _sheetInputRow({
+    required String label,
+    required TextEditingController ctrl,
+    required AppColors c,
+    required IconData icon,
+    required Color badgeColor,
+    String? unit,
     bool numeric = true,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: c.textSecondary,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: badgeColor,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: Colors.white, size: 15),
           ),
-        ),
-        const SizedBox(height: 5),
-        TextField(
-          controller: ctrl,
-          keyboardType: numeric
-              ? const TextInputType.numberWithOptions(decimal: true)
-              : TextInputType.text,
-          style: TextStyle(color: c.textPrimary),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: TextStyle(
+              color: c.textPrimary,
+              fontSize: 14.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: ctrl,
+              textAlign: TextAlign.right,
+              keyboardType: numeric
+                  ? const TextInputType.numberWithOptions(decimal: true)
+                  : TextInputType.text,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 15.5,
+                fontWeight: FontWeight.w700,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: false,
+                border: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                hintText: numeric ? '0' : 'Enter name',
+                hintStyle: TextStyle(color: c.textTertiary),
+              ),
+            ),
+          ),
+          if (unit != null) ...[
+            const SizedBox(width: 6),
+            Text(
+              unit,
+              style: TextStyle(
+                color: c.textTertiary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _sheetSplitRow({
+    required Widget left,
+    required Widget right,
+    required AppColors c,
+  }) {
+    return IntrinsicHeight(
+      child: Row(
+        children: [
+          Expanded(child: left),
+          Container(
+            width: 0.7,
+            margin: const EdgeInsets.symmetric(vertical: 10),
+            color: c.divider,
+          ),
+          Expanded(child: right),
+        ],
+      ),
+    );
+  }
+
+  Widget _sheetCompactField({
+    required String label,
+    required String unit,
+    required TextEditingController ctrl,
+    required AppColors c,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: c.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: ctrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    filled: false,
+                    border: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 2),
+                  ),
+                ),
+              ),
+              Text(
+                unit,
+                style: TextStyle(
+                  color: c.textTertiary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -562,90 +962,125 @@ class _MyProfileState extends State<MyProfile> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    'Local Backup & Restore',
-                    style: TextStyle(
-                      color: mc.textPrimary,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.3,
-                    ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: mc.accent.withValues(
+                            alpha: mc.isDark ? 0.22 : 0.13,
+                          ),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          CupertinoIcons.tray_arrow_down_fill,
+                          color: mc.accent,
+                          size: 19,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Local Backup & Restore',
+                          style: TextStyle(
+                            color: mc.textPrimary,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.35,
+                          ),
+                        ),
+                      ),
+                      TempoGlassCircleButton(
+                        size: 34,
+                        enableBlur: false,
+                        enableRefraction: false,
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: Icon(
+                          CupertinoIcons.xmark,
+                          size: 15,
+                          color: mc.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 10),
                   Text(
                     'Export your offline workouts, body metrics, hydration, and custom routines to a local JSON file on this device.',
                     style: TextStyle(
                       color: mc.textSecondary,
                       fontSize: 13.5,
-                      height: 1.35,
+                      height: 1.4,
                     ),
                   ),
                   const SizedBox(height: 16),
-                  SizedBox(
-                    height: 48,
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: mc.accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: busy
-                          ? null
-                          : () async {
-                              setSheetState(() => busy = true);
-                              try {
-                                final res = await LocalBackupService
-                                    .exportProfileBackup(profile);
-                                final updated =
-                                    await LocalBackupService.listBackups();
-                                if (ctx.mounted) {
-                                  setSheetState(() {
-                                    backups = updated;
-                                    busy = false;
-                                  });
-                                }
-                                if (mounted) {
-                                  showTempoToast(
-                                    context,
-                                    'Saved ${res.fileName} (${res.recordCount} records)',
-                                  );
-                                }
-                              } catch (e) {
-                                if (ctx.mounted) {
-                                  setSheetState(() => busy = false);
-                                }
-                                if (mounted) {
-                                  showTempoToast(
-                                    context,
-                                    'Backup failed: $e',
-                                    isError: true,
-                                  );
-                                }
+                  TempoBouncyButton(
+                    height: 50,
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            setSheetState(() => busy = true);
+                            try {
+                              final res = await LocalBackupService
+                                  .exportProfileBackup(profile);
+                              final updated =
+                                  await LocalBackupService.listBackups();
+                              if (ctx.mounted) {
+                                setSheetState(() {
+                                  backups = updated;
+                                  busy = false;
+                                });
                               }
-                            },
-                      icon: const TempoJiggIcon(
-                        'download',
-                        variant: JiggIconVariant.solid,
-                        color: Colors.white,
-                        size: 18,
-                        trigger: JiggIconTrigger.appear,
-                        fallbackIcon: CupertinoIcons.tray_arrow_down_fill,
-                      ),
-                      label: Text(
-                        busy ? 'Working...' : 'Create local backup',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
+                              if (mounted) {
+                                showTempoToast(
+                                  context,
+                                  'Saved ${res.fileName} (${res.recordCount} records)',
+                                );
+                              }
+                            } catch (e) {
+                              if (ctx.mounted) {
+                                setSheetState(() => busy = false);
+                              }
+                              if (mounted) {
+                                showTempoToast(
+                                  context,
+                                  'Backup failed: $e',
+                                  isError: true,
+                                );
+                              }
+                            }
+                          },
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const TempoJiggIcon(
+                          'download',
+                          variant: JiggIconVariant.solid,
+                          color: Colors.white,
+                          size: 18,
+                          trigger: JiggIconTrigger.appear,
+                          fallbackIcon: CupertinoIcons.tray_arrow_down_fill,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          busy ? 'Working...' : 'Create local backup',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'Saved backups (${backups.length})',
+                    'SAVED BACKUPS (${backups.length})',
                     style: TextStyle(
-                      color: mc.textSecondary,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
+                      color: mc.textTertiary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.65,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -657,7 +1092,7 @@ class _MyProfileState extends State<MyProfile> {
                       ),
                       decoration: BoxDecoration(
                         color: mc.searchBg,
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(18),
                       ),
                       child: Text(
                         'No local backups yet. Tap above to save your first snapshot.',
@@ -676,7 +1111,7 @@ class _MyProfileState extends State<MyProfile> {
                         itemBuilder: (_, i) {
                           final entry = backups[i];
                           final kb = (entry.sizeBytes / 1024).toStringAsFixed(1);
-                          final dateStr = DateFormat('MMM d, yyyy · HH:mm')
+                          final dateStr = DateFormat('MMM d, yyyy, HH:mm')
                               .format(entry.modifiedAt.toLocal());
                           return Container(
                             padding: const EdgeInsets.symmetric(
@@ -685,8 +1120,12 @@ class _MyProfileState extends State<MyProfile> {
                             ),
                             decoration: BoxDecoration(
                               color: mc.searchBg,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: mc.cardBorder),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: mc.isDark
+                                    ? Colors.white.withValues(alpha: 0.08)
+                                    : Colors.black.withValues(alpha: 0.045),
+                              ),
                             ),
                             child: Row(
                               children: [
@@ -707,7 +1146,7 @@ class _MyProfileState extends State<MyProfile> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        '$dateStr · $kb KB',
+                                        '$dateStr ($kb KB)',
                                         style: TextStyle(
                                           color: mc.textSecondary,
                                           fontSize: 12,
@@ -752,39 +1191,43 @@ class _MyProfileState extends State<MyProfile> {
                                             }
                                           }
                                         },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 7,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: mc.accent.withValues(
-                                        alpha: mc.isDark ? 0.20 : 0.12,
+                                  child: TempoTouchLightEffect(
+                                    borderRadius: 999,
+                                    intensity: 0.9,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 7,
                                       ),
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        TempoJiggIcon(
-                                          'upload',
-                                          variant: JiggIconVariant.outline,
-                                          size: 13,
-                                          color: mc.accent,
-                                          trigger: JiggIconTrigger.none,
-                                          fallbackIcon:
-                                              CupertinoIcons.arrow_up_circle,
+                                      decoration: BoxDecoration(
+                                        color: mc.accent.withValues(
+                                          alpha: mc.isDark ? 0.22 : 0.13,
                                         ),
-                                        const SizedBox(width: 5),
-                                        Text(
-                                          'Restore',
-                                          style: TextStyle(
+                                        borderRadius: BorderRadius.circular(999),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          TempoJiggIcon(
+                                            'upload',
+                                            variant: JiggIconVariant.outline,
+                                            size: 13,
                                             color: mc.accent,
-                                            fontSize: 12.5,
-                                            fontWeight: FontWeight.w700,
+                                            trigger: JiggIconTrigger.none,
+                                            fallbackIcon:
+                                                CupertinoIcons.arrow_up_circle,
                                           ),
-                                        ),
-                                      ],
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            'Restore',
+                                            style: TextStyle(
+                                              color: mc.accent,
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -975,7 +1418,6 @@ class _MyProfileState extends State<MyProfile> {
                       value: _liveStepsEnabled,
                       onChanged: _toggleLiveSteps,
                     ),
-                    _animationSpeedTile(c),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -1261,112 +1703,6 @@ class _MyProfileState extends State<MyProfile> {
           ),
         ],
       ),
-    );
-  }
-
-  Future<void> _openAnimationSpeedMenu() async {
-    final speedService = TempoAnimationSpeedService.instance;
-    final ctrl = _settingController('Animation speed');
-    HapticFeedback.selectionClick();
-    ctrl.play();
-    setState(() => _animSpeedMenuOpen = true);
-    final picked = await showHyperOsDropdownMenu<TempoAnimationSpeed>(
-      context: context,
-      rowKey: _animSpeedRowKey,
-      selectedValue: speedService.speed,
-      options: const [
-        HyperOsDropdownOption(
-          value: TempoAnimationSpeed.relaxed,
-          label: 'Relaxed',
-        ),
-        HyperOsDropdownOption(
-          value: TempoAnimationSpeed.balanced,
-          label: 'Balanced',
-        ),
-        HyperOsDropdownOption(
-          value: TempoAnimationSpeed.fast,
-          label: 'Fast',
-        ),
-      ],
-    );
-    if (picked != null) {
-      await speedService.setSpeed(picked);
-    }
-    if (mounted) {
-      setState(() => _animSpeedMenuOpen = false);
-    }
-  }
-
-  Widget _animationSpeedTile(AppColors c) {
-    final ctrl = _settingController('Animation speed');
-    return ValueListenableBuilder<TempoAnimationSpeed>(
-      valueListenable: TempoAnimationSpeedService.instance.notifier,
-      builder: (context, currentSpeed, _) {
-        return AnimatedContainer(
-          key: _animSpeedRowKey,
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          color: _animSpeedMenuOpen
-              ? (c.isDark
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.black.withValues(alpha: 0.045))
-              : Colors.transparent,
-          child: InkWell(
-            onTap: _openAnimationSpeedMenu,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 13.5,
-              ),
-              child: Row(
-                children: [
-                  _circleIcon(
-                    CupertinoIcons.speedometer,
-                    c.accent,
-                    jiggIconName: 'flash',
-                    jiggController: ctrl,
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      'Animation speed',
-                      style: TextStyle(
-                        color: c.textPrimary,
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  AnimatedOpacity(
-                    opacity: _animSpeedMenuOpen ? 0.0 : 1.0,
-                    duration: const Duration(milliseconds: 150),
-                    curve: Curves.easeOutCubic,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          currentSpeed.label,
-                          style: TextStyle(
-                            color: c.textSecondary,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        Icon(
-                          CupertinoIcons.chevron_up_chevron_down,
-                          color: c.textTertiary,
-                          size: 13.5,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 

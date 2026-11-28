@@ -509,7 +509,7 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                               clipBehavior: Clip.none,
                               alignment: Alignment.center,
                               children: [
-                                // LAYER 1 (STATIC): Frosted Outer Navbar Capsule
+                                // LAYER 1 (STATIC): BitChord Liquid Glass Outer Capsule
                                 Positioned(
                                   left: 0,
                                   right: 0,
@@ -519,6 +519,8 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
                                     child: _OpticalLiquidGlassDock(
                                       radius: capsuleRadius,
                                       isDark: isDark,
+                                      dpr: dpr,
+                                      program: _program,
                                       appearance: appearance,
                                       cardColor: c.card,
                                       borderColor: c.cardBorder,
@@ -768,14 +770,19 @@ class _LiquidGlassNavBarState extends State<LiquidGlassNavBar>
   }
 }
 
-/// Outer floating navbar capsule that adapts cleanly to all Appearance settings:
-/// - Full Liquid Glass (`sigma: 24` + crisp 45° specular rim)
-/// - Better Performance for Glass (`sigma: 16` lighter frost + specular rim)
-/// - Liquid Glass OFF (classic soft blur without optical lens)
-/// - Reduce Dynamic Blur ON (zero `BackdropFilter`, clean opaque `c.card` capsule)
+/// Outer floating navbar capsule calibrated to BitChord's `Modifier.liquidGlass`:
+/// - Full Liquid Glass: vibrant `sigma = 8.5` translucent blur + live optical
+///   dome refraction (`shaders/liquid_glass_lens.frag`) + translucent BitChord
+///   tint (`#121212 @ 36%` Dark / `#FAFAFA @ 38%` Light) + crisp 45° specular rim.
+/// - Better Performance for Glass: smooth `sigma = 16.0` frosted blur without
+///   the refraction shader + matching translucent tint & specular rim.
+/// - Liquid Glass OFF: classic soft `sigma = 18.0` frosted blur.
+/// - Reduce Dynamic Blur ON: zero `BackdropFilter`, clean opaque `c.card` capsule.
 class _OpticalLiquidGlassDock extends StatelessWidget {
   final double radius;
   final bool isDark;
+  final double dpr;
+  final ui.FragmentProgram? program;
   final TempoAppearanceSettings appearance;
   final Color cardColor;
   final Color borderColor;
@@ -783,6 +790,8 @@ class _OpticalLiquidGlassDock extends StatelessWidget {
   const _OpticalLiquidGlassDock({
     required this.radius,
     required this.isDark,
+    required this.dpr,
+    required this.program,
     required this.appearance,
     required this.cardColor,
     required this.borderColor,
@@ -795,7 +804,12 @@ class _OpticalLiquidGlassDock extends StatelessWidget {
         decoration: BoxDecoration(
           color: cardColor,
           borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: borderColor, width: 0.9),
+          border: Border.all(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.10)
+                : borderColor,
+            width: 0.7,
+          ),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.08),
@@ -808,36 +822,74 @@ class _OpticalLiquidGlassDock extends StatelessWidget {
       );
     }
 
+    // Exact BitChord LiquidGlass.kt blur calibration:
+    // 8.5 dp when optical lens refraction is active (so colors behind glow
+    // vividly through the glass!), 16 dp frosted fallback under Better Performance.
     final blurSigma = !appearance.liquidGlass
         ? 18.0
-        : (appearance.betterGlassPerformance ? 16.0 : 24.0);
+        : (appearance.betterGlassPerformance ? 16.0 : 8.5);
 
-    final frostedFill = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: isDark
-          ? [
-              const Color(0xFF1E2026).withValues(alpha: 0.44),
-              const Color(0xFF121317).withValues(alpha: 0.36),
-              const Color(0xFF1A1C22).withValues(alpha: 0.42),
-            ]
-          : [
-              Colors.white.withValues(alpha: 0.56),
-              const Color(0xFFF4F5F8).withValues(alpha: 0.46),
-              Colors.white.withValues(alpha: 0.54),
-            ],
-      stops: const [0.0, 0.52, 1.0],
-    );
+    final surfaceTint = isDark
+        ? const Color(0xFF121212).withValues(alpha: 0.36)
+        : const Color(0xFFFAFAFA).withValues(alpha: 0.38);
 
     final inner = Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(radius),
-        gradient: frostedFill,
-        border: appearance.liquidGlass
-            ? null
-            : Border.all(color: borderColor, width: 0.8),
+        color: surfaceTint,
+        border: Border.all(
+          color: appearance.liquidGlass
+              ? (isDark
+                  ? Colors.white.withValues(alpha: 0.14)
+                  : Colors.white.withValues(alpha: 0.62))
+              : borderColor,
+          width: appearance.liquidGlass ? 0.6 : 0.8,
+        ),
       ),
     );
+
+    final rimmedInner = appearance.liquidGlass
+        ? TempoTouchLightEffect(
+            borderRadius: radius,
+            intensity: 0.85,
+            scatterGain: 0.92,
+            child: CustomPaint(
+              foregroundPainter: LiquidGlassRimPainter(
+                borderRadius: radius,
+                isDark: isDark,
+                intensity: isDark ? 1.05 : 0.96,
+                strokeWidth: 1.05,
+                showTopMeniscus: false,
+              ),
+              child: inner,
+            ),
+          )
+        : inner;
+
+    final refractedOrPlain = appearance.useGlassRefraction
+        ? BitChordGlassLensBox(
+            program: program,
+            isDark: isDark,
+            dpr: dpr,
+            useRefractionShader: true,
+            frameBuilder: (sz) {
+              if (sz.isEmpty) return BitChordLensFrame.inactive;
+              return BitChordLensFrame(
+                active: true,
+                rect: Offset.zero & sz,
+                borderRadius: radius,
+                refractionHeightDp: 16.0,
+                refractionAmountDp: 18.0,
+                depthEffect: 0.45,
+                aberration: 0.45,
+                rimAlpha: 0.35,
+                shadowAlpha: 0.0,
+                material: 1.0,
+              );
+            },
+            child: rimmedInner,
+          )
+        : rimmedInner;
 
     return Container(
       decoration: BoxDecoration(
@@ -861,18 +913,7 @@ class _OpticalLiquidGlassDock extends StatelessWidget {
             sigmaY: blurSigma,
             tileMode: ui.TileMode.clamp,
           ),
-          child: appearance.liquidGlass
-              ? CustomPaint(
-                  foregroundPainter: LiquidGlassRimPainter(
-                    borderRadius: radius,
-                    isDark: isDark,
-                    intensity: isDark ? 0.92 : 0.90,
-                    strokeWidth: 0.95,
-                    showTopMeniscus: false,
-                  ),
-                  child: inner,
-                )
-              : inner,
+          child: refractedOrPlain,
         ),
       ),
     );

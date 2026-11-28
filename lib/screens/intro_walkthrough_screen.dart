@@ -4,22 +4,28 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/animation_speed_service.dart';
+import '../services/appearance_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/liquid_glass_surface.dart';
 import '../widgets/oval_activity_rings.dart';
+import '../widgets/tempo_startup_splash.dart';
 
 class _IntroSlideData {
+  final String badge;
   final String title;
   final String body;
 
   const _IntroSlideData({
+    required this.badge,
     required this.title,
     required this.body,
   });
 }
 
-/// First-time user animated walkthrough introducing Tempo's core features.
-/// Minimal iOS 27 aesthetic: no emojis, no dot/step indicators, smooth Next/Back transitions.
+/// Updated Tempo App Guide & first-time animated walkthrough unified with
+/// Tempo's Liquid Glass design language and matching the Midnight Obsidian
+/// Dual-Ring Startup Splash on "Welcome to Tempo".
 class IntroWalkthroughScreen extends StatefulWidget {
   final VoidCallback onComplete;
   final bool isReplay;
@@ -44,24 +50,28 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
 
   static const List<_IntroSlideData> _slides = [
     _IntroSlideData(
+      badge: 'SUMMARY',
       title: 'Your daily rhythm',
       body:
-          'Track calories, steps, and active minutes in one glance. Tap the plus button on Summary anytime to log sleep, weight, or measurements.',
+          'Track calories, steps, active minutes, hydration, and sleep in one glance. Tap + anytime to log with the 3D wheel and celebrate every daily goal you hit.',
     ),
     _IntroSlideData(
+      badge: 'WORKOUTS',
       title: 'Train with focus',
       body:
-          'Start any guided workout from the top row, count in with the session timer, and check off sets as you go. Active sessions stay live in your status bar.',
+          'Start any muscle program or Fitness Journey, watch Liquid Glass form videos, log sets with pill steppers, and verify each exercise as you train.',
     ),
     _IntroSlideData(
+      badge: 'PROGRESS',
       title: 'See your momentum',
       body:
-          'Follow your weekly streak, scrub across 7, 14, or 30 day trends, review personal lift records, and keep progress photos privately on your device.',
+          'Follow your streak, 12-week heatmap, and 7, 14, or 30 day energy trends alongside personal lift PRs, verified sessions, and private on-device photos.',
     ),
     _IntroSlideData(
+      badge: 'PRIVACY & GLASS',
       title: 'Built for privacy',
       body:
-          'All data stays offline on your phone. Glide across the bottom glass bar to switch tabs, or double-tap Profile anytime to switch accounts with a PIN.',
+          'Everything stays offline on your device in local storage. Glide across the Liquid Glass dock to switch tabs, or double-tap Profile to switch accounts with a PIN.',
     ),
   ];
 
@@ -101,9 +111,15 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
   void _goNext() {
     if (_isFinishing) return;
     HapticFeedback.selectionClick();
+    final reduced = TempoAppearanceService.instance.reduceAnimation;
+    final dur = reduced
+        ? const Duration(milliseconds: 1)
+        : TempoAnimationSpeedService.instance.scale(
+            const Duration(milliseconds: 420),
+          );
     if (_currentPage < _slides.length - 1) {
       _pageController.nextPage(
-        duration: const Duration(milliseconds: 420),
+        duration: dur,
         curve: Curves.easeOutCubic,
       );
     } else {
@@ -114,8 +130,14 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
   void _goBack() {
     if (_isFinishing || _currentPage <= 0) return;
     HapticFeedback.selectionClick();
+    final reduced = TempoAppearanceService.instance.reduceAnimation;
+    final dur = reduced
+        ? const Duration(milliseconds: 1)
+        : TempoAnimationSpeedService.instance.scale(
+            const Duration(milliseconds: 380),
+          );
     _pageController.previousPage(
-      duration: const Duration(milliseconds: 380),
+      duration: dur,
       curve: Curves.easeOutCubic,
     );
   }
@@ -134,44 +156,52 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
 
     return Scaffold(
       backgroundColor: c.scaffold,
-      body: SafeArea(
-        child: AnimatedBuilder(
-          animation: _outroController,
-          builder: (context, child) {
-            final t = _outroController.value;
-            // Phase 1 (0.0 -> 0.28): walkthrough content glides up and dissolves out
-            final contentExitT = Curves.easeInCubic.transform(
-              (t / 0.28).clamp(0.0, 1.0),
-            );
-            final contentOpacity = (1.0 - contentExitT).clamp(0.0, 1.0);
-            final contentOffsetY = -22.0 * contentExitT;
-            final contentScale = 1.0 - 0.04 * contentExitT;
+      body: AnimatedBuilder(
+        animation: _outroController,
+        builder: (context, child) {
+          final t = _outroController.value;
+          // Phase 1 (0.0 -> 0.24): walkthrough glides up & fades into Midnight Obsidian splash
+          final contentExitT = Curves.easeInCubic.transform(
+            (t / 0.24).clamp(0.0, 1.0),
+          );
+          final contentOpacity = (1.0 - contentExitT).clamp(0.0, 1.0);
+          final contentOffsetY = -20.0 * contentExitT;
+          final contentScale = 1.0 - 0.04 * contentExitT;
 
-            // Phase 2 (0.18 -> 0.78): minimal Tempo ring draws 0->360° & wordmark glides in
-            // Phase 3 (0.78 -> 1.0): gentle zoom-out dissolve into the Main page
-            final ringDrawT = Curves.easeOutCubic.transform(
-              ((t - 0.16) / 0.44).clamp(0.0, 1.0),
-            );
-            final ringFadeIn = Curves.easeOutCubic.transform(
-              ((t - 0.14) / 0.18).clamp(0.0, 1.0),
-            );
-            final outroFadeOut = Curves.easeInCubic.transform(
-              ((t - 0.78) / 0.22).clamp(0.0, 1.0),
-            );
-            final welcomeOpacity =
-                (ringFadeIn * (1.0 - outroFadeOut)).clamp(0.0, 1.0);
-            final textSlideT = Curves.easeOutCubic.transform(
-              ((t - 0.26) / 0.34).clamp(0.0, 1.0),
-            );
-            final rippleT = Curves.easeOutCubic.transform(
-              ((t - 0.46) / 0.48).clamp(0.0, 1.0),
-            );
-            final finalZoom = 1.0 + 0.14 * outroFadeOut;
+          // Phase 2 (0.14 -> 0.74): exact Startup Splash Midnight Obsidian + Dual-Ring Logo
+          // with X-style anticipation dip -> radiant glow -> zoom-through reveal
+          final splashIn = Curves.easeOutCubic.transform(
+            ((t - 0.10) / 0.18).clamp(0.0, 1.0),
+          );
+          final zoomOut = Curves.easeInExpo.transform(
+            ((t - 0.74) / 0.26).clamp(0.0, 1.0),
+          );
+          final bgOpacity =
+              (splashIn * (1.0 - zoomOut * 0.92)).clamp(0.0, 1.0);
 
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                IgnorePointer(
+          final dipPhase = ((t - 0.50) / 0.22).clamp(0.0, 1.0);
+          final dipScale = 1.0 - 0.11 * math.sin(dipPhase * math.pi);
+          final logoScale =
+              (0.84 + 0.16 * splashIn) * dipScale * (1.0 + 3.6 * zoomOut);
+          final logoGlow =
+              (splashIn * (0.45 + 0.55 * math.sin(dipPhase * math.pi)))
+                  .clamp(0.0, 1.0);
+          final arcRotation =
+              Curves.easeOutCubic.transform(((t - 0.14) / 0.56).clamp(0.0, 1.0)) *
+                  (math.pi * 0.35);
+
+          final textIn = Curves.easeOutCubic.transform(
+            ((t - 0.22) / 0.28).clamp(0.0, 1.0),
+          );
+          final textOpacity =
+              (textIn * (1.0 - Curves.easeInCubic.transform(zoomOut)))
+                  .clamp(0.0, 1.0);
+
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              SafeArea(
+                child: IgnorePointer(
                   ignoring: _isFinishing,
                   child: Opacity(
                     opacity: contentOpacity,
@@ -184,107 +214,85 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
                     ),
                   ),
                 ),
+              ),
 
-                // Smooth Launch Flourish bridging Intro -> Main Page
-                if (_isFinishing && welcomeOpacity > 0.005)
-                  IgnorePointer(
-                    child: Center(
-                      child: Opacity(
-                        opacity: welcomeOpacity,
-                        child: Transform.scale(
-                          scale: finalZoom,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox(
-                                width: 120,
-                                height: 120,
-                                child: Stack(
-                                  alignment: Alignment.center,
+              // Startup-Splash-Matched "Welcome to Tempo" Dual-Ring Launch
+              if (_isFinishing && bgOpacity > 0.004)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: ColoredBox(
+                      color: kTempoSplashBackground.withValues(alpha: bgOpacity),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Opacity(
+                              opacity:
+                                  (splashIn * (1.0 - zoomOut)).clamp(0.0, 1.0),
+                              child: Transform.scale(
+                                scale: logoScale,
+                                child: TempoDualRingLogo(
+                                  size: kTempoSplashLogoSize,
+                                  innerArcRotation: arcRotation,
+                                  glowIntensity: logoGlow,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 22),
+                            Transform.translate(
+                              offset: Offset(0, 14 * (1.0 - textIn)),
+                              child: Opacity(
+                                opacity: textOpacity,
+                                child: const Column(
                                   children: [
-                                    if (rippleT > 0)
-                                      Transform.scale(
-                                        scale: 0.72 + 0.62 * rippleT,
-                                        child: Opacity(
-                                          opacity:
-                                              (1.0 - rippleT).clamp(0.0, 0.45),
-                                          child: Container(
-                                            width: 96,
-                                            height: 96,
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              border: Border.all(
-                                                color: c.accent,
-                                                width: 2,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
+                                    Text(
+                                      'Welcome to Tempo',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 25,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: -0.6,
                                       ),
-                                    CustomPaint(
-                                      size: const Size(76, 76),
-                                      painter: _IntroRingPainter(
-                                        progress: ringDrawT,
-                                        trackColor: c.divider,
-                                        activeColor: c.accent,
+                                    ),
+                                    SizedBox(height: 5),
+                                    Text(
+                                      'Let’s begin',
+                                      style: TextStyle(
+                                        color: Color(0xFF9EA6B8),
+                                        fontSize: 14.5,
+                                        fontWeight: FontWeight.w500,
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 14),
-                              Transform.translate(
-                                offset: Offset(0, 14 * (1.0 - textSlideT)),
-                                child: Opacity(
-                                  opacity: textSlideT,
-                                  child: Column(
-                                    children: [
-                                      Text(
-                                        'Welcome to Tempo',
-                                        style: TextStyle(
-                                          color: c.textPrimary,
-                                          fontSize: 24,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: -0.6,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'Let’s begin',
-                                        style: TextStyle(
-                                          color: c.textSecondary,
-                                          fontSize: 14.5,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
-              ],
-            );
-          },
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-            // Clean minimal top bar (Tempo wordmark + subtle Skip)
+                ),
+            ],
+          );
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Top bar with Tempo Dual-Ring emblem + Liquid Glass Skip/Close pill
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 14, 16, 4),
+              padding: const EdgeInsets.fromLTRB(22, 12, 18, 4),
               child: Row(
                 children: [
+                  const TempoDualRingLogo(size: 24, glowIntensity: 0.35),
+                  const SizedBox(width: 9),
                   Text(
                     'Tempo',
                     style: TextStyle(
-                      color: c.textTertiary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.2,
+                      color: c.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.2,
                     ),
                   ),
                   const Spacer(),
@@ -293,15 +301,14 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
                     duration: const Duration(milliseconds: 220),
                     child: IgnorePointer(
                       ignoring: isLast,
-                      child: TextButton(
+                      child: TempoLiquidButton(
+                        primary: false,
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
                         onPressed: _skip,
                         child: Text(
                           widget.isReplay ? 'Close' : 'Skip',
-                          style: TextStyle(
-                            color: c.textSecondary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                          ),
+                          style: const TextStyle(fontSize: 13.5),
                         ),
                       ),
                     ),
@@ -328,19 +335,19 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
                   final slide = _slides[index];
 
                   return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         // Visual stage with subtle parallax & depth scale
                         Opacity(
-                          opacity: (0.25 + 0.75 * visibility).clamp(0.0, 1.0),
+                          opacity: (0.28 + 0.72 * visibility).clamp(0.0, 1.0),
                           child: Transform.translate(
                             offset: Offset(delta * 26, 0),
                             child: Transform.scale(
                               scale: 0.90 + 0.10 * visibility,
                               child: SizedBox(
-                                height: 248,
+                                height: 256,
                                 child: Center(
                                   child: _buildSlideVisual(
                                     index,
@@ -351,14 +358,36 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
                             ),
                           ),
                         ),
-                        const SizedBox(height: 36),
-                        // Headline + description with gentle staggered horizontal offset
+                        const SizedBox(height: 30),
+                        // Pill badge + Headline + Description
                         Opacity(
                           opacity: visibility,
                           child: Transform.translate(
-                            offset: Offset(delta * 42, 0),
+                            offset: Offset(delta * 40, 0),
                             child: Column(
                               children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 11,
+                                    vertical: 4.5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: c.accent.withValues(
+                                      alpha: c.isDark ? 0.20 : 0.12,
+                                    ),
+                                    borderRadius: BorderRadius.circular(99),
+                                  ),
+                                  child: Text(
+                                    slide.badge,
+                                    style: TextStyle(
+                                      color: c.accent,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.7,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
                                 Text(
                                   slide.title,
                                   textAlign: TextAlign.center,
@@ -369,13 +398,13 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
                                     letterSpacing: -0.7,
                                   ),
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 10),
                                 Text(
                                   slide.body,
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     color: c.textSecondary,
-                                    fontSize: 15,
+                                    fontSize: 14.8,
                                     height: 1.5,
                                   ),
                                 ),
@@ -390,9 +419,9 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
               ),
             ),
 
-            // Bottom Back / Next controls (no pagination dots or indicators)
+            // Bottom Liquid Glass Back + Bouncy Next / Get Started controls
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+              padding: const EdgeInsets.fromLTRB(22, 8, 22, 22),
               child: Row(
                 children: [
                   AnimatedSize(
@@ -402,28 +431,43 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
                         ? const SizedBox.shrink()
                         : Padding(
                             padding: const EdgeInsets.only(right: 12),
-                            child: _WalkthroughButton(
-                              label: 'Back',
-                              isPrimary: false,
+                            child: SizedBox(
                               width: 108,
-                              onTap: _goBack,
+                              child: TempoLiquidButton(
+                                primary: false,
+                                height: 52,
+                                onPressed: _goBack,
+                                child: const Text(
+                                  'Back',
+                                  style: TextStyle(fontSize: 15.5),
+                                ),
+                              ),
                             ),
                           ),
                   ),
                   Expanded(
-                    child: _WalkthroughButton(
-                      label: isLast
-                          ? (widget.isReplay ? 'Done' : 'Get Started')
-                          : 'Next',
-                      isPrimary: true,
-                      onTap: _goNext,
+                    child: TempoBouncyButton(
+                      height: 52,
+                      onPressed: _goNext,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: Text(
+                          isLast
+                              ? (widget.isReplay ? 'Done' : 'Get Started')
+                              : 'Next',
+                          key: ValueKey(
+                            isLast
+                                ? (widget.isReplay ? 'Done' : 'Get Started')
+                                : 'Next',
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
           ],
-        ),
         ),
       ),
     );
@@ -443,71 +487,7 @@ class _IntroWalkthroughScreenState extends State<IntroWalkthroughScreen>
   }
 }
 
-class _WalkthroughButton extends StatefulWidget {
-  final String label;
-  final bool isPrimary;
-  final double? width;
-  final VoidCallback onTap;
-
-  const _WalkthroughButton({
-    required this.label,
-    required this.isPrimary,
-    this.width,
-    required this.onTap,
-  });
-
-  @override
-  State<_WalkthroughButton> createState() => _WalkthroughButtonState();
-}
-
-class _WalkthroughButtonState extends State<_WalkthroughButton> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final bg = widget.isPrimary ? c.accent : c.searchBg;
-    final fg = widget.isPrimary ? Colors.white : c.textPrimary;
-
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
-        widget.onTap();
-      },
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 120),
-        curve: Curves.easeOutCubic,
-        child: Container(
-          width: widget.width,
-          height: 52,
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          alignment: Alignment.center,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: Text(
-              widget.label,
-              key: ValueKey(widget.label),
-              style: TextStyle(
-                color: fg,
-                fontSize: 15.5,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.1,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Slide 1 visual: Live animated Tempo Oval Activity Rings.
+/// Slide 1 visual: Live animated Tempo Oval Activity Rings inside Liquid Glass stage.
 class _SummaryRingsPreview extends StatelessWidget {
   final bool isActive;
 
@@ -515,16 +495,50 @@ class _SummaryRingsPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return OvalActivityRings(
-      caloriesProgress: isActive ? 0.78 : 0.15,
-      stepsProgress: isActive ? 0.86 : 0.20,
-      minutesProgress: isActive ? 0.64 : 0.10,
-      size: 224,
+    final c = AppColors.of(context);
+    return LiquidGlassSurface(
+      borderRadius: 32,
+      blurEnabled: false,
+      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          OvalActivityRings(
+            caloriesProgress: isActive ? 1.0 : 0.15,
+            stepsProgress: isActive ? 0.86 : 0.20,
+            minutesProgress: isActive ? 0.72 : 0.10,
+            size: 186,
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.13),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(CupertinoIcons.checkmark_alt, size: 12, color: c.accent),
+                const SizedBox(width: 4),
+                Text(
+                  'Calories goal hit',
+                  style: TextStyle(
+                    color: c.accent,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-/// Slide 2 visual: Minimal animated Workout timer sweep & exercise progress.
+/// Slide 2 visual: Liquid Glass Workout Command Deck with verified progress.
 class _WorkoutTimerPreview extends StatefulWidget {
   final bool isActive;
 
@@ -556,73 +570,116 @@ class _WorkoutTimerPreviewState extends State<_WorkoutTimerPreview>
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return AppleCard(
+    return LiquidGlassSurface(
       borderRadius: 28,
-      padding: const EdgeInsets.all(22),
+      blurEnabled: false,
+      padding: const EdgeInsets.all(20),
       child: SizedBox(
-        width: 248,
+        width: 256,
         child: AnimatedBuilder(
           animation: _ctrl,
           builder: (_, __) {
             final t = _ctrl.value;
-            final secs = 12 + (t * 24).floor();
+            final secs = 15 + (t * 30).floor();
             final checkedCount = (t * 4).floor().clamp(1, 3);
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox(
-                  width: 96,
-                  height: 96,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      CustomPaint(
-                        size: const Size(96, 96),
-                        painter: _IntroRingPainter(
-                          progress: 0.25 + 0.75 * t,
-                          trackColor: c.divider,
-                          activeColor: c.accent,
-                        ),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 68,
+                      height: 68,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          CustomPaint(
+                            size: const Size(68, 68),
+                            painter: _IntroRingPainter(
+                              progress: 0.25 + 0.75 * t,
+                              trackColor: c.divider,
+                              activeColor: c.accent,
+                            ),
+                          ),
+                          Text(
+                            '00:${secs.toString().padLeft(2, '0')}',
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.3,
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ],
                       ),
-                      Text(
-                        '00:${secs.toString().padLeft(2, '0')}',
-                        style: TextStyle(
-                          color: c.textPrimary,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.5,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: c.accent
+                                  .withValues(alpha: c.isDark ? 0.22 : 0.13),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: Text(
+                              'IN PROGRESS',
+                              style: TextStyle(
+                                color: c.accent,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.4,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$checkedCount of 3 verified',
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 16),
                 ...List.generate(3, (i) {
                   final done = i < checkedCount;
                   return Padding(
-                    padding: EdgeInsets.only(bottom: i == 2 ? 0 : 10),
+                    padding: EdgeInsets.only(bottom: i == 2 ? 0 : 9),
                     child: Row(
                       children: [
                         AnimatedContainer(
                           duration: const Duration(milliseconds: 240),
-                          width: 18,
-                          height: 18,
+                          width: 20,
+                          height: 20,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: done ? c.textPrimary : Colors.transparent,
+                            color: done ? c.accent : Colors.transparent,
                             border: Border.all(
                               color: done
-                                  ? c.textPrimary
+                                  ? c.accent
                                   : c.textTertiary.withValues(alpha: 0.5),
-                              width: 1.5,
+                              width: 1.4,
                             ),
                           ),
                           child: done
-                              ? Icon(
+                              ? const Icon(
                                   CupertinoIcons.checkmark_alt,
-                                  size: 11,
-                                  color: c.isDark ? Colors.black : Colors.white,
+                                  size: 12,
+                                  color: Colors.white,
                                 )
                               : null,
                         ),
@@ -632,7 +689,9 @@ class _WorkoutTimerPreviewState extends State<_WorkoutTimerPreview>
                             height: 8,
                             decoration: BoxDecoration(
                               color: done
-                                  ? c.textPrimary.withValues(alpha: 0.16)
+                                  ? c.accent.withValues(
+                                      alpha: c.isDark ? 0.30 : 0.22,
+                                    )
                                   : c.divider,
                               borderRadius: BorderRadius.circular(99),
                             ),
@@ -651,7 +710,7 @@ class _WorkoutTimerPreviewState extends State<_WorkoutTimerPreview>
   }
 }
 
-/// Slide 3 visual: Animated 7-bar activity trend card.
+/// Slide 3 visual: Liquid Glass Energy Trend + Top PR preview card.
 class _ProgressBarsPreview extends StatefulWidget {
   final bool isActive;
 
@@ -664,7 +723,7 @@ class _ProgressBarsPreview extends StatefulWidget {
 class _ProgressBarsPreviewState extends State<_ProgressBarsPreview>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
-  static const _heights = [0.38, 0.62, 0.48, 0.85, 0.72, 0.94, 0.66];
+  static const _heights = [0.38, 0.62, 0.48, 0.85, 0.72, 0.96, 0.68];
 
   @override
   void initState() {
@@ -692,22 +751,47 @@ class _ProgressBarsPreviewState extends State<_ProgressBarsPreview>
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return AppleCard(
+    return LiquidGlassSurface(
       borderRadius: 28,
-      padding: const EdgeInsets.all(22),
+      blurEnabled: false,
+      padding: const EdgeInsets.all(20),
       child: SizedBox(
-        width: 256,
-        height: 176,
+        width: 262,
+        height: 186,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Weekly Activity',
-              style: TextStyle(
-                color: c.textSecondary,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
+            Row(
+              children: [
+                Text(
+                  'Energy Burned',
+                  style: TextStyle(
+                    color: c.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: c.accent.withValues(alpha: c.isDark ? 0.22 : 0.13),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: Text(
+                    'TOP PR',
+                    style: TextStyle(
+                      color: c.accent,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Expanded(
@@ -726,7 +810,7 @@ class _ProgressBarsPreviewState extends State<_ProgressBarsPreview>
                       final isPeak = i == 5;
                       return Container(
                         width: 22,
-                        height: (92 * _heights[i] * barT).clamp(6.0, 96.0),
+                        height: (98 * _heights[i] * barT).clamp(6.0, 102.0),
                         decoration: BoxDecoration(
                           color: isPeak
                               ? c.accent
@@ -734,8 +818,8 @@ class _ProgressBarsPreviewState extends State<_ProgressBarsPreview>
                                   alpha: c.isDark ? 0.22 : 0.14,
                                 ),
                           borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(6),
-                            bottom: Radius.circular(2),
+                            top: Radius.circular(7),
+                            bottom: Radius.circular(3),
                           ),
                         ),
                       );
@@ -751,7 +835,7 @@ class _ProgressBarsPreviewState extends State<_ProgressBarsPreview>
   }
 }
 
-/// Slide 4 visual: Miniature floating Liquid Glass navigation pill gliding smoothly.
+/// Slide 4 visual: Miniature Liquid Glass dock pill & offline PIN profile badge.
 class _PrivacyGlassNavPreview extends StatefulWidget {
   final bool isActive;
 
@@ -788,7 +872,6 @@ class _PrivacyGlassNavPreviewState extends State<_PrivacyGlassNavPreview>
       animation: _ctrl,
       builder: (_, __) {
         final t = _ctrl.value;
-        // Glide across 4 slots smoothly then pause gently on Profile (slot 3)
         final rawPos = t < 0.65
             ? Curves.easeInOutCubic.transform(t / 0.65) * 3.0
             : 3.0;
@@ -797,7 +880,6 @@ class _PrivacyGlassNavPreviewState extends State<_PrivacyGlassNavPreview>
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Centered profile emblem with gentle double-tap ripple
             SizedBox(
               width: 112,
               height: 112,
@@ -819,65 +901,88 @@ class _PrivacyGlassNavPreviewState extends State<_PrivacyGlassNavPreview>
                         ),
                       ),
                     ),
-                  Container(
-                    width: 68,
-                    height: 68,
-                    decoration: BoxDecoration(
-                      color: c.card,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: c.cardBorder, width: 1.5),
-                    ),
-                    child: Icon(
-                      CupertinoIcons.person_fill,
-                      color: c.textPrimary,
-                      size: 30,
+                  LiquidGlassSurface(
+                    borderRadius: 999,
+                    blurEnabled: false,
+                    padding: EdgeInsets.zero,
+                    child: SizedBox(
+                      width: 68,
+                      height: 68,
+                      child: Icon(
+                        CupertinoIcons.lock_fill,
+                        color: c.accent,
+                        size: 26,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-            // Miniature floating glass bar
-            Container(
-              width: 260,
-              height: 58,
+            const SizedBox(height: 22),
+            LiquidGlassSurface(
+              borderRadius: 999,
+              blurEnabled: false,
               padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(29),
-                border: Border.all(color: c.cardBorder),
-              ),
-              child: LayoutBuilder(
-                builder: (_, constraints) {
-                  final slotW = constraints.maxWidth / 4;
-                  return Stack(
-                    children: [
-                      Positioned(
-                        left: rawPos * slotW,
-                        top: 0,
-                        bottom: 0,
-                        width: slotW,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: c.accent.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(24),
-                            border: Border.all(
-                              color: c.accent.withValues(alpha: 0.35),
+              child: SizedBox(
+                width: 256,
+                height: 46,
+                child: LayoutBuilder(
+                  builder: (_, constraints) {
+                    final slotW = constraints.maxWidth / 4;
+                    return Stack(
+                      children: [
+                        Positioned(
+                          left: rawPos * slotW,
+                          top: 0,
+                          bottom: 0,
+                          width: slotW,
+                          child: CustomPaint(
+                            foregroundPainter: LiquidGlassRimPainter(
+                              borderRadius: 999,
+                              isDark: c.isDark,
+                              intensity: 0.95,
+                              strokeWidth: 1.0,
+                              showTopMeniscus: false,
+                              tintColor: c.accent,
+                            ),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: c.accent.withValues(
+                                  alpha: c.isDark ? 0.24 : 0.14,
+                                ),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      Row(
-                        children: [
-                          _miniTab(CupertinoIcons.circle, rawPos.round() == 0, c),
-                          _miniTab(Icons.directions_run_rounded, rawPos.round() == 1, c),
-                          _miniTab(CupertinoIcons.chart_bar_square, rawPos.round() == 2, c),
-                          _miniTab(CupertinoIcons.person_crop_circle, rawPos.round() == 3, c),
-                        ],
-                      ),
-                    ],
-                  );
-                },
+                        Row(
+                          children: [
+                            _miniTab(
+                              CupertinoIcons.heart_fill,
+                              rawPos.round() == 0,
+                              c,
+                            ),
+                            _miniTab(
+                              Icons.fitness_center_rounded,
+                              rawPos.round() == 1,
+                              c,
+                            ),
+                            _miniTab(
+                              CupertinoIcons.rosette,
+                              rawPos.round() == 2,
+                              c,
+                            ),
+                            _miniTab(
+                              CupertinoIcons.person_fill,
+                              rawPos.round() == 3,
+                              c,
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ],
@@ -913,7 +1018,7 @@ class _IntroRingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    const stroke = 6.0;
+    const stroke = 5.5;
     final radius = (size.width - stroke) / 2;
 
     canvas.drawCircle(

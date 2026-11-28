@@ -210,67 +210,42 @@ class _StepAccuracyWarningModalState extends State<_StepAccuracyWarningModal> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Side-by-side flat buttons: Cancel (left) | Enable (right)
+                  // Side-by-side Liquid Glass Cancel + bouncy Enable CTA
                   Row(
                     children: [
                       Expanded(
-                        child: SizedBox(
+                        child: TempoLiquidButton(
+                          primary: false,
                           height: 48,
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              backgroundColor: c.searchBg,
-                              foregroundColor: c.textPrimary,
-                              elevation: 0,
-                              shadowColor: Colors.transparent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                            ),
-                            onPressed: () {
-                              HapticFeedback.selectionClick();
-                              Navigator.of(context).pop(null);
-                            },
-                            child: const Text(
-                              'Cancel',
-                              style: TextStyle(
-                                fontSize: 15.5,
-                                fontWeight: FontWeight.w600,
-                              ),
+                          borderRadius: 999,
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            Navigator.of(context).pop(null);
+                          },
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: SizedBox(
+                        child: TempoBouncyButton(
                           height: 48,
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              backgroundColor: c.accent,
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              shadowColor: Colors.transparent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            Navigator.of(context).pop(
+                              StepAccuracyWarningResult(
+                                proceed: true,
+                                suppressForToday: _dontShowAgainToday,
                               ),
-                            ),
-                            onPressed: () {
-                              HapticFeedback.selectionClick();
-                              Navigator.of(context).pop(
-                                StepAccuracyWarningResult(
-                                  proceed: true,
-                                  suppressForToday: _dontShowAgainToday,
-                                ),
-                              );
-                            },
-                            child: const Text(
-                              'Enable',
-                              style: TextStyle(
-                                fontSize: 15.5,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
+                            );
+                          },
+                          child: const Text('Enable'),
                         ),
                       ),
                     ],

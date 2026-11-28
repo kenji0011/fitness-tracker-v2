@@ -11,6 +11,7 @@ import 'screens/tempo_shell_screen.dart';
 import 'services/active_profile_provider.dart';
 import 'services/animation_speed_service.dart';
 import 'services/appearance_service.dart';
+import 'services/device_performance_service.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_provider.dart';
 import 'widgets/liquid_glass_surface.dart';
@@ -27,6 +28,9 @@ Future<void> main() async {
 
   final activeProfileProvider = ActiveProfileProvider();
   final themeProvider = ThemeProvider(autoLoad: false);
+  // Detect chipset performance tier first (< 2ms native call) so first-run
+  // Appearance defaults calibrate automatically to Flagship / Balanced / Lite.
+  await DevicePerformanceService.instance.initialize();
   await Future.wait([
     activeProfileProvider.initialize(),
     themeProvider.initialize(),
@@ -34,7 +38,7 @@ Future<void> main() async {
     TempoAppearanceService.instance.initialize(),
     TempoJiggicons.prewarmCritical(),
     TempoLiquidShaderCache.load(),
-    TempoLiquidShaderCache.loadProgressiveBlur(),
+    TempoLiquidShaderCache.loadFrostedFadeBlur(),
   ]);
 
   // Prewarm secondary tab icons silently during the startup splash without blocking Frame 0.
@@ -75,6 +79,9 @@ class TempoApp extends StatelessWidget {
           themeMode: themeProvider.themeMode,
           theme: AppTheme.lightTheme.copyWith(pageTransitionsTheme: transitions),
           darkTheme: AppTheme.darkTheme.copyWith(pageTransitionsTheme: transitions),
+          builder: (context, child) => TempoGlobalTouchLightHost(
+            child: child ?? const SizedBox.shrink(),
+          ),
           home: const TempoStartupSplash(
             child: _TempoRootGate(),
           ),

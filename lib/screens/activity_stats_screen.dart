@@ -235,16 +235,65 @@ class _ActivityStatsScreenState extends State<ActivityStatsScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  'Daily Activity Goals',
-                  style: TextStyle(
-                    color: mc.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: mc.accent.withValues(
+                          alpha: mc.isDark ? 0.22 : 0.13,
+                        ),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        CupertinoIcons.flame_fill,
+                        color: mc.accent,
+                        size: 19,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Daily Activity Goals',
+                            style: TextStyle(
+                              color: mc.textPrimary,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.35,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Set daily targets for your rings',
+                            style: TextStyle(
+                              color: mc.textSecondary,
+                              fontSize: 12.8,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    TempoGlassCircleButton(
+                      size: 34,
+                      enableBlur: false,
+                      enableRefraction: false,
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: Icon(
+                        CupertinoIcons.xmark,
+                        size: 15,
+                        color: mc.textSecondary,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 18),
                 _GoalSliderRow(
+                  icon: CupertinoIcons.flame_fill,
                   label: 'Calories',
                   valueText: '${NumberFormat('#,###').format(tempCal)} kcal',
                   value: tempCal.toDouble().clamp(200, 3000),
@@ -258,6 +307,7 @@ class _ActivityStatsScreenState extends State<ActivityStatsScreen> {
                 ),
                 const SizedBox(height: 10),
                 _GoalSliderRow(
+                  icon: Icons.directions_walk_rounded,
                   label: 'Steps',
                   valueText: '${NumberFormat('#,###').format(tempSteps)} steps',
                   value: tempSteps.toDouble().clamp(2000, 25000),
@@ -271,8 +321,9 @@ class _ActivityStatsScreenState extends State<ActivityStatsScreen> {
                 ),
                 const SizedBox(height: 10),
                 _GoalSliderRow(
+                  icon: CupertinoIcons.clock_fill,
                   label: 'Activity time',
-                  valueText: '$tempMin mins',
+                  valueText: '$tempMin min',
                   value: tempMin.toDouble().clamp(15, 180),
                   min: 15,
                   max: 180,
@@ -282,28 +333,16 @@ class _ActivityStatsScreenState extends State<ActivityStatsScreen> {
                     setModalState(() => tempMin = (v / 5).round() * 5);
                   },
                 ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  height: 50,
-                  child: TextButton(
-                    style: TextButton.styleFrom(
-                      backgroundColor: mc.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () => Navigator.of(ctx).pop(
+                const SizedBox(height: 20),
+                TempoBouncyButton(
+                  height: 52,
+                  onPressed: () {
+                    HapticFeedback.lightImpact();
+                    Navigator.of(ctx).pop(
                       (cal: tempCal, steps: tempSteps, mins: tempMin),
-                    ),
-                    child: const Text(
-                      'Save goals',
-                      style: TextStyle(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
+                    );
+                  },
+                  child: const Text('Save goals'),
                 ),
               ],
             ),
@@ -1332,6 +1371,7 @@ class _WeeklyGoalGridPainter extends CustomPainter {
 }
 
 class _GoalSliderRow extends StatelessWidget {
+  final IconData icon;
   final String label;
   final String valueText;
   final double value;
@@ -1342,6 +1382,7 @@ class _GoalSliderRow extends StatelessWidget {
   final ValueChanged<double> onChanged;
 
   const _GoalSliderRow({
+    required this.icon,
     required this.label,
     required this.valueText,
     required this.value,
@@ -1355,43 +1396,84 @@ class _GoalSliderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: c.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const Spacer(),
-            Text(
-              valueText,
-              style: TextStyle(
-                color: color,
-                fontSize: 14.5,
-                fontWeight: FontWeight.w700,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: c.searchBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: c.isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.045),
         ),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          divisions: divisions,
-          activeColor: color,
-          onChanged: (v) {
-            HapticFeedback.selectionClick();
-            onChanged(v);
-          },
-        ),
-      ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: Colors.white, size: 14),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: c.isDark ? 0.22 : 0.13),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  valueText,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 4,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+              activeTrackColor: color,
+              inactiveTrackColor: c.divider,
+              thumbColor: color,
+            ),
+            child: Slider(
+              value: value,
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChanged: (v) {
+                HapticFeedback.selectionClick();
+                onChanged(v);
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

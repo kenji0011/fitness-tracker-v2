@@ -80,7 +80,7 @@ flutter:
 
   shaders:
     - shaders/liquid_glass_lens.frag
-    - shaders/progressive_blur.frag
+    - shaders/frosted_fade_blur.frag
 
   # To add assets to your application, add an assets section, like this:
   assets:
